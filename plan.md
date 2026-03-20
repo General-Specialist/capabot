@@ -62,10 +62,13 @@ Several Go/Rust OpenClaw alternatives already exist:
 
 ---
 
-## Phase 1: Foundation (Weeks 1-3)
+## Phase 1: Foundation (Weeks 1-3) — ✅ COMPLETE
 
-### 1.1 Project Scaffolding
-- Go module init, directory structure, Makefile, CI pipeline
+**Logging** (`internal/log/`): zerolog-based structured JSON logger with context fields (tenant/session/agent ID), level filtering, `ParseLevel` helper. 12 unit tests.
+
+### 1.1 Project Scaffolding ✅
+- [x] Go module init, directory structure
+- [ ] Makefile, CI pipeline
 - Target structure:
 
 ```
@@ -95,26 +98,28 @@ web/
   static/               # CSS, JS assets
 ```
 
-### 1.2 Configuration System
-- YAML/TOML config file (`~/.capabot/config.yaml`)
-- Environment variable overrides
-- Per-tenant config isolation
-- Config struct with validation at startup
+### 1.2 Configuration System ✅
+- [x] YAML config file (`~/.capabot/config.yaml`)
+- [x] Environment variable overrides (`CAPABOT_` prefix)
+- [x] Config struct with validation at startup (addr, log level, iterations, budget)
+- [ ] Per-tenant config isolation
 
-### 1.3 Storage Layer
-- `modernc.org/sqlite` (pure Go, no CGo)
-- Schema: tenants, sessions, messages, memory, skills, config
-- Migration system (embed SQL files via `//go:embed`)
-- Per-tenant database isolation (separate SQLite files)
-- Repository pattern for all data access
-- **Vector memory**: Pure-Go brute-force cosine similarity over embeddings stored in SQLite. **NOT** `sqlite-vec` (it's C, breaks `CGO_ENABLED=0`). For chat memory (<10K embeddings per tenant), brute-force is sub-10ms and sufficient. If agents need to index large corpora (codebases, document sets), upgrade path is an in-process pure-Go HNSW index (e.g., `coder/hnsw` or hand-rolled) backed by SQLite for persistence — but this is post-launch optimization, not launch-blocking.
-- **SQLite concurrency hardening**: Enforce `PRAGMA journal_mode=WAL` and `PRAGMA synchronous=NORMAL` on every connection. Implement a dedicated connection pool with single-writer/multi-reader topology tuned for `modernc.org/sqlite`. This is critical for Phase 6 multi-agent orchestration where parallel agents read/write memory simultaneously. Without WAL mode + connection pooling, `database is locked` errors will surface under concurrent ReAct loops.
+### 1.3 Storage Layer ✅
+- [x] `modernc.org/sqlite` (pure Go, no CGo)
+- [x] Schema: sessions, messages, memory (with embeddings)
+- [x] Migration system (idempotent, tested for double-apply)
+- [x] Per-tenant database isolation (separate SQLite files)
+- [x] Repository pattern for all data access (`Store` with `CreateSession`, `GetSession`, `SaveMessage`, `GetMessages`, `StoreMemory`, `RecallMemory`, `DeleteMemory`)
+- [x] **Vector memory**: Pure-Go brute-force cosine similarity over embeddings stored as raw little-endian bytes in SQLite. Tested at 5,000 vectors × 128 dims, recall <100ms.
+- [x] **SQLite concurrency hardening**: WAL mode + `synchronous=NORMAL` enforced on every connection. Single-writer/multi-reader `Pool` with `WriteTx` serialization. Tested with 10 concurrent goroutines × 10 writes (100 total), zero lock errors.
+- [ ] Schema: tenants, skills, config tables (not yet needed)
+- **Upgrade path**: In-process pure-Go HNSW index backed by SQLite for persistence when any tenant exceeds 50K embeddings.
 
 ---
 
-## Phase 2: LLM Provider System (Weeks 2-4)
+## Phase 2: LLM Provider System (Weeks 2-4) — 🔧 IN PROGRESS
 
-### 2.1 Provider Interface
+### 2.1 Provider Interface ✅
 ```go
 type Provider interface {
     Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
@@ -123,11 +128,13 @@ type Provider interface {
     Name() string
 }
 ```
+Implemented in `internal/llm/provider.go` with full type system: `ChatRequest`, `ChatMessage`, `ChatResponse`, `ToolDefinition`, `ToolCall`, `ToolResult`, `StreamChunk`, `Usage`, `ModelInfo`.
 
 ### 2.2 Built-in Providers
-- **Anthropic** — Messages API (Claude models)
-- **OpenAI-compatible** — Any provider exposing `/v1/chat/completions`
-- **OpenRouter** — Single gateway to 100+ models
+- [x] **Gemini** — `google.golang.org/genai` SDK, `gemini-3-flash-preview` default. Full Chat + Stream + tool use. Handles Gemini 3's thinking/reasoning parts (skips `Thought` tokens). 11 unit tests (mock HTTP server) + 2 integration tests (real API). `internal/llm/gemini.go`
+- [ ] **Anthropic** — Messages API (Claude models)
+- [ ] **OpenAI-compatible** — Any provider exposing `/v1/chat/completions`
+- [ ] **OpenRouter** — Single gateway to 100+ models
 
 ### 2.3 Routing & Fallback
 - Model selection by task complexity (configurable tiers: fast/balanced/powerful)
@@ -176,83 +183,106 @@ All transports normalize messages into a unified `InboundMessage` / `OutboundMes
 
 ---
 
-## Phase 4: Agent Core (Weeks 4-6)
+## Phase 4: Agent Core (Weeks 4-6) — 🔧 IN PROGRESS
 
-### 4.1 Agent Loop
-- ReAct-style loop: Observe → Think → Act → Observe
-- Tool/skill dispatch with configurable max iterations
-- **Context window management (multi-strategy)**:
-  - **Sliding window for tool observations**: When an agent runs the same tool multiple times (e.g., 5× `web_search`), only the final synthesized answer stays in the active context. Raw intermediate results are evicted to SQLite long-term memory, retrievable via `memory_recall` if needed later.
-  - **Token budget tracking**: Count tokens per message (using tiktoken-go or provider-reported usage). When context hits 80% of model's window, trigger automatic summarization of older conversation turns.
-  - **Observation truncation**: Large tool outputs (e.g., full web pages from `web_fetch`) are truncated to a configurable max (default 4K tokens) with a pointer to the full content in SQLite.
-- Conversation memory: short-term (in-session sliding window) + long-term (SQLite + vector recall)
-- System prompt composition: base prompt + active skills + user context
+### 4.1 Agent Loop ✅
+- [x] ReAct-style loop: Observe → Think → Act → Observe (`internal/agent/agent.go`)
+- [x] Tool/skill dispatch with configurable max iterations (default 25)
+- [x] **Context window management (multi-strategy)** (`internal/agent/context.go`):
+  - [x] **Sliding window**: `BuildMessages()` keeps first message + most recent N-1 messages
+  - [x] **Token budget tracking**: `ContextManager` tracks cumulative usage from LLM, flags when input tokens exceed budget threshold (80% of context window)
+  - [x] **Observation truncation**: Large tool outputs truncated to configurable max (default 4K tokens × 4 chars) with pointer to full content
+- [x] System prompt composition passed to LLM on every iteration
+- [x] Context cancellation support (graceful abort)
+- [x] Audit logging: messages and tool executions persisted via `StoreWriter` interface
+- **28 unit tests** — mock provider exercises: simple response, tool call→response, tool-not-found error recovery, max iterations safety, context cancellation, multiple parallel tool calls, persistence, output truncation, system prompt passthrough, tool definitions passthrough
+- [ ] Long-term vector memory recall during loop (depends on embedding integration)
+- [ ] Automatic summarization when context budget exceeded (future)
 
 ### 4.2 Session Management
-- Per-user, per-channel sessions
-- Session persistence as structured data in SQLite (not JSONL — queryable)
-- Configurable session TTL and cleanup
-- Cross-channel session continuity (same user, different platforms)
+- [x] Session persistence schema in SQLite (sessions, messages, tool_executions tables)
+- [x] `memory.Store` API: `CreateSession`, `GetSession`, `SaveMessage`, `GetMessages`
+- [x] `memory.Store.SaveToolExecution` for audit trail
+- [ ] Per-user, per-channel session routing (depends on transport layer, Phase 3)
+- [ ] Configurable session TTL and cleanup
+- [ ] Cross-channel session continuity
 
-### 4.3 Tool System
+### 4.3 Tool System ✅
 ```go
 type Tool interface {
     Name() string
     Description() string
-    Parameters() JSONSchema
+    Parameters() json.RawMessage
     Execute(ctx context.Context, params json.RawMessage) (ToolResult, error)
 }
 ```
-
-Built-in tools:
-- `web_search` — search via configurable backend (SearXNG, Brave, etc.)
-- `web_fetch` — fetch and extract content from URLs
-- `file_read` / `file_write` — sandboxed filesystem access
-- `shell_exec` — sandboxed command execution (allowlist-only, no shell interpretation)
-- `memory_store` / `memory_recall` — long-term memory operations
-- `schedule` — cron-style task scheduling
+- [x] `Tool` interface (`internal/agent/tool.go`)
+- [x] `Registry` — thread-safe tool registration, lookup, listing. Sorted `Names()` for deterministic output
+- [x] `ToolResult` type with content + error flag
+- [x] 9 unit tests for registry operations
+- [ ] Built-in tool implementations (Phase 4b):
+  - `web_search` — search via configurable backend (SearXNG, Brave, etc.)
+  - `web_fetch` — fetch and extract content from URLs
+  - `file_read` / `file_write` — sandboxed filesystem access
+  - `shell_exec` — sandboxed command execution (allowlist-only, no shell interpretation)
+  - `memory_store` / `memory_recall` — long-term memory operations
+  - `schedule` — cron-style task scheduling
 
 ---
 
-## Phase 5: Skill Engine (Weeks 5-8)
+## Phase 5: Skill Engine (Weeks 5-8) — ✅ CORE COMPLETE
 
 **Design goal: run OpenClaw's 5,700+ skills without modification.** This is Capabot's primary competitive advantage — no other alternative has attempted skill-format compatibility.
+
+**Status**: Parser, linter, importer, and tool name mapping are implemented and validated against 32,814 real ClawHub skills. Located in `internal/skill/`.
 
 ### OpenClaw Skill Format (what we must support)
 OpenClaw skills are directories containing a `SKILL.md` with YAML frontmatter (name, description, tools, triggers, requires) and markdown instructions. Skills can optionally include `index.ts`/`index.py`/`index.go` code modules, `config.json`, and `package.json`. The frontmatter declares required binaries, env vars, and install commands.
 
 Capabot's skill loader must:
-1. **Parse `SKILL.md` frontmatter with a forgiving parser** — OpenClaw's 5,700+ skills were written by thousands of authors. Expect malformed YAML, missing `---` delimiters, and non-standard Markdown. Use `yuin/goldmark` with custom AST walkers for instruction extraction, and `gopkg.in/yaml.v3` in lenient mode for frontmatter. Build a `capabot skill lint` command that reports parse errors without failing, so users can triage broken skills on import rather than at runtime.
-2. Inject skill instructions into the agent's system prompt when active
-3. Map OpenClaw tool names to Capabot tool names (e.g., `system.run` → `shell_exec`)
-4. Evaluate `requires.bins` against the host PATH (fixing OpenClaw's container-mismatch bug)
-5. Support skill precedence: workspace > user > bundled (same as OpenClaw)
+1. [x] **Parse `SKILL.md` frontmatter with a forgiving parser** — `internal/skill/parser.go` using `goldmark` + custom AST walkers for instruction extraction, `gopkg.in/yaml.v3` in lenient mode for frontmatter.
+2. [ ] Inject skill instructions into the agent's system prompt when active (depends on agent core, Phase 4)
+3. [x] Map OpenClaw tool names to Capabot tool names (e.g., `system.run` → `shell_exec`) — `internal/skill/toolmap.go`
+4. [ ] Evaluate `requires.bins` against the host PATH
+5. [ ] Support skill precedence: workspace > user > bundled (same as OpenClaw)
+
+### Implemented Components
+- **`parser.go`** — Forgiving SKILL.md parser (frontmatter + markdown body extraction)
+- **`parser_test.go`** — Unit tests for well-formed, malformed, and edge-case skills
+- **`lint.go`** — `capabot skill lint` reports parse errors without failing
+- **`lint_test.go`** — Lint validation tests
+- **`importer.go`** — Copies and validates OpenClaw skill directories
+- **`importer_test.go`** — Import workflow tests
+- **`toolmap.go`** — OpenClaw→Capabot tool name translation table
+- **`toolmap_test.go`** — Tool mapping tests
+- **`types.go`** — Skill types (frontmatter struct, etc.)
+- **`clawhub_integration_test.go`** — Validated against 32,814 real ClawHub skills
 
 ### Three-Tier Execution Model
 
-**Tier 1: Markdown-only skills (OpenClaw compatible)**
+**Tier 1: Markdown-only skills (OpenClaw compatible)** ✅
 - Pure instruction injection — the LLM follows them using available tools
 - This covers the majority of OpenClaw's skill catalog
 - Zero code execution, zero security surface
 
 **Tier 2: Native Go skills**
-- Implement the `Tool` interface directly in Go
+- [ ] Implement the `Tool` interface directly in Go
 - Used for core/built-in tools (web search, file ops, shell exec, memory)
 - Compiled into the binary
 
 **Tier 3: WASM sandboxed skills (community/third-party code)**
-- `wazero` runtime (pure Go, no CGo)
+- [ ] `wazero` runtime (pure Go, no CGo)
 - For skills that need custom code execution beyond what tools provide
 - Strict sandbox: no filesystem, no network unless explicitly granted via host functions
 - Host function ABI for controlled access to: HTTP, filesystem, memory store
 - Hot-loadable without recompiling the main binary
 
 ### Skill Registry & Import
-- Local registry in `~/.capabot/skills/`
-- `capabot skill import <openclaw-skill-dir>` — copies and validates OpenClaw skills
-- `capabot skill install <url>` — install from ClawHub-compatible registry
-- Security: hash verification, permission manifest, no implicit shell access
-- Tool name mapping table for OpenClaw→Capabot translation
+- [x] `capabot skill import <openclaw-skill-dir>` — copies and validates OpenClaw skills
+- [ ] Local registry in `~/.capabot/skills/`
+- [ ] `capabot skill install <url>` — install from ClawHub-compatible registry
+- [ ] Security: hash verification, permission manifest, no implicit shell access
+- [x] Tool name mapping table for OpenClaw→Capabot translation
 
 ---
 

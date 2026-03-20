@@ -1,6 +1,9 @@
 # Binary
 /capabot
 
+# Env
+.env
+
 # OS
 .DS_Store
 
