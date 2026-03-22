@@ -1,5 +1,7 @@
 package skill
 
+import "encoding/json"
+
 // InstallSpec describes how to install a required dependency.
 type InstallSpec struct {
 	Kind    string   `yaml:"kind"`    // brew, node, go, uv
@@ -68,6 +70,10 @@ type SkillManifest struct {
 	CommandDispatch        string `yaml:"command-dispatch"`
 	CommandTool            string `yaml:"command-tool"`
 	CommandArgMode         string `yaml:"command-arg-mode"`
+
+	// Parameters is the JSON Schema for WASM skills (Tier 3).
+	// Declares the input parameters the LLM should supply when calling the skill.
+	Parameters json.RawMessage `yaml:"parameters,omitempty"`
 }
 
 // ParseWarning describes a non-fatal issue found during parsing.

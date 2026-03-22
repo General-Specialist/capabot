@@ -1,0 +1,398 @@
+@import "tailwindcss";
+
+@font-face {
+    font-family: "Geist";
+    src: url("/node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2")
+        format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist";
+    src: url("/node_modules/geist/dist/fonts/geist-sans/Geist-Italic[wght].woff2")
+        format("woff2");
+    font-weight: 100 900;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist Mono";
+    src: url("/node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2")
+        format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+@plugin "@tailwindcss/typography";
+
+@theme {
+    --font-family-sans: "Geist", system-ui, sans-serif;
+    --font-family-mono: "Geist Mono", monospace;
+
+    /* Terminal colors (from tailwind.config.ts) */
+    --color-terminal-bg: #020617;
+    --color-terminal-surface: #030712;
+    --color-terminal-border: #1f2937;
+    --color-terminal-muted: #6b7280;
+    --color-terminal-green: #58cc02; /* Duolingo green */
+    --color-terminal-red: #ff4b4b; /* Duolingo red */
+    --color-terminal-yellow: #facc15;
+    --color-terminal-purple: #a855f7;
+    --color-terminal-blue: #38bdf8;
+}
+
+:root {
+    /* Light theme color tokens */
+    --color-white: #ffffff;
+    --color-sidebar-white: #f9f8f7;
+    --color-icon-white: #fafafa;
+    --color-icon-hover-white: #f3f3f3;
+    --color-border-white: #eeeeec;
+    --color-sidebar-hover-white: #e9e9e8;
+    --color-text-hover-black: #32302c;
+
+    /* Dark Theme Colors */
+    --color-dark-bg: #191919;
+    --color-dark-sidebar: #202020;
+    --color-dark-icon-hover: #30302e;
+    --color-dark-border: #2a2a2a;
+    --color-dark-sidebar-hover: #2c2c2c;
+    --color-dark-text-light: #a8a49c;
+    --color-dark-text-normal: #9b9b9b;
+    --color-dark-text-hover: #ffffff;
+
+    /* Accent colors */
+    --color-brand-primary: #f57c00;
+    --color-brand-secondary: #ffb74d;
+    --color-red: #ef4444;
+    --color-bronze: #cd7f32;
+
+    font-family: "Geist", sans-serif;
+    line-height: normal;
+    font-weight: 400;
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+
+    background-color: var(--color-white);
+    color: var(--color-text-hover-black);
+}
+
+/* ============================================================================
+   DARK MODE THEME OVERRIDES
+   ============================================================================ */
+.dark {
+    --color-dark-bg: #191919;
+    --color-dark-sidebar: #2c2c2c;
+    --color-dark-sidebar-hover: #2c2c2c;
+    --color-white: var(--color-dark-bg);
+    --color-sidebar-white: var(--color-dark-sidebar);
+    --color-icon-white: var(--color-dark-sidebar);
+    --color-icon-hover-white: var(--color-dark-icon-hover);
+    --color-border-white: var(--color-dark-border);
+    --color-sidebar-hover-white: var(--color-dark-sidebar-hover);
+    --color-text-hover-black: var(--color-dark-text-hover);
+}
+
+/* When dark mode is active, also flip the base html/body colors */
+html.dark,
+.dark body {
+    color: var(--color-text-hover-black);
+    background-color: var(--color-dark-bg);
+}
+
+/* ============================================================================
+   BASE HTML & BODY STYLES
+   ============================================================================ */
+html {
+    /* Apple-style rubber band: allow overscroll bounce on iOS/macOS Safari */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: auto;
+    overscroll-behavior-x: auto;
+}
+
+html,
+body {
+    margin: 0;
+    min-width: 320px;
+    overflow-x: visible;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    /* Rubber band: momentum scroll + bounce where supported */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: auto;
+    overscroll-behavior-x: auto;
+    /* Force base text + background to use our tokens (overriding Tailwind's body defaults) */
+    color: var(--color-text-hover-black);
+    background-color: var(--color-white);
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+    display: none;
+}
+
+/* ============================================================================
+   BASE & ELEMENT-LEVEL OVERRIDES
+   ============================================================================ */
+@layer base {
+    /* Make all button text pure white by default */
+    button,
+    [role="button"] {
+        color: #ffffff;
+    }
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+@layer utilities {
+    /* Scrollbar Hiding Utilities */
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Number Input Styling - Remove Spinner Arrows */
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    input[type="number"] {
+        appearance: textfield;
+    }
+
+    /* Input Focus Management */
+    input {
+        outline: none;
+    }
+
+    input:focus {
+        outline: none;
+    }
+
+    /* Typography */
+    .font-serif {
+        font-family: "Geist", sans-serif;
+    }
+
+    .font-mono {
+        font-family: "Geist Mono", monospace;
+    }
+
+    .font-sans {
+        font-family: "Geist", sans-serif;
+    }
+
+    .text-14 {
+        font-size: 14px;
+        font-weight: 400;
+    }
+
+    /* Icon utilities */
+    .icon {
+        width: 16px;
+        height: 16px;
+        color: var(--color-text-hover-black);
+        transition: color 150ms ease-in-out;
+    }
+
+    .icon-hover:hover {
+        color: var(--color-brand-primary);
+    }
+
+    /* ============================================================================
+     COLOR UTILITIES
+     ============================================================================ */
+
+    /* Background Colors */
+    .bg-white {
+        background-color: var(--color-white);
+    }
+    .bg-sidebar-white {
+        background-color: var(--color-sidebar-white);
+    }
+    .bg-icon-white {
+        background-color: var(--color-icon-white);
+    }
+    .bg-icon-hover-white {
+        background-color: var(--color-icon-hover-white);
+    }
+    .bg-border-white {
+        background-color: var(--color-border-white);
+    }
+    .bg-sidebar-hover-white {
+        background-color: var(--color-sidebar-hover-white);
+    }
+    .bg-light-black {
+        background-color: var(--color-dark-text-light);
+    }
+    .bg-light-black-hover:hover {
+        background-color: var(--color-dark-text-normal);
+    }
+    .bg-normal-black {
+        background-color: var(--color-dark-text-normal);
+    }
+    .bg-hover-black {
+        background-color: var(--color-text-hover-black);
+    }
+
+    /* Text Colors */
+    .text-white {
+        color: var(--color-white);
+    }
+    .text-sidebar-white {
+        color: var(--color-sidebar-white);
+    }
+    .text-icon-white {
+        color: var(--color-icon-white);
+    }
+    .text-icon-hover-white {
+        color: var(--color-icon-hover-white);
+    }
+    .text-border-white {
+        color: var(--color-border-white);
+    }
+    .text-sidebar-hover-white {
+        color: var(--color-sidebar-hover-white);
+    }
+    .text-hover-black {
+        color: var(--color-text-hover-black);
+    }
+    .text-normal-black {
+        color: var(--color-dark-text-normal);
+    }
+    .text-terminal-green {
+        color: var(--color-terminal-green);
+    }
+    .text-terminal-red {
+        color: var(--color-terminal-red);
+    }
+
+    /* Border Colors */
+    .border-white {
+        border-color: var(--color-white);
+    }
+    .border-sidebar-white {
+        border-color: var(--color-sidebar-white);
+    }
+    .border-icon-hover-white {
+        border-color: var(--color-icon-hover-white);
+    }
+    .border-border-white {
+        border-color: var(--color-border-white);
+    }
+    .border-sidebar-hover-white {
+        border-color: var(--color-sidebar-hover-white);
+    }
+    .border-hover-black {
+        border-color: var(--color-text-hover-black);
+    }
+
+    /* Accent Colors */
+    .bg-brand-secondary {
+        background-color: var(--color-brand-secondary);
+        color: #000000 !important;
+    }
+
+    .text-brand-secondary {
+        color: var(--color-brand-secondary);
+    }
+    .text-brand-primary {
+        color: var(--color-brand-primary);
+    }
+    .border-brand-secondary {
+        border-color: var(--color-brand-secondary);
+    }
+
+    .bg-red {
+        background-color: var(--color-red);
+    }
+    .text-red {
+        color: var(--color-red);
+    }
+    .border-red {
+        border-color: var(--color-red);
+    }
+
+    .bg-bronze {
+        background-color: var(--color-bronze);
+    }
+    .text-bronze {
+        color: var(--color-bronze);
+    }
+    .border-bronze {
+        border-color: var(--color-bronze);
+    }
+
+    .bg-contact-yellow {
+        background-color: var(--color-brand-secondary);
+        color: var(--color-text-hover-black);
+    }
+    .bg-contact-yellow:hover {
+        background-color: var(--color-brand-secondary);
+    }
+}
+
+/* ============================================================================
+   GLASS CLASSES — Apple macOS Tahoe vibrancy
+   ============================================================================ */
+@layer components {
+    .glass {
+        /* Frosted glass fill — light mode */
+        background-color: rgba(252, 252, 252, 0.62);
+        /* Strong blur + saturation boost = Tahoe vibrancy */
+        backdrop-filter: blur(32px) saturate(180%) brightness(1.04);
+        -webkit-backdrop-filter: blur(32px) saturate(180%) brightness(1.04);
+        box-shadow:
+      /* Specular top-edge highlight — simulates glass catching overhead light */
+            inset 0 1px 0 rgba(255, 255, 255, 0.85),
+            /* Left-edge secondary highlight */ inset 1px 0 0
+                rgba(255, 255, 255, 0.4),
+            /* Outer ambient shadow */ 0 8px 32px rgba(0, 0, 0, 0.08),
+            0 2px 6px rgba(0, 0, 0, 0.05);
+    }
+
+    .dark .glass {
+        /* Dark vibrancy fill — deep but translucent */
+        background-color: rgba(26, 26, 28, 0.72);
+        /* Stronger saturation to keep colors vivid through dark glass */
+        backdrop-filter: blur(32px) saturate(220%) brightness(0.88);
+        -webkit-backdrop-filter: blur(32px) saturate(220%) brightness(0.88);
+        box-shadow:
+      /* Very subtle specular highlight in dark mode */
+            inset 0 1px 0 rgba(255, 255, 255, 0.08),
+            inset 1px 0 0 rgba(255, 255, 255, 0.03),
+            /* Deeper shadow for dark surfaces */ 0 8px 32px rgba(0, 0, 0, 0.4),
+            0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+}
+
+/* Apple-style rubber band on scroll containers (use with overflow-y-auto) */
+.rubber-band-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: auto;
+    overscroll-behavior-x: auto;
+}
+
+/* Accessibility: respect prefers-reduced-motion (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

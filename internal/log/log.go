@@ -29,6 +29,26 @@ func New(level string, pretty bool) zerolog.Logger {
 		Logger()
 }
 
+// NewWithWriter creates a zerolog.Logger that writes to the provided writer.
+// When pretty is true, the writer receives human-readable console-formatted lines.
+func NewWithWriter(level string, pretty bool, w io.Writer) zerolog.Logger {
+	lvl := parseLevel(level)
+
+	var out io.Writer = w
+	if pretty {
+		out = zerolog.ConsoleWriter{
+			Out:        w,
+			TimeFormat: time.RFC3339,
+		}
+	}
+
+	return zerolog.New(out).
+		Level(lvl).
+		With().
+		Timestamp().
+		Logger()
+}
+
 // WithContext returns a child logger enriched with tenant, session, and agent IDs.
 func WithContext(logger zerolog.Logger, tenantID, sessionID, agentID string) zerolog.Logger {
 	ctx := logger.With()

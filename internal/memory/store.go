@@ -73,6 +73,87 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	})
 }
 
+// DeleteOldSessions removes sessions (and their messages/tool_executions) that
+// have not been updated within the given duration. Returns the number of sessions deleted.
+func (s *Store) DeleteOldSessions(ctx context.Context, olderThan time.Duration) (int, error) {
+	cutoff := time.Now().Add(-olderThan).Format("2006-01-02 15:04:05")
+	var count int
+	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		// Collect IDs to delete so we can cascade manually (no ON DELETE CASCADE)
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id FROM sessions WHERE updated_at < ?`, cutoff)
+		if err != nil {
+			return fmt.Errorf("querying old sessions: %w", err)
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM tool_executions WHERE session_id = ?`, id); err != nil {
+				return fmt.Errorf("deleting tool executions for %s: %w", id, err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, id); err != nil {
+				return fmt.Errorf("deleting messages for %s: %w", id, err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id); err != nil {
+				return fmt.Errorf("deleting session %s: %w", id, err)
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
+// ListSessions returns the most recent sessions ordered by updated_at descending.
+func (s *Store) ListSessions(ctx context.Context, limit, offset int) ([]Session, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, tenant_id, channel, user_id, created_at, updated_at, metadata
+		 FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?`, limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var sess Session
+		var createdAt, updatedAt string
+		if err := rows.Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.UserID,
+			&createdAt, &updatedAt, &sess.Metadata); err != nil {
+			return nil, fmt.Errorf("scanning session: %w", err)
+		}
+		sess.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		sess.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
+// CountMessages returns the number of messages in a session.
+func (s *Store) CountMessages(ctx context.Context, sessionID string) (int, error) {
+	var count int
+	err := s.pool.ReadDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE session_id = ?`, sessionID,
+	).Scan(&count)
+	return count, err
+}
+
 // GetSession retrieves a session by ID.
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	var sess Session
@@ -234,6 +315,31 @@ func (s *Store) SaveToolExecution(ctx context.Context, exec ToolExecution) error
 		)
 		return err
 	})
+}
+
+// ListMemory returns all memory entries for a tenant.
+func (s *Store) ListMemory(ctx context.Context, tenantID string) ([]MemoryEntry, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, tenant_id, key, value, created_at, updated_at
+		 FROM memory WHERE tenant_id = ? ORDER BY key ASC`, tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing memory: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []MemoryEntry
+	for rows.Next() {
+		var e MemoryEntry
+		var createdAt, updatedAt string
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.Key, &e.Value, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scanning memory entry: %w", err)
+		}
+		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		e.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 // DeleteMemory removes a memory entry by tenant and key.

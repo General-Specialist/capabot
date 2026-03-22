@@ -15,3 +15,7 @@
 # Test
 coverage.out
 *.test
+
+# Web
+web/node_modules/
+web/dist/

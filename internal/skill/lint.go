@@ -65,5 +65,11 @@ func LintSkill(source []byte) LintReport {
 		report.Warnings = append(report.Warnings, "missing recommended field: version")
 	}
 
+	// Check requires.bins against the host PATH
+	missingBins := CheckRequirements(parsed)
+	for _, bin := range missingBins {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("requires binary not found in PATH: %s", bin))
+	}
+
 	return report
 }

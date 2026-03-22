@@ -9,6 +9,27 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// EventKind identifies the type of an agent event.
+type EventKind string
+
+const (
+	EventThinking  EventKind = "thinking"   // LLM is being called
+	EventToolStart EventKind = "tool_start" // tool execution beginning
+	EventToolEnd   EventKind = "tool_end"   // tool execution complete
+	EventResponse  EventKind = "response"   // final text response
+)
+
+// AgentEvent is emitted during agent execution so callers can stream progress.
+type AgentEvent struct {
+	Kind     EventKind `json:"kind"`
+	ToolName string    `json:"tool_name,omitempty"`
+	ToolID   string    `json:"tool_id,omitempty"`
+	Content  string    `json:"content,omitempty"`
+	IsError  bool      `json:"is_error,omitempty"`
+	// Iteration is the ReAct loop index (1-based).
+	Iteration int `json:"iteration,omitempty"`
+}
+
 // AgentConfig holds configuration for an Agent instance.
 type AgentConfig struct {
 	ID            string
@@ -63,6 +84,7 @@ type Agent struct {
 	ctxMgr   *ContextManager
 	store    StoreWriter // nil = no persistence
 	logger   zerolog.Logger
+	onEvent  func(AgentEvent) // nil = no streaming
 }
 
 // New creates a new Agent with the given dependencies.
@@ -79,6 +101,20 @@ func New(cfg AgentConfig, provider llm.Provider, tools *Registry, ctxMgr *Contex
 		tools:    tools,
 		ctxMgr:   ctxMgr,
 		logger:   logger,
+	}
+}
+
+// SetOnEvent registers a callback that will be called for each agent event
+// during Run(). The callback must not block. Use a buffered channel or
+// goroutine inside the callback if you need to fan-out.
+func (a *Agent) SetOnEvent(fn func(AgentEvent)) {
+	a.onEvent = fn
+}
+
+// emit sends an event if a callback is registered.
+func (a *Agent) emit(e AgentEvent) {
+	if a.onEvent != nil {
+		a.onEvent(e)
 	}
 }
 
@@ -123,6 +159,8 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 			Int("messages", len(windowedMsgs)).
 			Msg("calling LLM")
 
+		a.emit(AgentEvent{Kind: EventThinking, Iteration: iteration + 1})
+
 		resp, err := a.provider.Chat(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("LLM call failed (iteration %d): %w", iteration+1, err)
@@ -141,6 +179,7 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 		if len(resp.ToolCalls) == 0 {
 			result.Response = resp.Content
 			result.History = history
+			a.emit(AgentEvent{Kind: EventResponse, Content: resp.Content, Iteration: iteration + 1})
 			a.logger.Info().
 				Int("iterations", result.Iterations).
 				Int("tool_calls", result.ToolCalls).
@@ -240,6 +279,8 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 		Str("id", tc.ID).
 		Msg("executing tool")
 
+	a.emit(AgentEvent{Kind: EventToolStart, ToolName: tc.Name, ToolID: tc.ID})
+
 	start := time.Now()
 	result, err := tool.Execute(ctx, tc.Input)
 	duration := time.Since(start)
@@ -261,6 +302,8 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 			Int("output_len", len(result.Content)).
 			Msg("tool execution complete")
 	}
+
+	a.emit(AgentEvent{Kind: EventToolEnd, ToolName: tc.Name, ToolID: tc.ID, Content: result.Content, IsError: result.IsError})
 
 	// Audit log
 	a.persistToolExecution(ctx, sessionID, tc, result, duration)

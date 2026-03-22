@@ -10,13 +10,14 @@ import (
 
 // Config is the top-level configuration for Capabot.
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	LogLevel  string          `yaml:"log_level"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Providers ProvidersConfig `yaml:"providers"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Skills    SkillsConfig    `yaml:"skills"`
-	Security  SecurityConfig  `yaml:"security"`
+	Server     ServerConfig     `yaml:"server"`
+	LogLevel   string           `yaml:"log_level"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Providers  ProvidersConfig  `yaml:"providers"`
+	Agent      AgentConfig      `yaml:"agent"`
+	Skills     SkillsConfig     `yaml:"skills"`
+	Security   SecurityConfig   `yaml:"security"`
+	Transports TransportsConfig `yaml:"transports"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -31,9 +32,18 @@ type DatabaseConfig struct {
 
 // ProvidersConfig holds LLM provider configurations.
 type ProvidersConfig struct {
-	Anthropic AnthropicConfig `yaml:"anthropic"`
-	OpenAI    OpenAIConfig    `yaml:"openai"`
-	Gemini    GeminiConfig    `yaml:"gemini"`
+	Anthropic  AnthropicConfig  `yaml:"anthropic"`
+	OpenAI     OpenAIConfig     `yaml:"openai"`
+	Gemini     GeminiConfig     `yaml:"gemini"`
+	OpenRouter OpenRouterConfig `yaml:"openrouter"`
+}
+
+// OpenRouterConfig holds OpenRouter gateway settings.
+type OpenRouterConfig struct {
+	APIKey  string `yaml:"api_key"`
+	Model   string `yaml:"model"`
+	AppName string `yaml:"app_name"`
+	SiteURL string `yaml:"site_url"`
 }
 
 // GeminiConfig holds Google Gemini API settings.
@@ -69,8 +79,37 @@ type SkillsConfig struct {
 
 // SecurityConfig holds security-related settings.
 type SecurityConfig struct {
-	ShellAllowlist []string `yaml:"shell_allowlist"`
-	DrainTimeout   int      `yaml:"drain_timeout"`
+	ShellAllowlist   []string `yaml:"shell_allowlist"`
+	DrainTimeout     int      `yaml:"drain_timeout"`
+	APIKey           string   `yaml:"api_key"`            // optional bearer token for REST API
+	RateLimitRPM     int      `yaml:"rate_limit_rpm"`     // requests per minute per IP (0 = disabled)
+	ContentFiltering bool     `yaml:"content_filtering"`  // enable prompt injection detection
+	SessionTTLDays   int      `yaml:"session_ttl_days"`   // days before inactive sessions are deleted (0 = never)
+}
+
+// TransportsConfig holds settings for bot transport adapters.
+type TransportsConfig struct {
+	Telegram TelegramTransportConfig `yaml:"telegram"`
+	Discord  DiscordTransportConfig  `yaml:"discord"`
+	Slack    SlackTransportConfig    `yaml:"slack"`
+}
+
+// TelegramTransportConfig holds Telegram bot settings.
+type TelegramTransportConfig struct {
+	Token       string `yaml:"token"`
+	WebhookAddr string `yaml:"webhook_addr"` // if set, use webhook mode; else long-poll
+}
+
+// DiscordTransportConfig holds Discord bot settings.
+type DiscordTransportConfig struct {
+	Token   string `yaml:"token"`
+	GuildID string `yaml:"guild_id"` // optional: restrict to one guild
+}
+
+// SlackTransportConfig holds Slack bot settings.
+type SlackTransportConfig struct {
+	AppToken string `yaml:"app_token"` // xapp- token for Socket Mode
+	BotToken string `yaml:"bot_token"` // xoxb- token for sending
 }
 
 // LoadFromFile reads a YAML config file, merges with defaults, applies
@@ -125,6 +164,27 @@ func applyEnvOverrides(cfg Config) Config {
 	}
 	if v := os.Getenv("CAPABOT_GEMINI_MODEL"); v != "" {
 		cfg.Providers.Gemini.Model = v
+	}
+	if v := os.Getenv("CAPABOT_OPENROUTER_API_KEY"); v != "" {
+		cfg.Providers.OpenRouter.APIKey = v
+	}
+	if v := os.Getenv("CAPABOT_OPENROUTER_MODEL"); v != "" {
+		cfg.Providers.OpenRouter.Model = v
+	}
+	if v := os.Getenv("CAPABOT_API_KEY"); v != "" {
+		cfg.Security.APIKey = v
+	}
+	if v := os.Getenv("CAPABOT_TELEGRAM_TOKEN"); v != "" {
+		cfg.Transports.Telegram.Token = v
+	}
+	if v := os.Getenv("CAPABOT_DISCORD_TOKEN"); v != "" {
+		cfg.Transports.Discord.Token = v
+	}
+	if v := os.Getenv("CAPABOT_SLACK_APP_TOKEN"); v != "" {
+		cfg.Transports.Slack.AppToken = v
+	}
+	if v := os.Getenv("CAPABOT_SLACK_BOT_TOKEN"); v != "" {
+		cfg.Transports.Slack.BotToken = v
 	}
 	return cfg
 }
