@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/polymath/capabot/internal/updater"
 )
+
+// Set via -ldflags at build time.
+var version = "dev"
 
 const defaultConfigPath = "~/.capabot/config.yaml"
 
 func main() {
+	au := updater.Prepare(version)
+	defer au.Apply()
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)

@@ -3,9 +3,14 @@
 OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less code — and every ClawHub skill works out of the box.
 
 ```bash
-git clone https://github.com/General-Specialist/capabot.git && cd capabot && make build
+# macOS/Linux
+curl -fsSL https://raw.githubusercontent.com/General-Specialist/capabot/main/install.sh | sh
+
+# Windows: 
+irm https://raw.githubusercontent.com/General-Specialist/capabot/main/install.ps1 | iex
+
 cp config.example.yaml ~/.capabot/config.yaml  # add your API key
-./bin/capabot serve                             # http://localhost:9090
+capabot serve                                   # http://localhost:9090
 ```
 
 **Questions, feedback, or just want to hang?** I respond basically ASAP — [join the Discord](https://discord.gg/ktAy8fZH)
@@ -17,13 +22,27 @@ cp config.example.yaml ~/.capabot/config.yaml  # add your API key
 | Cold start | 2–5s | <100ms | **20x faster** |
 | Idle memory | ~200MB | ~23MB | **~9x lower** |
 | Codebase | ~1.2M lines JS | ~18K lines Go | **67x less code** |
-| Install | npm + runtime + deps | single binary | |
+| Install | npm + runtime + deps | single binary, auto-updates | |
 | Skills | 30K+ on ClawHub | 30K+ on ClawHub | |
 | Providers | 25+ | 4 (Anthropic, OpenAI, Gemini, OpenRouter) | |
 | Transports | WhatsApp, Telegram, Slack, Discord, Signal, iMessage | Telegram, Discord, Slack, HTTP | |
 | Web UI | yes | yes (embedded, no separate deploy) | |
 | Multi-agent | yes | yes | |
 | WASM sandbox | no | yes | |
+
+## Install
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/General-Specialist/capabot/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/General-Specialist/capabot/main/install.ps1 | iex
+```
+
+Capabot auto-updates in the background — every run checks for new releases and silently replaces the binary. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
 
 ## Quick start
 
@@ -135,10 +154,24 @@ capabot agent      List configured agents
 capabot migrate    Run database migrations
 ```
 
-## Building
+## Development
 
 ```bash
-make build          # ./bin/capabot
+# Install air for Go hot-reload
+go install github.com/air-verse/air@latest
+
+# Install frontend deps
+cd web && bun install && cd ..
+
+# Run both in separate terminals:
+air                 # Go backend with hot-reload (http://localhost:9090)
+cd web && bun dev   # Vite frontend with HMR (http://localhost:5173)
+```
+
+## Building from source
+
+```bash
+make build          # ./capabot
 make build-linux    # Linux amd64
 make build-arm      # Linux arm64
 make test
