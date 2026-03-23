@@ -4,7 +4,7 @@ project_name: capabot
 
 before:
   hooks:
-    - cmd: sh -c "cd web && npm install && npm run build"
+    - sh -c "cd web && npm install && npm run build"
 
 builds:
   - main: ./cmd/capabot
