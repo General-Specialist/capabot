@@ -101,7 +101,7 @@ export function SkillsPage() {
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-3xl">
+      <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-6 mb-6">
           <div className="flex gap-1 text-sm">
             <button

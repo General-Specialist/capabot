@@ -65,6 +65,85 @@ function RunRow({ run }: { run: AutomationRun }) {
 
 const EMPTY_FORM = { name: '', prompt: '', skill_name: '', enabled: true, rrule: '', start_at: null as string | null, end_at: null as string | null }
 
+type FormState = typeof EMPTY_FORM
+
+function AutomationForm({ form, setForm, error, saving, triggering, deleting, selected, onSave, onTrigger, onDelete, onScheduleChange, skills }: {
+  form: FormState
+  setForm: React.Dispatch<React.SetStateAction<FormState>>
+  error: string | null
+  saving: boolean
+  triggering: boolean
+  deleting: boolean
+  selected: Automation | null
+  onSave: () => void
+  onTrigger: () => void
+  onDelete: () => void
+  onScheduleChange: (r: string | null, s: string | null, e: string | null) => void
+  skills: Skill[]
+}) {
+  return (
+    <div className="rounded-lg border border-border-white p-5 space-y-4 mt-1">
+      <div className="space-y-3">
+        <input
+          value={form.name}
+          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          placeholder="Name"
+          className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+        />
+        <div className="px-3 rounded-lg border border-border-white bg-sidebar-white">
+          <DatePicker
+            recurrenceRule={form.rrule || null}
+            absoluteStartUtc={form.start_at}
+            absoluteEndUtc={form.end_at}
+            showRepeat={true}
+            onChange={onScheduleChange}
+          />
+        </div>
+        <SkillPicker skills={skills} value={form.skill_name} onChange={name => setForm(f => ({ ...f, skill_name: name }))} />
+        <textarea
+          value={form.prompt}
+          onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
+          placeholder={form.skill_name ? 'Optional: add a prompt to let the agent decide when/how to use this skill' : 'Prompt — what should the agent do?'}
+          rows={form.skill_name ? 2 : 4}
+          className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
+        />
+        {form.skill_name && !form.prompt && skills.find(s => s.name === form.skill_name)?.tier >= 2 && (
+          <p className="text-xs text-brand-primary">Runs directly — no LLM tokens used</p>
+        )}
+      </div>
+
+      {error && <p className="text-xs text-red">{error}</p>}
+
+      <div className="flex items-center gap-2">
+        <button onClick={onSave} disabled={saving} className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {selected && (
+          <>
+            <button onClick={onTrigger} disabled={triggering} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border-white rounded-lg text-hover-black hover:bg-sidebar-white disabled:opacity-40 transition-colors">
+              {triggering ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> : <Play size={12} />}
+              Run now
+            </button>
+            <button onClick={onDelete} disabled={deleting} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-normal-black hover:text-red hover:bg-sidebar-white border border-border-white rounded-lg disabled:opacity-40 transition-colors">
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </>
+        )}
+      </div>
+
+      {selected && (
+        <>
+          <div className="text-xs text-normal-black flex gap-4 pt-1">
+            <span>Last run: {formatRelative(selected.last_run_at)}</span>
+            <span>Next: {formatFuture(selected.next_run_at)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function AutomationsPage() {
   const [automations, setAutomations] = useState<Automation[]>([])
   const [selected, setSelected] = useState<Automation | null>(null)
@@ -189,7 +268,7 @@ export function AutomationsPage() {
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-4xl">
+      <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-end mb-6">
           <button
             onClick={startNew}
@@ -200,23 +279,25 @@ export function AutomationsPage() {
           </button>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-1">
+          {/* New automation form — appears above the list */}
+          {isNew && <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={false} deleting={false} selected={null} onSave={() => void save()} onTrigger={() => {}} onDelete={() => {}} onScheduleChange={handleScheduleChange} skills={skills} />}
+
           {/* List */}
-          <div className={`${showPanel ? 'w-64 shrink-0' : 'w-full'}`}>
-            {loading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-lg animate-pulse bg-icon-hover-white" />
-                ))}
-              </div>
-            ) : automations.length === 0 && !showPanel ? (
-              <p className="text-sm text-normal-black">No automations yet. Click <strong>New</strong> to create one.</p>
-            ) : (
-              <div className="space-y-1">
-                {automations.map(a => (
+          {loading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-14 rounded-lg animate-pulse bg-icon-hover-white" />
+              ))}
+            </div>
+          ) : automations.length === 0 && !isNew ? (
+            <p className="text-sm text-normal-black">No automations yet. Click <strong>New</strong> to create one.</p>
+          ) : (
+            <div className="space-y-0">
+              {automations.map(a => (
+                <div key={a.id}>
                   <button
-                    key={a.id}
-                    onClick={() => selectAutomation(a)}
+                    onClick={() => selected?.id === a.id ? setSelected(null) : selectAutomation(a)}
                     className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                       selected?.id === a.id ? 'bg-icon-hover-white' : 'hover:bg-sidebar-white'
                     }`}
@@ -233,113 +314,23 @@ export function AutomationsPage() {
                       </div>
                       <p className="text-xs text-normal-black font-mono mt-0.5 truncate">{a.skill_name || a.rrule || '—'}</p>
                     </div>
-                    <ChevronRight size={13} className="text-normal-black shrink-0" />
+                    <ChevronDown size={13} className={`text-normal-black shrink-0 transition-transform ${selected?.id === a.id ? '' : '-rotate-90'}`} />
                   </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Detail / form panel */}
-          {showPanel && (
-            <div className="flex-1 min-w-0">
-              <div className="rounded-lg border border-border-white p-5 space-y-4">
-                <div className="space-y-3">
-                  <input
-                    value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder="Name"
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
-                  />
-                  <div className="px-3 rounded-lg border border-border-white bg-sidebar-white">
-                    <DatePicker
-                      recurrenceRule={form.rrule || null}
-                      absoluteStartUtc={form.start_at}
-                      absoluteEndUtc={form.end_at}
-                      showRepeat={true}
-                      onChange={handleScheduleChange}
-                    />
-                  </div>
-
-                  {/* Skill picker */}
-                  <SkillPicker
-                    skills={skills}
-                    value={form.skill_name}
-                    onChange={name => setForm(f => ({ ...f, skill_name: name }))}
-                  />
-
-                  <textarea
-                    value={form.prompt}
-                    onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-                    placeholder={form.skill_name
-                      ? 'Optional: add a prompt to let the agent decide when/how to use this skill'
-                      : 'Prompt — what should the agent do?'}
-                    rows={form.skill_name ? 2 : 4}
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
-                  />
-                  {form.skill_name && !form.prompt && skills.find(s => s.name === form.skill_name)?.tier >= 2 && (
-                    <p className="text-xs text-brand-primary">Runs directly — no LLM tokens used</p>
-                  )}
-                </div>
-
-                {error && <p className="text-xs text-red">{error}</p>}
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void save()}
-                    disabled={saving}
-                    className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity"
-                  >
-                    {saving ? 'Saving…' : 'Save'}
-                  </button>
-                  {selected && (
-                    <>
-                      <button
-                        onClick={() => void trigger()}
-                        disabled={triggering}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border-white rounded-lg text-hover-black hover:bg-sidebar-white disabled:opacity-40 transition-colors"
-                      >
-                        {triggering
-                          ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-                          : <Play size={12} />
-                        }
-                        Run now
-                      </button>
-                      <button
-                        onClick={() => void remove()}
-                        disabled={deleting}
-                        className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-normal-black hover:text-red hover:bg-sidebar-white border border-border-white rounded-lg disabled:opacity-40 transition-colors"
-                      >
-                        <Trash2 size={12} />
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {selected && (
-                  <div className="text-xs text-normal-black flex gap-4 pt-1">
-                    <span>Last run: {formatRelative(selected.last_run_at)}</span>
-                    <span>Next: {formatFuture(selected.next_run_at)}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Run history */}
-              {selected && (
-                <div className="mt-4">
-                  <p className="text-xs font-medium text-normal-black mb-2">Recent runs</p>
-                  {runs.length === 0 ? (
-                    <p className="text-xs text-normal-black">No runs yet.</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {runs.map(run => (
-                        <RunRow key={run.id} run={run} />
-                      ))}
+                  {selected?.id === a.id && (
+                    <div className="mx-1 mb-2 space-y-3">
+                      <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={triggering} deleting={deleting} selected={selected} onSave={() => void save()} onTrigger={() => void trigger()} onDelete={() => void remove()} onScheduleChange={handleScheduleChange} skills={skills} />
+                      {runs.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-normal-black mb-2 px-1">Recent runs</p>
+                          <div className="space-y-1">
+                            {runs.map(run => <RunRow key={run.id} run={run} />)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
           )}
         </div>
