@@ -1,6 +1,6 @@
 # capabot
 
-OpenClaw, but a single binary. 10x faster start, 100x lower memory, 1/10 the code — and every ClawHub skill works out of the box.
+OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less code — and every ClawHub skill works out of the box.
 
 ```
 git clone https://github.com/General-Specialist/capabot.git && cd capabot && make build
@@ -13,8 +13,8 @@ git clone https://github.com/General-Specialist/capabot.git && cd capabot && mak
 | | OpenClaw | capabot | |
 |---|---|---|---|
 | Cold start | 2–5s | <100ms | **20x faster** |
-| Idle memory | ~200MB | ~10MB | **20x lower** |
-| Codebase | ~180K lines JS | ~18K lines Go | **10x less code** |
+| Idle memory | ~200MB | ~23MB | **~9x lower** |
+| Codebase | ~1.2M lines JS | ~18K lines Go | **67x less code** |
 | Install | npm + runtime + deps | single binary | |
 | Skills | 30K+ on ClawHub | 30K+ on ClawHub | |
 | Providers | 25+ | 4 (Anthropic, OpenAI, Gemini, OpenRouter) | |
