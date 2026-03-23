@@ -40,6 +40,7 @@ type Message struct {
 	Content    string    `json:"content"`
 	ToolCallID string    `json:"tool_call_id,omitempty"`
 	ToolName   string    `json:"tool_name,omitempty"`
+	ToolInput  string    `json:"tool_input,omitempty"`
 	TokenCount int       `json:"token_count"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -192,9 +193,9 @@ func (s *Store) SaveMessage(ctx context.Context, msg Message) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx,
-			`INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, token_count)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, msg.ToolName, msg.TokenCount,
+			`INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, tool_input, token_count)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, msg.ToolName, msg.ToolInput, msg.TokenCount,
 		)
 		if err != nil {
 			return err
@@ -208,7 +209,7 @@ func (s *Store) SaveMessage(ctx context.Context, msg Message) (int64, error) {
 // GetMessages retrieves all messages for a session, ordered by creation time.
 func (s *Store) GetMessages(ctx context.Context, sessionID string) ([]Message, error) {
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
-		`SELECT id, session_id, role, content, tool_call_id, tool_name, token_count, created_at
+		`SELECT id, session_id, role, content, tool_call_id, tool_name, tool_input, token_count, created_at
 		 FROM messages WHERE session_id = ? ORDER BY id ASC`, sessionID,
 	)
 	if err != nil {
@@ -221,7 +222,7 @@ func (s *Store) GetMessages(ctx context.Context, sessionID string) ([]Message, e
 		var m Message
 		var createdAt string
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content,
-			&m.ToolCallID, &m.ToolName, &m.TokenCount, &createdAt); err != nil {
+			&m.ToolCallID, &m.ToolName, &m.ToolInput, &m.TokenCount, &createdAt); err != nil {
 			return nil, fmt.Errorf("scanning message: %w", err)
 		}
 		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)

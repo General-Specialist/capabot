@@ -253,8 +253,8 @@ func validate(cfg Config) error {
 		return fmt.Errorf("log_level must be one of trace/debug/info/warn/error/fatal (got %q)", cfg.LogLevel)
 	}
 
-	if cfg.Agent.MaxIterations < 1 {
-		return fmt.Errorf("agent.max_iterations must be >= 1 (got %d)", cfg.Agent.MaxIterations)
+	if cfg.Agent.MaxIterations < 0 {
+		return fmt.Errorf("agent.max_iterations must be >= 0 (0 = unlimited, got %d)", cfg.Agent.MaxIterations)
 	}
 
 	if cfg.Agent.ContextBudgetPct <= 0 || cfg.Agent.ContextBudgetPct > 1.0 {

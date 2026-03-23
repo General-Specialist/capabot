@@ -272,17 +272,26 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		Version      string `json:"version"`
 		Instructions string `json:"instructions"`
 		Removable    bool   `json:"removable"`
+		Tier         int    `json:"tier"` // 1=prompt-only, 2=native Go, 3=WASM
 	}
 	out := make([]skillDTO, len(all))
 	for i, sk := range all {
-		path, hasPath := s.skillReg.SkillPath(sk.Manifest.Name)
+		name := sk.Manifest.Name
+		path, hasPath := s.skillReg.SkillPath(name)
 		removable := hasPath && strings.HasPrefix(path, s.skillsDir)
+		tier := 1
+		if _, ok := s.skillReg.NativePath(name); ok {
+			tier = 2
+		} else if _, ok := s.skillReg.WASMPath(name); ok {
+			tier = 3
+		}
 		out[i] = skillDTO{
-			Name:         sk.Manifest.Name,
+			Name:         name,
 			Description:  sk.Manifest.Description,
 			Version:      sk.Manifest.Version,
 			Instructions: sk.Instructions,
 			Removable:    removable,
+			Tier:         tier,
 		}
 	}
 	writeJSON(w, out)
@@ -312,15 +321,15 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text      string `json:"text"`
-		SessionID string `json:"session_id"`
+		Messages  []llm.ChatMessage `json:"messages"`
+		SessionID string            `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Text == "" {
-		writeError(w, "text is required", http.StatusBadRequest)
+	if len(req.Messages) == 0 {
+		writeError(w, "messages is required", http.StatusBadRequest)
 		return
 	}
 	if s.defaultAgent == nil {
@@ -328,11 +337,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	lastUserText := lastUserContent(req.Messages)
 	tenantID := TenantIDFromContext(r.Context())
-	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, req.Text)
+	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
 
-	messages := []llm.ChatMessage{{Role: "user", Content: req.Text}}
-	result, err := s.defaultAgent(r.Context(), sessionID, messages, nil)
+	result, err := s.defaultAgent(r.Context(), sessionID, req.Messages, nil)
 	if err != nil {
 		writeError(w, fmt.Sprintf("agent error: %v", err), http.StatusInternalServerError)
 		return
@@ -349,15 +358,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text      string `json:"text"`
-		SessionID string `json:"session_id"`
+		Messages  []llm.ChatMessage `json:"messages"`
+		SessionID string            `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Text == "" {
-		writeError(w, "text is required", http.StatusBadRequest)
+	if len(req.Messages) == 0 {
+		writeError(w, "messages is required", http.StatusBadRequest)
 		return
 	}
 	if s.defaultAgent == nil {
@@ -397,16 +406,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Ensure session exists and user message is persisted before running.
+	lastUserText := lastUserContent(req.Messages)
 	tenantID := TenantIDFromContext(r.Context())
-	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, req.Text)
+	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
 
-	// Send session_id as first event so the client can track the conversation.
 	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
-
-	// Run the agent, feeding events into eventCh.
-	messages := []llm.ChatMessage{{Role: "user", Content: req.Text}}
-	result, err := s.defaultAgent(r.Context(), sessionID, messages, func(ev agent.AgentEvent) {
+	result, err := s.defaultAgent(r.Context(), sessionID, req.Messages, func(ev agent.AgentEvent) {
 		select {
 		case eventCh <- ev:
 		default: // drop if buffer full rather than blocking agent
@@ -557,6 +562,16 @@ func (s *Server) handleSkillsUninstall(w http.ResponseWriter, r *http.Request) {
 
 	s.skillReg.Unregister(name)
 	writeJSON(w, map[string]any{"success": true, "name": name})
+}
+
+// lastUserContent returns the content of the last user message in a slice.
+func lastUserContent(messages []llm.ChatMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return messages[i].Content
+		}
+	}
+	return ""
 }
 
 // newSessionID generates a random hex session ID.

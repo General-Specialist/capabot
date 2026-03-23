@@ -126,3 +126,50 @@ func (t *MemoryRecallTool) Execute(ctx context.Context, params json.RawMessage) 
 	}
 	return agent.ToolResult{Content: fmt.Sprintf("no memory entry found for key %q", p.Key), IsError: true}, nil
 }
+
+// MemoryDeleteTool implements the memory_delete tool.
+type MemoryDeleteTool struct {
+	store *memory.Store
+}
+
+// NewMemoryDeleteTool creates a memory_delete tool backed by the given store.
+func NewMemoryDeleteTool(store *memory.Store) *MemoryDeleteTool {
+	return &MemoryDeleteTool{store: store}
+}
+
+func (t *MemoryDeleteTool) Name() string { return "memory_delete" }
+func (t *MemoryDeleteTool) Description() string {
+	return "Delete a memory entry by key."
+}
+
+func (t *MemoryDeleteTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"key":       {"type": "string", "description": "Key to delete"},
+			"tenant_id": {"type": "string", "description": "Namespace used when storing (default: global)"}
+		},
+		"required": ["key"]
+	}`)
+}
+
+func (t *MemoryDeleteTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
+	var p struct {
+		Key      string `json:"key"`
+		TenantID string `json:"tenant_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return agent.ToolResult{Content: "invalid parameters", IsError: true}, nil
+	}
+	if p.Key == "" {
+		return agent.ToolResult{Content: "key is required", IsError: true}, nil
+	}
+	if p.TenantID == "" {
+		p.TenantID = "global"
+	}
+
+	if err := t.store.DeleteMemory(ctx, p.TenantID, p.Key); err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("delete error: %v", err), IsError: true}, nil
+	}
+	return agent.ToolResult{Content: fmt.Sprintf("deleted memory[%s]", p.Key)}, nil
+}

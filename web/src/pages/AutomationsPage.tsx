@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Plus, Play, Trash2, ChevronRight } from 'lucide-react'
+import { Plus, Play, Trash2, ChevronRight, ChevronDown } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { api, type Automation, type AutomationRun, type Skill } from '@/lib/api'
 import DatePicker from '@/components/DatePicker'
+import SkillPicker from '@/components/SkillPicker'
 
 function formatRelative(iso: string | null): string {
   if (!iso) return '—'
@@ -22,6 +24,43 @@ function formatFuture(iso: string | null): string {
   if (diff < 3_600_000) return `in ${Math.floor(diff / 60_000)}m`
   if (diff < 86_400_000) return `in ${Math.floor(diff / 3_600_000)}h`
   return `in ${Math.floor(diff / 86_400_000)}d`
+}
+
+function RunRow({ run }: { run: AutomationRun }) {
+  const [expanded, setExpanded] = useState(false)
+  const body = run.error || run.response
+  const isError = run.status === 'error'
+
+  return (
+    <div className="text-xs">
+      <button
+        onClick={() => body && setExpanded(e => !e)}
+        className={`w-full flex items-center gap-3 py-1.5 text-left ${body ? 'cursor-pointer' : 'cursor-default'}`}
+      >
+        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
+          run.status === 'success' ? 'bg-green-500' :
+          run.status === 'error' ? 'bg-red-500' : 'bg-normal-black animate-pulse'
+        }`} />
+        <span className={`shrink-0 font-medium ${isError ? 'text-red-500' : run.status === 'success' ? 'text-green-500' : 'text-normal-black'}`}>
+          {run.status}
+        </span>
+        <span className="text-normal-black">{formatRelative(run.started_at)}</span>
+        {body && (
+          <span className="ml-auto text-normal-black shrink-0">
+            <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </span>
+        )}
+      </button>
+      {expanded && body && (
+        <div className={`pl-4 pb-2 ${isError ? 'text-red-400' : 'text-hover-black'}`}>
+          {isError
+            ? <p className="font-mono text-xs">{body}</p>
+            : <ReactMarkdown className="prose prose-sm prose-invert max-w-none text-xs [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{body}</ReactMarkdown>
+          }
+        </div>
+      )}
+    </div>
+  )
 }
 
 const EMPTY_FORM = { name: '', prompt: '', skill_name: '', enabled: true, rrule: '', start_at: null as string | null, end_at: null as string | null }
@@ -222,39 +261,24 @@ export function AutomationsPage() {
                     />
                   </div>
 
-                  {/* Action: skill or prompt */}
-                  <div>
-                    <label className="text-xs text-normal-black mb-1 block">Action</label>
-                    <select
-                      value={form.skill_name}
-                      onChange={e => setForm(f => ({ ...f, skill_name: e.target.value }))}
-                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
-                    >
-                      <option value="">Agent (LLM prompt)</option>
-                      {skills.map(s => (
-                        <option key={s.name} value={s.name}>{s.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Skill picker */}
+                  <SkillPicker
+                    skills={skills}
+                    value={form.skill_name}
+                    onChange={name => setForm(f => ({ ...f, skill_name: name }))}
+                  />
 
-                  {!form.skill_name && (
-                    <textarea
-                      value={form.prompt}
-                      onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-                      placeholder="Prompt — what should the agent do?"
-                      rows={4}
-                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
-                    />
-                  )}
-
-                  {form.skill_name && (
-                    <textarea
-                      value={form.prompt}
-                      onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-                      placeholder="Input data for the skill (optional JSON)"
-                      rows={2}
-                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
-                    />
+                  <textarea
+                    value={form.prompt}
+                    onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
+                    placeholder={form.skill_name
+                      ? 'Optional: add a prompt to let the agent decide when/how to use this skill'
+                      : 'Prompt — what should the agent do?'}
+                    rows={form.skill_name ? 2 : 4}
+                    className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
+                  />
+                  {form.skill_name && !form.prompt && skills.find(s => s.name === form.skill_name)?.tier >= 2 && (
+                    <p className="text-xs text-brand-primary">Runs directly — no LLM tokens used</p>
                   )}
                 </div>
 
@@ -310,17 +334,7 @@ export function AutomationsPage() {
                   ) : (
                     <div className="space-y-1">
                       {runs.map(run => (
-                        <div key={run.id} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-sidebar-white text-xs">
-                          <span className={`shrink-0 mt-0.5 w-2 h-2 rounded-full ${
-                            run.status === 'success' ? 'bg-green-500' :
-                            run.status === 'error' ? 'bg-red' : 'bg-normal-black animate-pulse'
-                          }`} />
-                          <div className="flex-1 min-w-0">
-                            <span className="text-normal-black">{formatRelative(run.started_at)}</span>
-                            {run.response && <p className="text-hover-black mt-0.5 truncate">{run.response}</p>}
-                            {run.error && <p className="text-red mt-0.5 truncate">{run.error}</p>}
-                          </div>
-                        </div>
+                        <RunRow key={run.id} run={run} />
                       ))}
                     </div>
                   )}

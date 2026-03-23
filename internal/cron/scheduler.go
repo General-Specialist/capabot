@@ -96,8 +96,10 @@ func (s *Scheduler) fire(ctx context.Context, auto memory.Automation, manual boo
 		}
 	}
 
-	// If a skill is configured, run it directly without the LLM.
-	if auto.SkillName != "" {
+	// Skill set + no prompt → run it directly without the LLM (zero tokens).
+	// Skill set + prompt → run the LLM agent; the skill is registered as a tool
+	// so the agent can call it as part of its reasoning.
+	if auto.SkillName != "" && auto.Prompt == "" {
 		s.fireSkill(ctx, auto, runID, log)
 		return
 	}
@@ -180,7 +182,8 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 		return
 	}
 
-	// Skill not found — fall back to agent
-	log.Warn().Str("skill", auto.SkillName).Msg("skill not found, falling back to agent")
-	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q not found in registry", auto.SkillName))
+	// Tier 1 (prompt-only) or skill not found — no executable, mark as error
+	// (Tier 1 skills always need a prompt; the caller should have set one)
+	log.Warn().Str("skill", auto.SkillName).Msg("skill has no executable — needs a prompt to run via agent")
+	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q has no executable; add a prompt to run it via the agent", auto.SkillName))
 }

@@ -55,6 +55,7 @@ type StoreMessage struct {
 	Content    string
 	ToolCallID string
 	ToolName   string
+	ToolInput  string
 	TokenCount int
 }
 
@@ -91,8 +92,8 @@ type Agent struct {
 
 // New creates a new Agent with the given dependencies.
 func New(cfg AgentConfig, provider llm.Provider, tools *Registry, ctxMgr *ContextManager, logger zerolog.Logger) *Agent {
-	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 25
+	if cfg.MaxIterations < 0 {
+		cfg.MaxIterations = 0 // 0 = unlimited
 	}
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = 4096
@@ -137,7 +138,7 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 	result := &RunResult{}
 	toolDefs := a.buildToolDefs()
 
-	for iteration := 0; iteration < a.config.MaxIterations; iteration++ {
+	for iteration := 0; a.config.MaxIterations == 0 || iteration < a.config.MaxIterations; iteration++ {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("agent run cancelled: %w", err)
 		}
@@ -215,6 +216,9 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 					Msg("tool output truncated")
 				toolResult.Content = truncated
 			}
+
+			// Persist tool result as a message so history can reconstruct tool calls
+			a.persistToolMessage(ctx, sessionID, tc.ID, tc.Name, string(tc.Input), toolResult.Content)
 
 			// Append tool result to history
 			toolMsg := llm.ChatMessage{
@@ -329,6 +333,25 @@ func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content str
 
 	if _, err := a.store.SaveMessage(ctx, msg); err != nil {
 		a.logger.Error().Err(err).Msg("failed to persist message")
+	}
+}
+
+// persistToolMessage saves a tool result as a message so conversation history
+// can reconstruct which tools were called and what they returned.
+func (a *Agent) persistToolMessage(ctx context.Context, sessionID, toolCallID, toolName, toolInput, content string) {
+	if a.store == nil || sessionID == "" {
+		return
+	}
+	msg := StoreMessage{
+		SessionID:  sessionID,
+		Role:       "tool",
+		Content:    content,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		ToolInput:  toolInput,
+	}
+	if _, err := a.store.SaveMessage(ctx, msg); err != nil {
+		a.logger.Error().Err(err).Msg("failed to persist tool message")
 	}
 }
 

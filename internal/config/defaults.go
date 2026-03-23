@@ -27,7 +27,7 @@ func Default() Config {
 			},
 		},
 		Agent: AgentConfig{
-			MaxIterations:      25,
+			MaxIterations:      0, // 0 = unlimited
 			ContextBudgetPct:   0.8,
 			MaxToolOutputTokens: 4096,
 		},

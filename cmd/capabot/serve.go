@@ -100,6 +100,9 @@ func runServe(configPath string) error {
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
+	// 7d. Register the skill_create tool so the agent can create new skills
+	_ = toolRegistry.Register(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
+
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.
 	basePrompt := "You are a helpful AI assistant."
@@ -411,6 +414,7 @@ func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	if store != nil {
 		_ = registry.Register(tools.NewMemoryStoreTool(store))
 		_ = registry.Register(tools.NewMemoryRecallTool(store))
+		_ = registry.Register(tools.NewMemoryDeleteTool(store))
 	}
 	_ = registry.Register(tools.NewScheduleTool(0))
 	_ = registry.Register(tools.NewTodoTool())

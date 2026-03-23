@@ -36,6 +36,7 @@ export interface Skill {
   version: string
   instructions: string
   removable: boolean
+  tier: number // 1=prompt-only, 2=native Go, 3=WASM
 }
 
 export interface CatalogSkill {
@@ -74,6 +75,15 @@ export interface ChatResponse {
   iterations: number
   usage: { input_tokens: number; output_tokens: number }
   stop_reason: string
+}
+
+// LLMMessage is the full wire format sent to/from the backend for chat history.
+// Matches internal/llm.ChatMessage JSON fields.
+export interface LLMMessage {
+  role: 'user' | 'assistant' | 'tool'
+  content?: string
+  tool_calls?: { id: string; name: string; input: unknown }[]
+  tool_result?: { tool_use_id: string; content: string; is_error?: boolean }
 }
 
 export interface StreamChunk {
@@ -193,11 +203,11 @@ export const api = {
     if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
   },
 
-  chat: (text: string, sessionId?: string) =>
-    post<ChatResponse>('/chat', { text, session_id: sessionId }),
+  chat: (messages: LLMMessage[], sessionId?: string) =>
+    post<ChatResponse>('/chat', { messages, session_id: sessionId }),
 
   chatStream(
-    text: string,
+    messages: LLMMessage[],
     sessionId: string | undefined,
     onChunk: (chunk: StreamChunk) => void,
     signal?: AbortSignal
@@ -205,7 +215,7 @@ export const api = {
     return fetch(BASE + '/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, session_id: sessionId }),
+      body: JSON.stringify({ messages, session_id: sessionId }),
       signal,
     }).then(async (res) => {
       if (!res.ok) throw new Error(`Stream error ${res.status}`)

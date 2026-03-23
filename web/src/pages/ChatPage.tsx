@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Send, Plus, History } from 'lucide-react'
-import { api, type StreamChunk, type Conversation } from '@/lib/api'
+import { Send, Plus, History, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown } from 'lucide-react'
+import { api, type StreamChunk, type Conversation, type LLMMessage } from '@/lib/api'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 
 interface ToolCall {
   name: string
   label: string
+  result?: string
 }
 
 interface Message {
@@ -59,12 +64,24 @@ function HistoryPanel({ onClose, onLoad }: {
 
   const load = async (c: Conversation) => {
     const { messages } = await api.conversation(c.id)
-    onLoad(
-      messages
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      c.id
-    )
+    // Reconstruct tool calls: tool messages with a tool_name get attached
+    // to the assistant message that preceded them.
+    const out: Message[] = []
+    for (const m of messages) {
+      if (m.role === 'user') {
+        out.push({ role: 'user', content: m.content })
+      } else if (m.role === 'assistant') {
+        out.push({ role: 'assistant', content: m.content, toolCalls: [] })
+      } else if (m.tool_name) {
+        // Attach to most recent assistant message
+        const last = out[out.length - 1]
+        if (last?.role === 'assistant') {
+          const label = toolLabel(m.tool_name)
+          last.toolCalls = [...(last.toolCalls ?? []), { name: m.tool_name, label, result: m.content }]
+        }
+      }
+    }
+    onLoad(out, c.id)
     onClose()
   }
 
@@ -112,6 +129,52 @@ function HistoryPanel({ onClose, onLoad }: {
   )
 }
 
+const toolIcons: Record<string, typeof Terminal> = {
+  shell_exec: Terminal,
+  web_search: Globe,
+  web_fetch: Globe,
+  file_read: FileText,
+  file_write: FileCode,
+  file_edit: Pencil,
+  glob: FolderSearch,
+  grep: Search,
+  memory_store: Brain,
+  memory_recall: Brain,
+  memory_delete: Brain,
+  schedule: CalendarClock,
+  todo: ListChecks,
+  image_read: Image,
+  pdf_read: FileText,
+  notebook: FileCode,
+  skill_create: Wrench,
+}
+
+function ToolCallChip({ tc }: { tc: ToolCall }) {
+  const [open, setOpen] = useState(false)
+  const Icon = toolIcons[tc.name] ?? Wrench
+  const expandable = !!tc.result
+  return (
+    <div className="text-xs font-mono">
+      <button
+        onClick={() => expandable && setOpen(o => !o)}
+        className={`flex items-center gap-1.5 truncate text-normal-black ${expandable ? 'cursor-pointer hover:text-hover-black' : 'cursor-default'}`}
+      >
+        <Icon size={12} className="shrink-0 opacity-60" />
+        <span className="truncate">{tc.label}</span>
+        {expandable && (open
+          ? <ChevronDown size={10} className="shrink-0 opacity-40" />
+          : <ChevronRight size={10} className="shrink-0 opacity-40" />
+        )}
+      </button>
+      {open && tc.result && (
+        <pre className="mt-1 ml-4.5 p-2 rounded-lg bg-sidebar-white text-normal-black text-xs overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+          {tc.result}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 export function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -123,6 +186,10 @@ export function ChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const toolCallsRef = useRef<ToolCall[]>([])
+  // Full LLM-format history for round-tripping tool calls to the backend
+  const llmHistoryRef = useRef<LLMMessage[]>([])
+  const pendingToolCallsRef = useRef<{ id: string; name: string; input: unknown }[]>([])
+  const pendingToolResultsRef = useRef<{ tool_use_id: string; content: string; is_error?: boolean }[]>([])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -145,6 +212,13 @@ export function ChatPage() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
     toolCallsRef.current = []
+    pendingToolCallsRef.current = []
+    pendingToolResultsRef.current = []
+
+    // Add user message to LLM history, build full history to send
+    llmHistoryRef.current = [...llmHistoryRef.current, { role: 'user', content: trimmed }]
+    const historyToSend = [...llmHistoryRef.current]
+
     setMessages(prev => [
       ...prev,
       { role: 'user', content: trimmed },
@@ -152,18 +226,48 @@ export function ChatPage() {
     ])
     let accumulated = ''
     try {
-      await api.chatStream(trimmed, sessionId.current, (chunk: StreamChunk) => {
+      await api.chatStream(historyToSend, sessionId.current, (chunk: StreamChunk) => {
         if (chunk.session_id) sessionId.current = chunk.session_id
         if (chunk.event === 'tool_start' && chunk.tool_name) {
           const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
           toolCallsRef.current = [...toolCallsRef.current, tc]
           updateLast({ toolCalls: [...toolCallsRef.current] })
+          pendingToolCallsRef.current = [
+            ...pendingToolCallsRef.current,
+            { id: chunk.tool_id ?? chunk.tool_name, name: chunk.tool_name, input: chunk.tool_input ?? {} },
+          ]
+        }
+        if (chunk.event === 'tool_end' && chunk.tool_id) {
+          pendingToolResultsRef.current = [
+            ...pendingToolResultsRef.current,
+            { tool_use_id: chunk.tool_id, content: chunk.content ?? '', is_error: chunk.is_error },
+          ]
+          // Nth tool_end matches Nth tool_start
+          const idx = pendingToolResultsRef.current.length - 1
+          if (idx < toolCallsRef.current.length) {
+            const updated = [...toolCallsRef.current]
+            updated[idx] = { ...updated[idx], result: chunk.content ?? '' }
+            toolCallsRef.current = updated
+            updateLast({ toolCalls: [...toolCallsRef.current] })
+          }
         }
         if (chunk.event === 'response' && chunk.content) {
           accumulated = chunk.content
           updateLast({ content: accumulated, streaming: true })
         }
         if (chunk.done) {
+          // Append assistant message (with any tool calls) + tool results to LLM history
+          const assistantMsg: LLMMessage = { role: 'assistant', content: accumulated }
+          if (pendingToolCallsRef.current.length > 0) {
+            assistantMsg.tool_calls = pendingToolCallsRef.current
+          }
+          const toolMsgs: LLMMessage[] = pendingToolResultsRef.current.map(r => ({
+            role: 'tool' as const,
+            tool_result: r,
+          }))
+          llmHistoryRef.current = [...llmHistoryRef.current, assistantMsg, ...toolMsgs]
+          pendingToolCallsRef.current = []
+          pendingToolResultsRef.current = []
           updateLast({ content: accumulated, streaming: false, usage: chunk.usage })
           setLoading(false)
         }
@@ -212,12 +316,21 @@ export function ChatPage() {
     setError(null)
     setLoading(false)
     setInput('')
+    llmHistoryRef.current = []
+    pendingToolCallsRef.current = []
+    pendingToolResultsRef.current = []
   }
 
   const loadHistory = (msgs: Message[], sid: string) => {
     sessionId.current = sid
     setMessages(msgs)
     setError(null)
+    // Reconstruct text-only LLM history (tool call round-trip not preserved for past sessions)
+    llmHistoryRef.current = msgs
+      .filter(m => !m.streaming)
+      .map(m => ({ role: m.role as LLMMessage['role'], content: m.content }))
+    pendingToolCallsRef.current = []
+    pendingToolResultsRef.current = []
   }
 
   const hasMessages = messages.length > 0
@@ -287,18 +400,24 @@ export function ChatPage() {
                     {(msg.toolCalls ?? []).length > 0 && (
                       <div className="flex flex-col gap-1 w-full max-w-[85%]">
                         {(msg.toolCalls ?? []).map((tc, j) => (
-                          <span key={j} className="text-xs px-2.5 py-1 rounded-lg border border-border-white text-normal-black font-mono bg-sidebar-white truncate">
-                            {tc.label}
-                          </span>
+                          <ToolCallChip key={j} tc={tc} />
                         ))}
                       </div>
                     )}
-                    <p className="text-sm leading-relaxed text-hover-black whitespace-pre-wrap break-words max-w-[85%]">
-                      {msg.content}
-                      {msg.streaming && (
-                        <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom animate-pulse rounded-sm bg-normal-black opacity-50" />
-                      )}
-                    </p>
+                    {(msg.content || msg.streaming) && (
+                      <div className="text-sm leading-relaxed text-hover-black max-w-[85%] prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
+                        {msg.content ? (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <span className="inline-block w-1.5 h-4 align-text-bottom animate-pulse rounded-sm bg-normal-black opacity-50" />
+                        )}
+                      </div>
+                    )}
                     {!msg.streaming && msg.usage && (
                       <p className="text-xs text-normal-black opacity-60">
                         {msg.usage.input_tokens}↑ {msg.usage.output_tokens}↓
