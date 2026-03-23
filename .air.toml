@@ -1,0 +1,15 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "CGO_ENABLED=0 go build -o ./tmp/capabot ./cmd/capabot/"
+  bin = "./tmp/capabot serve"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "web", "vendor"]
+  delay = 500
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

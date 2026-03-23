@@ -1,0 +1,69 @@
+# Capabot configuration — copy to ~/.capabot/config.yaml
+
+# HTTP server
+server:
+  addr: :8080          # port to listen on
+
+# Logging
+log_level: info        # debug | info | warn | error
+
+# Database (SQLite)
+database:
+  dir: ~/.capabot/data
+
+# LLM Providers — configure at least one
+providers:
+  anthropic:
+    api_key: ""        # or set CAPABOT_ANTHROPIC_API_KEY
+    model: claude-sonnet-4-6-20250514
+
+  openai:
+    api_key: ""        # or set CAPABOT_OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+    model: gpt-4o
+
+  gemini:
+    api_key: ""        # or set GEMINI_API_KEY / GOOGLE_API_KEY / CAPABOT_GEMINI_API_KEY
+    model: gemini-2.0-flash
+
+  openrouter:
+    api_key: ""        # or set CAPABOT_OPENROUTER_API_KEY
+    model: anthropic/claude-sonnet-4-5
+
+# Agent defaults
+agent:
+  max_iterations: 25
+  context_budget_pct: 0.8
+  max_tool_output_tokens: 4096
+
+# Skill directories (loaded in order; later dirs take precedence)
+skills:
+  dirs:
+    - ~/.capabot/skills
+
+# Security
+security:
+  api_key: ""          # bearer token for REST API — empty = no auth
+  rate_limit_rpm: 0    # requests/min per IP — 0 = disabled
+  content_filtering: false
+  session_ttl_days: 0  # 0 = keep forever
+  shell_allowlist:
+    - ls
+    - cat
+    - head
+    - tail
+    - grep
+    - wc
+    - date
+    - echo
+    - pwd
+
+# Bot transports — all optional
+transports:
+  telegram:
+    token: ""          # or set CAPABOT_TELEGRAM_TOKEN
+  discord:
+    token: ""          # or set CAPABOT_DISCORD_TOKEN
+  slack:
+    app_token: ""      # xapp-...
+    bot_token: ""      # xoxb-...
