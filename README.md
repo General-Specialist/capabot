@@ -2,8 +2,10 @@
 
 OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less code — and every ClawHub skill works out of the box.
 
-```
+```bash
 git clone https://github.com/General-Specialist/capabot.git && cd capabot && make build
+cp config.example.yaml ~/.capabot/config.yaml  # add your API key
+./bin/capabot serve                             # http://localhost:9090
 ```
 
 **Questions, feedback, or just want to hang?** I respond basically ASAP — [join the Discord](https://discord.gg/ktAy8fZH)
