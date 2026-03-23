@@ -26,6 +26,7 @@ type Session struct {
 	ID        string    `json:"id"`
 	TenantID  string    `json:"tenant_id"`
 	Channel   string    `json:"channel"`
+	Title     string    `json:"title"`
 	UserID    string    `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -66,9 +67,9 @@ type MemoryMatch struct {
 func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO sessions (id, tenant_id, channel, user_id, metadata)
-			 VALUES (?, ?, ?, ?, ?)`,
-			sess.ID, sess.TenantID, sess.Channel, sess.UserID, sess.Metadata,
+			`INSERT INTO sessions (id, tenant_id, channel, title, user_id, metadata)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			sess.ID, sess.TenantID, sess.Channel, sess.Title, sess.UserID, sess.Metadata,
 		)
 		return err
 	})
@@ -78,10 +79,10 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 func (s *Store) UpsertSession(ctx context.Context, sess Session) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO sessions (id, tenant_id, channel, user_id, metadata)
-			 VALUES (?, ?, ?, ?, ?)
+			`INSERT INTO sessions (id, tenant_id, channel, title, user_id, metadata)
+			 VALUES (?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')`,
-			sess.ID, sess.TenantID, sess.Channel, sess.UserID, sess.Metadata,
+			sess.ID, sess.TenantID, sess.Channel, sess.Title, sess.UserID, sess.Metadata,
 		)
 		return err
 	})
@@ -136,7 +137,7 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 		limit = 50
 	}
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
-		`SELECT id, tenant_id, channel, user_id, created_at, updated_at, metadata
+		`SELECT id, tenant_id, channel, title, user_id, created_at, updated_at, metadata
 		 FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
 		tenantID, limit, offset,
 	)
@@ -149,7 +150,7 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 	for rows.Next() {
 		var sess Session
 		var createdAt, updatedAt string
-		if err := rows.Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.UserID,
+		if err := rows.Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.Title, &sess.UserID,
 			&createdAt, &updatedAt, &sess.Metadata); err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
 		}
@@ -175,9 +176,9 @@ func (s *Store) GetSession(ctx context.Context, tenantID, id string) (Session, e
 	var createdAt, updatedAt string
 
 	err := s.pool.ReadDB().QueryRowContext(ctx,
-		`SELECT id, tenant_id, channel, user_id, created_at, updated_at, metadata
+		`SELECT id, tenant_id, channel, title, user_id, created_at, updated_at, metadata
 		 FROM sessions WHERE id = ? AND tenant_id = ?`, id, tenantID,
-	).Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.UserID,
+	).Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.Title, &sess.UserID,
 		&createdAt, &updatedAt, &sess.Metadata)
 	if err != nil {
 		return Session{}, fmt.Errorf("getting session %s: %w", id, err)

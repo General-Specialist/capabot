@@ -219,6 +219,7 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 	type sessionDTO struct {
 		ID           string    `json:"id"`
 		Channel      string    `json:"channel"`
+		Title        string    `json:"title"`
 		UserID       string    `json:"user_id"`
 		CreatedAt    time.Time `json:"created_at"`
 		UpdatedAt    time.Time `json:"updated_at"`
@@ -230,6 +231,7 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 		out[i] = sessionDTO{
 			ID:           sess.ID,
 			Channel:      sess.Channel,
+			Title:        sess.Title,
 			UserID:       sess.UserID,
 			CreatedAt:    sess.CreatedAt,
 			UpdatedAt:    sess.UpdatedAt,
@@ -584,6 +586,28 @@ func newSessionID() string {
 	return hex.EncodeToString(b)
 }
 
+// sessionTitle returns a short title derived from the first user message.
+func sessionTitle(text string) string {
+	t := strings.TrimSpace(text)
+	// Strip leading markdown/punctuation noise
+	t = strings.TrimLeft(t, "#>*`-_")
+	t = strings.TrimSpace(t)
+	// Take first line only
+	if i := strings.IndexByte(t, '\n'); i > 0 {
+		t = t[:i]
+	}
+	const max = 60
+	if len(t) > max {
+		t = t[:max]
+		// Trim to last word boundary
+		if i := strings.LastIndexByte(t, ' '); i > 20 {
+			t = t[:i]
+		}
+		t += "…"
+	}
+	return t
+}
+
 // ensureSession upserts a session and saves the user message. Returns the session ID.
 func (s *Server) ensureSession(ctx context.Context, sessionID, tenantID, text string) string {
 	if sessionID == "" {
@@ -594,6 +618,7 @@ func (s *Server) ensureSession(ctx context.Context, sessionID, tenantID, text st
 			ID:       sessionID,
 			TenantID: tenantID,
 			Channel:  "web",
+			Title:    sessionTitle(text),
 		})
 		_, _ = s.store.SaveMessage(ctx, memory.Message{
 			SessionID: sessionID,

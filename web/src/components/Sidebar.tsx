@@ -1,14 +1,13 @@
-import { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { MessageSquare, Package, Settings, Clock, type LucideIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Blocks, Settings, Clock, Plus, type LucideIcon } from 'lucide-react'
+import { api, type Conversation } from '@/lib/api'
 
-type NavItem = { Icon: LucideIcon; label: string; route: string; exact?: boolean }
+type NavItem = { Icon: LucideIcon; label: string; route: string }
 
-const NAV_ITEMS: NavItem[] = [
-  { Icon: MessageSquare, label: 'Chat', route: '/', exact: true },
-  { Icon: Package, label: 'Skills', route: '/skills' },
+const TOP_NAV: NavItem[] = [
+  { Icon: Blocks, label: 'Skills', route: '/skills' },
   { Icon: Clock, label: 'Automations', route: '/automations' },
-  { Icon: Settings, label: 'Settings', route: '/settings' },
 ]
 
 function NavButton({ Icon, label, active, expanded, onClick }: {
@@ -40,13 +39,23 @@ function NavButton({ Icon, label, active, expanded, onClick }: {
   )
 }
 
+
 export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [expanded, setExpanded] = useState(false)
+  const [conversations, setConversations] = useState<Conversation[]>([])
 
-  const isActive = (item: NavItem) =>
-    item.exact ? location.pathname === item.route : location.pathname.startsWith(item.route)
+  const isOnChat = location.pathname === '/' || location.pathname === '/chat'
+  const activeSession = searchParams.get('session')
+
+  useEffect(() => {
+    if (!expanded) return
+    api.conversations().then(setConversations).catch(() => {})
+  }, [expanded])
+
+  const isActive = (item: NavItem) => location.pathname.startsWith(item.route)
 
   return (
     <aside
@@ -56,8 +65,9 @@ export function Sidebar() {
         expanded ? 'w-[200px]' : 'w-[54px]'
       }`}
     >
-      <nav className="flex flex-col gap-1 flex-1">
-        {NAV_ITEMS.map(item => (
+      {/* Top nav items */}
+      <nav className="flex flex-col gap-1">
+        {TOP_NAV.map(item => (
           <NavButton
             key={item.route}
             Icon={item.Icon}
@@ -68,6 +78,54 @@ export function Sidebar() {
           />
         ))}
       </nav>
+
+      {/* Chats section */}
+      <div className="flex flex-col gap-1 flex-1 min-h-0">
+        {/* New Chat button */}
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          onMouseEnter={e => (e.currentTarget.style.background = '')}
+          className={[
+            'flex items-center h-[30px] cursor-pointer transition-colors border-none outline-none bg-transparent',
+            expanded ? 'w-full px-4 rounded-xl' : 'w-[30px] justify-center rounded-full',
+            isOnChat && !activeSession ? 'bg-sidebar-hover-white' : 'hover:bg-sidebar-hover-white',
+          ].join(' ')}
+        >
+          <Plus className="w-[15px] h-[15px] flex-shrink-0 text-normal-black" />
+          {expanded && (
+            <span className="text-14 ml-3 whitespace-nowrap text-normal-black">New chat</span>
+          )}
+        </button>
+
+        {/* Conversation history */}
+        {expanded && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 scrollbar-hide">
+            {conversations.map(c => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => navigate(`/?session=${c.id}`)}
+                className={[
+                  'w-full text-left px-4 py-1.5 rounded-xl transition-colors',
+                  activeSession === c.id ? 'bg-sidebar-hover-white' : 'hover:bg-sidebar-hover-white',
+                ].join(' ')}
+              >
+                <p className="text-sm text-hover-black truncate">{c.title || c.channel}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Settings pinned to bottom */}
+      <NavButton
+        Icon={Settings}
+        label="Settings"
+        active={location.pathname === '/settings'}
+        expanded={expanded}
+        onClick={() => navigate('/settings')}
+      />
     </aside>
   )
 }

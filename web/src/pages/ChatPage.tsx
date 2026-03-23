@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Send, Square, Plus, History, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react'
-import { api, type StreamChunk, type Conversation, type LLMMessage } from '@/lib/api'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Send, Square, Plus, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react'
+import { api, type StreamChunk, type LLMMessage } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -37,100 +38,7 @@ function toolLabel(name: string, input?: Record<string, unknown>): string {
   return vals.length > 0 ? `${name}: ${vals[0]}` : name
 }
 
-function relativeTime(dateStr: string): string {
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000
-  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
-  if (diff < 60) return rtf.format(-Math.round(diff), 'second')
-  if (diff < 3600) return rtf.format(-Math.round(diff / 60), 'minute')
-  if (diff < 86400) return rtf.format(-Math.round(diff / 3600), 'hour')
-  if (diff < 2592000) return rtf.format(-Math.round(diff / 86400), 'day')
-  return rtf.format(-Math.round(diff / 2592000), 'month')
-}
 
-function HistoryPanel({ onClose, onLoad }: {
-  onClose: () => void
-  onLoad: (messages: Message[], sessionId: string) => void
-}) {
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [query, setQuery] = useState('')
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    api.conversations().then(setConversations).finally(() => setLoading(false))
-  }, [])
-
-  const filtered = query.trim()
-    ? conversations.filter(c => c.channel.toLowerCase().includes(query.toLowerCase()))
-    : conversations
-
-  const load = async (c: Conversation) => {
-    const { messages } = await api.conversation(c.id)
-    // Reconstruct tool calls: tool messages with a tool_name get attached
-    // to the assistant message that preceded them.
-    const out: Message[] = []
-    for (const m of messages) {
-      if (m.role === 'user') {
-        out.push({ role: 'user', content: m.content })
-      } else if (m.role === 'assistant') {
-        out.push({ role: 'assistant', content: m.content, toolCalls: [] })
-      } else if (m.tool_name) {
-        // Attach to most recent assistant message
-        const last = out[out.length - 1]
-        if (last?.role === 'assistant') {
-          let input: Record<string, unknown> | undefined
-          if (m.tool_input) try { input = JSON.parse(m.tool_input) } catch { /* ignore */ }
-          const label = toolLabel(m.tool_name, input)
-          last.toolCalls = [...(last.toolCalls ?? []), { name: m.tool_name, label, result: m.content }]
-        }
-      }
-    }
-    onLoad(out, c.id)
-    onClose()
-  }
-
-  return (
-    <>
-      {/* backdrop */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      {/* panel */}
-      <div className="absolute top-12 right-0 z-50 w-72 bg-white border border-border-white rounded-2xl shadow-lg flex flex-col overflow-hidden">
-        <div className="p-3 border-b border-border-white">
-          <input
-            autoFocus
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search conversations…"
-            className="w-full text-sm px-3 py-1.5 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
-          />
-        </div>
-        <div className="overflow-y-auto max-h-80">
-          {loading ? (
-            <div className="p-3 space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-10 rounded-xl animate-pulse bg-sidebar-hover-white" />
-              ))}
-            </div>
-          ) : filtered.length === 0 ? (
-            <p className="text-xs text-normal-black p-4">{query ? 'No matches.' : 'No conversations yet.'}</p>
-          ) : (
-            <div className="p-1.5 space-y-0.5">
-              {filtered.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => void load(c)}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-sidebar-white transition-colors"
-                >
-                  <p className="text-sm text-hover-black truncate">{c.channel}</p>
-                  <p className="text-xs text-normal-black">{c.message_count} msgs · {relativeTime(c.updated_at)}</p>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  )
-}
 
 const toolIcons: Record<string, typeof Terminal> = {
   shell_exec: Terminal,
@@ -203,11 +111,12 @@ function ThinkingChip({ text, streaming }: { text: string; streaming?: boolean }
 }
 
 export function ChatPage() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
   const [thinking, setThinking] = useState(false)
   const sessionId = useRef<string>(crypto.randomUUID())
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -222,6 +131,41 @@ export function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Load session from URL param
+  useEffect(() => {
+    const sid = searchParams.get('session')
+    if (!sid) {
+      // New chat
+      sessionId.current = crypto.randomUUID()
+      setMessages([])
+      setError(null)
+      setInput('')
+      llmHistoryRef.current = []
+      return
+    }
+    api.conversation(sid).then(({ messages: msgs }) => {
+      const out: Message[] = []
+      for (const m of msgs) {
+        if (m.role === 'user') {
+          out.push({ role: 'user', content: m.content })
+        } else if (m.role === 'assistant') {
+          out.push({ role: 'assistant', content: m.content, toolCalls: [] })
+        } else if (m.tool_name) {
+          const last = out[out.length - 1]
+          if (last?.role === 'assistant') {
+            let input: Record<string, unknown> | undefined
+            if (m.tool_input) try { input = JSON.parse(m.tool_input) } catch { /* ignore */ }
+            last.toolCalls = [...(last.toolCalls ?? []), { name: m.tool_name, label: toolLabel(m.tool_name, input), result: m.content }]
+          }
+        }
+      }
+      sessionId.current = sid
+      setMessages(out)
+      setError(null)
+      llmHistoryRef.current = out.filter(m => !m.streaming).map(m => ({ role: m.role as LLMMessage['role'], content: m.content }))
+    }).catch(() => navigate('/'))
+  }, [searchParams, navigate])
 
   const updateLast = useCallback((patch: Partial<Message>) =>
     setMessages(prev => {
@@ -351,26 +295,7 @@ export function ChatPage() {
 
   const newChat = () => {
     abortRef.current?.abort()
-    sessionId.current = crypto.randomUUID()
-    setMessages([])
-    setError(null)
-    setLoading(false)
-    setInput('')
-    llmHistoryRef.current = []
-    pendingToolCallsRef.current = []
-    pendingToolResultsRef.current = []
-  }
-
-  const loadHistory = (msgs: Message[], sid: string) => {
-    sessionId.current = sid
-    setMessages(msgs)
-    setError(null)
-    // Reconstruct text-only LLM history (tool call round-trip not preserved for past sessions)
-    llmHistoryRef.current = msgs
-      .filter(m => !m.streaming)
-      .map(m => ({ role: m.role as LLMMessage['role'], content: m.content }))
-    pendingToolCallsRef.current = []
-    pendingToolResultsRef.current = []
+    navigate('/')
   }
 
   const hasMessages = messages.length > 0
@@ -382,20 +307,8 @@ export function ChatPage() {
         {hasMessages && (
           <span className="text-sm font-medium text-hover-black">Chat</span>
         )}
-        <div className="ml-auto flex items-center gap-1.5">
-          <div className="relative">
-            <button
-              onClick={() => setShowHistory(h => !h)}
-              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-sidebar-hover-white transition-colors"
-              title="History"
-            >
-              <History size={14} className="text-normal-black" />
-            </button>
-            {showHistory && (
-              <HistoryPanel onClose={() => setShowHistory(false)} onLoad={loadHistory} />
-            )}
-          </div>
-          {hasMessages && (
+        {hasMessages && (
+          <div className="ml-auto">
             <button
               onClick={newChat}
               className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-sidebar-hover-white transition-colors"
@@ -403,8 +316,8 @@ export function ChatPage() {
             >
               <Plus size={14} className="text-hover-black" />
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {error && (
