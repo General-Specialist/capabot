@@ -26,6 +26,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   tool_name?: string
+  tool_input?: string
   token_count: number
   created_at: string
 }

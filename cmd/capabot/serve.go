@@ -470,6 +470,7 @@ func (a *storeAdapter) SaveMessage(ctx context.Context, msg agent.StoreMessage) 
 		Content:    msg.Content,
 		ToolCallID: msg.ToolCallID,
 		ToolName:   msg.ToolName,
+		ToolInput:  msg.ToolInput,
 		TokenCount: msg.TokenCount,
 	})
 }

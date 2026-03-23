@@ -76,7 +76,9 @@ function HistoryPanel({ onClose, onLoad }: {
         // Attach to most recent assistant message
         const last = out[out.length - 1]
         if (last?.role === 'assistant') {
-          const label = toolLabel(m.tool_name)
+          let input: Record<string, unknown> | undefined
+          if (m.tool_input) try { input = JSON.parse(m.tool_input) } catch { /* ignore */ }
+          const label = toolLabel(m.tool_name, input)
           last.toolCalls = [...(last.toolCalls ?? []), { name: m.tool_name, label, result: m.content }]
         }
       }
