@@ -223,6 +223,7 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 					ToolUseID: tc.ID,
 					Content:   toolResult.Content,
 					IsError:   toolResult.IsError,
+					Parts:     toolResult.Parts,
 				},
 			}
 			history = append(history, toolMsg)

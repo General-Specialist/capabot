@@ -166,6 +166,80 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (ag
 	return agent.ToolResult{Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), absPath)}, nil
 }
 
+// FileEditTool implements the file_edit tool — targeted in-place string replacement.
+type FileEditTool struct {
+	allowedDirs []string
+}
+
+// NewFileEditTool creates a file_edit tool. If allowedDirs is empty, all paths are allowed.
+func NewFileEditTool(allowedDirs []string) *FileEditTool {
+	return &FileEditTool{allowedDirs: allowedDirs}
+}
+
+func (t *FileEditTool) Name() string { return "file_edit" }
+func (t *FileEditTool) Description() string {
+	return "Replace an exact string in a file. The old_string must match exactly (including whitespace and indentation). Use replace_all to replace every occurrence instead of just the first."
+}
+
+func (t *FileEditTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"path":        {"type": "string", "description": "File path to edit"},
+			"old_string":  {"type": "string", "description": "Exact string to find and replace"},
+			"new_string":  {"type": "string", "description": "Replacement string"},
+			"replace_all": {"type": "boolean", "description": "Replace all occurrences (default false — only first)"}
+		},
+		"required": ["path", "old_string", "new_string"]
+	}`)
+}
+
+func (t *FileEditTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
+	var p struct {
+		Path       string `json:"path"`
+		OldString  string `json:"old_string"`
+		NewString  string `json:"new_string"`
+		ReplaceAll bool   `json:"replace_all"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return agent.ToolResult{Content: "invalid parameters", IsError: true}, nil
+	}
+	if p.Path == "" {
+		return agent.ToolResult{Content: "path is required", IsError: true}, nil
+	}
+
+	absPath, err := resolvePath(p.Path)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("path error: %v", err), IsError: true}, nil
+	}
+	if err := checkAllowedPath(absPath, t.allowedDirs); err != nil {
+		return agent.ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("read error: %v", err), IsError: true}, nil
+	}
+
+	content := string(data)
+	if !strings.Contains(content, p.OldString) {
+		return agent.ToolResult{Content: "old_string not found in file", IsError: true}, nil
+	}
+
+	var updated string
+	if p.ReplaceAll {
+		updated = strings.ReplaceAll(content, p.OldString, p.NewString)
+	} else {
+		updated = strings.Replace(content, p.OldString, p.NewString, 1)
+	}
+
+	if err := os.WriteFile(absPath, []byte(updated), 0o644); err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("write error: %v", err), IsError: true}, nil
+	}
+
+	return agent.ToolResult{Content: fmt.Sprintf("edited %s", absPath)}, nil
+}
+
 // resolvePath cleans and resolves a path to an absolute path.
 func resolvePath(path string) (string, error) {
 	if !filepath.IsAbs(path) {

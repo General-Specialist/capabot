@@ -142,6 +142,11 @@ func convertMessage(msg ChatMessage) *genai.Content {
 		parts = append(parts, genai.NewPartFromText(msg.Content))
 	}
 
+	// Media parts (images, PDFs)
+	for _, p := range msg.Parts {
+		parts = append(parts, genai.NewPartFromBytes(p.Data, p.MimeType))
+	}
+
 	// Tool calls from assistant
 	for _, tc := range msg.ToolCalls {
 		var args map[string]any

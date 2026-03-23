@@ -32,10 +32,18 @@ type ChatRequest struct {
 	StopSeqs    []string          `json:"stop_sequences,omitempty"`
 }
 
+// MediaPart carries binary content (image or document) alongside a text message.
+type MediaPart struct {
+	MimeType string // e.g. "image/jpeg", "image/png", "application/pdf"
+	Data     []byte // raw bytes
+	Name     string // optional filename hint (used by OpenAI for PDFs)
+}
+
 // ChatMessage represents a single message in the conversation.
 type ChatMessage struct {
 	Role       string            `json:"role"`
 	Content    string            `json:"content,omitempty"`
+	Parts      []MediaPart       `json:"-"` // optional multimodal attachments
 	ToolCalls  []ToolCall        `json:"tool_calls,omitempty"`
 	ToolResult *ToolResult       `json:"tool_result,omitempty"`
 	// Metadata carries opaque provider-specific data that must be round-tripped
@@ -60,9 +68,10 @@ type ToolCall struct {
 
 // ToolResult represents the result of a tool execution sent back to the LLM.
 type ToolResult struct {
-	ToolUseID string `json:"tool_use_id"`
-	Content   string `json:"content"`
-	IsError   bool   `json:"is_error,omitempty"`
+	ToolUseID string      `json:"tool_use_id"`
+	Content   string      `json:"content"`
+	IsError   bool        `json:"is_error,omitempty"`
+	Parts     []MediaPart `json:"-"` // optional multimodal content
 }
 
 // ChatResponse represents the full response from an LLM provider.

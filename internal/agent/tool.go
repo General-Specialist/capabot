@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"github.com/polymath/capabot/internal/llm"
 )
 
 // Tool is the interface all agent tools must implement.
@@ -24,8 +26,9 @@ type Tool interface {
 
 // ToolResult is the outcome of a tool execution.
 type ToolResult struct {
-	Content string `json:"content"`
-	IsError bool   `json:"is_error,omitempty"`
+	Content string        `json:"content"`
+	IsError bool          `json:"is_error,omitempty"`
+	Parts   []llm.MediaPart `json:"-"` // optional multimodal attachments (images, PDFs)
 }
 
 // Registry holds available tools, keyed by name.

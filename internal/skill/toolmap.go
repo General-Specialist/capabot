@@ -13,6 +13,13 @@ var openClawToCapabot = map[string]string{
 	"write":       "file_write",
 	"edit":        "file_edit",
 	"apply_patch": "file_edit",
+	"glob":        "glob",
+	"grep":        "grep",
+
+	// Task tracking
+	"todo":       "todo",
+	"todo_write": "todo",
+	"todo_read":  "todo",
 
 	// Web
 	"web_search": "web_search",
@@ -39,10 +46,9 @@ var openClawToCapabot = map[string]string{
 	"cron": "schedule",
 
 	// Media
-	"image":          "image",
-	"image_generate": "image_generate",
-	"pdf":            "pdf",
-	"canvas":         "canvas",
+	"image":     "image_read",
+	"pdf":       "pdf_read",
+	"notebook":  "notebook",
 }
 
 // MapToolName translates an OpenClaw tool name to its Capabot equivalent.

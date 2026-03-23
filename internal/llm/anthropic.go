@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,13 +71,21 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
+	Type      string                 `json:"type"`
+	Text      string                 `json:"text,omitempty"`
+	ID        string                 `json:"id,omitempty"`
+	Name      string                 `json:"name,omitempty"`
+	Input     json.RawMessage        `json:"input,omitempty"`
+	ToolUseID string                 `json:"tool_use_id,omitempty"`
+	Content   any                    `json:"content,omitempty"` // string or []anthropicContentBlock
+	IsError   bool                   `json:"is_error,omitempty"`
+	Source    *anthropicMediaSource  `json:"source,omitempty"`
+}
+
+type anthropicMediaSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/jpeg", "application/pdf", etc.
+	Data      string `json:"data"`       // base64-encoded
 }
 
 type anthropicTool struct {
@@ -205,10 +214,37 @@ func convertAnthropicMessages(messages []ChatMessage) []anthropicMessage {
 func convertAnthropicMessage(msg ChatMessage) anthropicMessage {
 	// Tool result: user message with tool_result block
 	if msg.ToolResult != nil {
+		tr := msg.ToolResult
+		var content any
+		if len(tr.Parts) > 0 {
+			// Multimodal tool result — content is an array of blocks
+			blocks := make([]anthropicContentBlock, 0, len(tr.Parts)+1)
+			if tr.Content != "" {
+				blocks = append(blocks, anthropicContentBlock{Type: "text", Text: tr.Content})
+			}
+			for _, p := range tr.Parts {
+				blockType := "image"
+				if p.MimeType == "application/pdf" {
+					blockType = "document"
+				}
+				blocks = append(blocks, anthropicContentBlock{
+					Type: blockType,
+					Source: &anthropicMediaSource{
+						Type:      "base64",
+						MediaType: p.MimeType,
+						Data:      base64.StdEncoding.EncodeToString(p.Data),
+					},
+				})
+			}
+			content = blocks
+		} else {
+			content = tr.Content
+		}
 		block := anthropicContentBlock{
 			Type:      "tool_result",
-			ToolUseID: msg.ToolResult.ToolUseID,
-			Content:   msg.ToolResult.Content,
+			ToolUseID: tr.ToolUseID,
+			Content:   content,
+			IsError:   tr.IsError,
 		}
 		return anthropicMessage{Role: "user", Content: []anthropicContentBlock{block}}
 	}
@@ -234,10 +270,31 @@ func convertAnthropicMessage(msg ChatMessage) anthropicMessage {
 		return anthropicMessage{Role: "assistant", Content: blocks}
 	}
 
-	// Plain text message
+	// User message — may include media parts
 	role := msg.Role
 	if role == "tool" {
 		role = "user"
+	}
+	if len(msg.Parts) > 0 {
+		blocks := make([]anthropicContentBlock, 0, len(msg.Parts)+1)
+		for _, p := range msg.Parts {
+			blockType := "image"
+			if p.MimeType == "application/pdf" {
+				blockType = "document"
+			}
+			blocks = append(blocks, anthropicContentBlock{
+				Type: blockType,
+				Source: &anthropicMediaSource{
+					Type:      "base64",
+					MediaType: p.MimeType,
+					Data:      base64.StdEncoding.EncodeToString(p.Data),
+				},
+			})
+		}
+		if msg.Content != "" {
+			blocks = append(blocks, anthropicContentBlock{Type: "text", Text: msg.Content})
+		}
+		return anthropicMessage{Role: role, Content: blocks}
 	}
 	return anthropicMessage{Role: role, Content: msg.Content}
 }

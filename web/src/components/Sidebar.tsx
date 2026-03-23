@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { MessageSquare, History, Terminal, Package, Settings, type LucideIcon } from 'lucide-react'
+import { MessageSquare, History, Terminal, Package, Settings, Clock, type LucideIcon } from 'lucide-react'
 
 type NavItem = { Icon: LucideIcon; label: string; route: string; exact?: boolean }
 
@@ -9,6 +9,7 @@ const NAV_ITEMS: NavItem[] = [
   { Icon: History, label: 'Conversations', route: '/conversations' },
   { Icon: Terminal, label: 'Logs', route: '/logs' },
   { Icon: Package, label: 'Skills', route: '/skills' },
+  { Icon: Clock, label: 'Automations', route: '/automations' },
   { Icon: Settings, label: 'Settings', route: '/settings' },
 ]
 

@@ -15,6 +15,7 @@ import (
 	"github.com/polymath/capabot/internal/agent"
 	"github.com/polymath/capabot/internal/api"
 	"github.com/polymath/capabot/internal/config"
+	"github.com/polymath/capabot/internal/cron"
 	applog "github.com/polymath/capabot/internal/log"
 	"github.com/polymath/capabot/internal/llm"
 	"github.com/polymath/capabot/internal/memory"
@@ -125,6 +126,10 @@ func runServe(configPath string) error {
 		return a.Run(runCtx, sessionID, messages)
 	}
 
+	// 8b. Start cron scheduler for automations
+	scheduler := cron.NewScheduler(store, runAgent, logger)
+	go scheduler.Start(ctx)
+
 	// 9. API server (web UI + REST endpoints)
 	apiAddr := cfg.Server.Addr // e.g. ":8080"
 	if apiAddr == "" {
@@ -143,6 +148,7 @@ func runServe(configPath string) error {
 		SkillsDir:      defaultSkillsDir(),
 		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
 		StaticFS:       webui.FS(),
+		Scheduler:      scheduler,
 	})
 	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
 	go func() {
@@ -393,12 +399,19 @@ func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	_ = registry.Register(tools.NewWebFetchTool())
 	_ = registry.Register(tools.NewFileReadTool(nil))
 	_ = registry.Register(tools.NewFileWriteTool(nil))
+	_ = registry.Register(tools.NewFileEditTool(nil))
+	_ = registry.Register(&tools.GlobTool{})
+	_ = registry.Register(&tools.GrepTool{})
 	_ = registry.Register(tools.NewShellExecTool(cfg.Security.ShellAllowlist, cfg.Security.DrainTimeout))
 	if store != nil {
 		_ = registry.Register(tools.NewMemoryStoreTool(store))
 		_ = registry.Register(tools.NewMemoryRecallTool(store))
 	}
 	_ = registry.Register(tools.NewScheduleTool(0))
+	_ = registry.Register(tools.NewTodoTool())
+	_ = registry.Register(&tools.ImageReadTool{})
+	_ = registry.Register(tools.NewPDFReadTool())
+	_ = registry.Register(&tools.NotebookTool{})
 
 	return registry
 }

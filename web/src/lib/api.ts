@@ -94,8 +94,46 @@ export interface StreamChunk {
   error?: string
 }
 
+export interface Automation {
+  id: number
+  name: string
+  cron: string
+  prompt: string
+  enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AutomationRun {
+  id: number
+  automation_id: number
+  started_at: string
+  finished_at: string | null
+  status: 'running' | 'success' | 'error'
+  response: string
+  error: string
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path)
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(BASE + path, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
   return res.json() as Promise<T>
 }
@@ -125,6 +163,15 @@ export const api = {
   },
   skillsInstall: (name: string) => post<InstallResult>('/skills/install', { name }),
   providers: () => get<ProviderInfo[]>('/providers'),
+  automations: () => get<Automation[]>('/automations'),
+  automationCreate: (data: { name: string; cron: string; prompt: string; enabled?: boolean }) =>
+    post<Automation>('/automations', data),
+  automationUpdate: (id: number, data: Partial<{ name: string; cron: string; prompt: string; enabled: boolean }>) =>
+    put<Automation>(`/automations/${id}`, data),
+  automationDelete: (id: number) => del<{ success: boolean }>(`/automations/${id}`),
+  automationTrigger: (id: number) => post<{ triggered: boolean }>(`/automations/${id}/trigger`, {}),
+  automationRuns: (id: number) => get<AutomationRun[]>(`/automations/${id}/runs`),
+
   chat: (text: string, sessionId?: string) =>
     post<ChatResponse>('/chat', { text, session_id: sessionId }),
 

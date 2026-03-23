@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/capabot/internal/cron"
 	applog "github.com/polymath/capabot/internal/log"
 	"github.com/polymath/capabot/internal/llm"
 	"github.com/polymath/capabot/internal/memory"
@@ -34,6 +35,7 @@ type Server struct {
 	toolReg        *agent.Registry
 	defaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	logBroadcaster *applog.Broadcaster
+	scheduler      *cron.Scheduler
 	mux            *http.ServeMux
 	handler        http.Handler // mux wrapped with middleware
 	logger         zerolog.Logger
@@ -62,6 +64,8 @@ type Config struct {
 	SkillsDir string
 	// ClawHubToken is an optional GitHub PAT to raise ClawHub API rate limits.
 	ClawHubToken string
+	// Scheduler is the cron scheduler for automations.
+	Scheduler *cron.Scheduler
 }
 
 // New creates a new API server and registers all routes.
@@ -81,6 +85,7 @@ func New(cfg Config) *Server {
 		toolReg:        cfg.ToolReg,
 		defaultAgent:   cfg.DefaultAgent,
 		logBroadcaster: cfg.LogBroadcaster,
+		scheduler:      cfg.Scheduler,
 		mux:            http.NewServeMux(),
 		logger:         cfg.Logger,
 		skillsDir:      skillsDir,
@@ -100,6 +105,13 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 	s.mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("GET /api/logs", s.handleLogs)
+	s.mux.HandleFunc("GET /api/automations", s.handleAutomationsList)
+	s.mux.HandleFunc("POST /api/automations", s.handleAutomationsCreate)
+	s.mux.HandleFunc("GET /api/automations/{id}", s.handleAutomationsGet)
+	s.mux.HandleFunc("PUT /api/automations/{id}", s.handleAutomationsUpdate)
+	s.mux.HandleFunc("DELETE /api/automations/{id}", s.handleAutomationsDelete)
+	s.mux.HandleFunc("POST /api/automations/{id}/trigger", s.handleAutomationsTrigger)
+	s.mux.HandleFunc("GET /api/automations/{id}/runs", s.handleAutomationsRuns)
 
 	// SPA static files
 	if cfg.StaticFS != nil {

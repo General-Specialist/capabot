@@ -367,6 +367,233 @@ func (s *Store) DeleteMemory(ctx context.Context, tenantID, key string) error {
 	})
 }
 
+// Automation represents a scheduled agent run.
+type Automation struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	Cron      string     `json:"cron"`
+	Prompt    string     `json:"prompt"`
+	Enabled   bool       `json:"enabled"`
+	LastRunAt *time.Time `json:"last_run_at"`
+	NextRunAt *time.Time `json:"next_run_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// AutomationRun is a single execution record for an automation.
+type AutomationRun struct {
+	ID           int64      `json:"id"`
+	AutomationID int64      `json:"automation_id"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	Status       string     `json:"status"`
+	Response     string     `json:"response"`
+	Error        string     `json:"error"`
+}
+
+// CreateAutomation inserts a new automation and returns its ID.
+func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, error) {
+	var id int64
+	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		var nextRunAt interface{}
+		if a.NextRunAt != nil {
+			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO automations (name, cron, prompt, enabled, next_run_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			a.Name, a.Cron, a.Prompt, boolInt(a.Enabled), nextRunAt,
+		)
+		if err != nil {
+			return err
+		}
+		id, err = result.LastInsertId()
+		return err
+	})
+	return id, err
+}
+
+// ListAutomations returns all automations ordered by name.
+func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
+		 FROM automations ORDER BY name ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing automations: %w", err)
+	}
+	defer rows.Close()
+	return scanAutomations(rows)
+}
+
+// GetAutomation retrieves a single automation by ID.
+func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
+		 FROM automations WHERE id = ?`, id,
+	)
+	if err != nil {
+		return Automation{}, fmt.Errorf("getting automation: %w", err)
+	}
+	defer rows.Close()
+	list, err := scanAutomations(rows)
+	if err != nil {
+		return Automation{}, err
+	}
+	if len(list) == 0 {
+		return Automation{}, fmt.Errorf("automation %d not found", id)
+	}
+	return list[0], nil
+}
+
+// UpdateAutomation updates an existing automation's fields.
+func (s *Store) UpdateAutomation(ctx context.Context, a Automation) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		var nextRunAt interface{}
+		if a.NextRunAt != nil {
+			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		_, err := tx.ExecContext(ctx,
+			`UPDATE automations SET name=?, cron=?, prompt=?, enabled=?, next_run_at=?, updated_at=datetime('now')
+			 WHERE id=?`,
+			a.Name, a.Cron, a.Prompt, boolInt(a.Enabled), nextRunAt, a.ID,
+		)
+		return err
+	})
+}
+
+// DeleteAutomation removes an automation and its run history.
+func (s *Store) DeleteAutomation(ctx context.Context, id int64) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM automation_runs WHERE automation_id=?`, id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM automations WHERE id=?`, id)
+		return err
+	})
+}
+
+// ListDueAutomations returns enabled automations whose next_run_at is in the past.
+func (s *Store) ListDueAutomations(ctx context.Context) ([]Automation, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
+		 FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= datetime('now')`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing due automations: %w", err)
+	}
+	defer rows.Close()
+	return scanAutomations(rows)
+}
+
+// StartAutomationRun inserts a running record and returns its ID.
+func (s *Store) StartAutomationRun(ctx context.Context, automationID int64) (int64, error) {
+	var id int64
+	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO automation_runs (automation_id, status) VALUES (?, 'running')`, automationID,
+		)
+		if err != nil {
+			return err
+		}
+		id, err = result.LastInsertId()
+		return err
+	})
+	return id, err
+}
+
+// FinishAutomationRun marks a run as complete with status, response, and error.
+func (s *Store) FinishAutomationRun(ctx context.Context, runID int64, status, response, errMsg string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE automation_runs SET finished_at=datetime('now'), status=?, response=?, error=? WHERE id=?`,
+			status, response, errMsg, runID,
+		)
+		return err
+	})
+}
+
+// UpdateAutomationSchedule records last/next run times after a successful trigger.
+func (s *Store) UpdateAutomationSchedule(ctx context.Context, id int64, lastRunAt, nextRunAt time.Time) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE automations SET last_run_at=?, next_run_at=?, updated_at=datetime('now') WHERE id=?`,
+			lastRunAt.UTC().Format("2006-01-02 15:04:05"),
+			nextRunAt.UTC().Format("2006-01-02 15:04:05"),
+			id,
+		)
+		return err
+	})
+}
+
+// ListAutomationRuns returns the most recent runs for an automation.
+func (s *Store) ListAutomationRuns(ctx context.Context, automationID int64, limit int) ([]AutomationRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, automation_id, started_at, finished_at, status, response, error
+		 FROM automation_runs WHERE automation_id=? ORDER BY id DESC LIMIT ?`,
+		automationID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing automation runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []AutomationRun
+	for rows.Next() {
+		var r AutomationRun
+		var startedAt, finishedAt string
+		var finishedAtPtr *string
+		if err := rows.Scan(&r.ID, &r.AutomationID, &startedAt, &finishedAtPtr, &r.Status, &r.Response, &r.Error); err != nil {
+			return nil, fmt.Errorf("scanning automation run: %w", err)
+		}
+		r.StartedAt, _ = time.Parse("2006-01-02 15:04:05", startedAt)
+		if finishedAtPtr != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *finishedAtPtr)
+			r.FinishedAt = &t
+		}
+		_ = finishedAt
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+func scanAutomations(rows *sql.Rows) ([]Automation, error) {
+	var list []Automation
+	for rows.Next() {
+		var a Automation
+		var enabledInt int
+		var createdAt, updatedAt string
+		var lastRunAt, nextRunAt *string
+		if err := rows.Scan(&a.ID, &a.Name, &a.Cron, &a.Prompt, &enabledInt,
+			&lastRunAt, &nextRunAt, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scanning automation: %w", err)
+		}
+		a.Enabled = enabledInt != 0
+		a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastRunAt != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *lastRunAt)
+			a.LastRunAt = &t
+		}
+		if nextRunAt != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *nextRunAt)
+			a.NextRunAt = &t
+		}
+		list = append(list, a)
+	}
+	return list, rows.Err()
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // cosineSimilarity computes the cosine similarity between two vectors.
 func cosineSimilarity(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {

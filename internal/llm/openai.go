@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +66,7 @@ type openAIRequest struct {
 
 type openAIMessage struct {
 	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
+	Content    any              `json:"content,omitempty"` // string or []map[string]any for multimodal
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
@@ -228,7 +229,7 @@ func convertOpenAIMessages(messages []ChatMessage, system string) []openAIMessag
 }
 
 func convertOpenAIMessage(msg ChatMessage) openAIMessage {
-	// Tool result message
+	// Tool result message — OpenAI tool results are text-only in the tool role
 	if msg.ToolResult != nil {
 		return openAIMessage{
 			Role:       "tool",
@@ -264,6 +265,38 @@ func convertOpenAIMessage(msg ChatMessage) openAIMessage {
 	if role == "tool" {
 		role = "assistant"
 	}
+
+	// User message with media parts
+	if len(msg.Parts) > 0 {
+		parts := make([]map[string]any, 0, len(msg.Parts)+1)
+		for _, p := range msg.Parts {
+			if p.MimeType == "application/pdf" {
+				name := p.Name
+				if name == "" {
+					name = "document.pdf"
+				}
+				parts = append(parts, map[string]any{
+					"type": "file",
+					"file": map[string]any{
+						"filename":  name,
+						"file_data": base64.StdEncoding.EncodeToString(p.Data),
+					},
+				})
+			} else {
+				// Image — data URI in image_url.url
+				dataURI := "data:" + p.MimeType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+				parts = append(parts, map[string]any{
+					"type":      "image_url",
+					"image_url": map[string]any{"url": dataURI, "detail": "auto"},
+				})
+			}
+		}
+		if msg.Content != "" {
+			parts = append(parts, map[string]any{"type": "text", "text": msg.Content})
+		}
+		return openAIMessage{Role: role, Content: parts}
+	}
+
 	return openAIMessage{Role: role, Content: msg.Content}
 }
 
