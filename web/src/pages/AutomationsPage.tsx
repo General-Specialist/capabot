@@ -118,8 +118,7 @@ export function AutomationsPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-4xl">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-lg font-semibold text-hover-black">Automations</h1>
+        <div className="flex items-center justify-end mb-6">
           <button
             onClick={startNew}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-primary text-white text-sm rounded-lg hover:opacity-80 transition-opacity"
@@ -190,15 +189,6 @@ export function AutomationsPage() {
                     rows={4}
                     className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
                   />
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.enabled}
-                      onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))}
-                      className="accent-brand-primary"
-                    />
-                    <span className="text-sm text-hover-black">Enabled</span>
-                  </label>
                 </div>
 
                 {error && <p className="text-xs text-red">{error}</p>}

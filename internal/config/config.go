@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -192,6 +193,45 @@ func applyEnvOverrides(cfg Config) Config {
 		cfg.Transports.Slack.BotToken = v
 	}
 	return cfg
+}
+
+// SetKey updates a single dot-path key in the YAML config file on disk.
+// The file is created with 0o600 permissions if it does not exist.
+func SetKey(configPath, key, value string) error {
+	raw := make(map[string]any)
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	if err == nil {
+		if err2 := yaml.Unmarshal(data, &raw); err2 != nil {
+			return fmt.Errorf("parsing config: %w", err2)
+		}
+	}
+	parts := strings.Split(key, ".")
+	setNestedKey(raw, parts, value)
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+	return os.WriteFile(configPath, out, 0o600)
+}
+
+func setNestedKey(m map[string]any, parts []string, value string) {
+	if len(parts) == 1 {
+		m[parts[0]] = value
+		return
+	}
+	child, _ := m[parts[0]]
+	childMap, ok := child.(map[string]any)
+	if !ok {
+		childMap = make(map[string]any)
+	}
+	setNestedKey(childMap, parts[1:], value)
+	m[parts[0]] = childMap
 }
 
 var validLogLevels = map[string]bool{

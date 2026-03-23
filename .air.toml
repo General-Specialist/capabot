@@ -2,8 +2,9 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "CGO_ENABLED=0 go build -o ./tmp/capabot ./cmd/capabot/"
-  bin = "./tmp/capabot serve"
+  cmd = "go build -o ./tmp/capabot ./cmd/capabot"
+  bin = "./tmp/capabot"
+  full_bin = "./tmp/capabot serve"
   include_ext = ["go"]
   exclude_dir = ["tmp", "web", "vendor"]
   delay = 500

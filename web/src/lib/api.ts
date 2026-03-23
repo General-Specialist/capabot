@@ -106,6 +106,13 @@ export interface Automation {
   updated_at: string
 }
 
+export interface ProviderKeys {
+  anthropic: string
+  openai: string
+  gemini: string
+  openrouter: string
+}
+
 export interface AutomationRun {
   id: number
   automation_id: number
@@ -171,6 +178,15 @@ export const api = {
   automationDelete: (id: number) => del<{ success: boolean }>(`/automations/${id}`),
   automationTrigger: (id: number) => post<{ triggered: boolean }>(`/automations/${id}/trigger`, {}),
   automationRuns: (id: number) => get<AutomationRun[]>(`/automations/${id}/runs`),
+  configKeys: () => get<ProviderKeys>('/config/keys'),
+  configKeysSave: async (keys: ProviderKeys) => {
+    const res = await fetch(BASE + '/config/keys', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(keys),
+    })
+    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  },
 
   chat: (text: string, sessionId?: string) =>
     post<ChatResponse>('/chat', { text, session_id: sessionId }),

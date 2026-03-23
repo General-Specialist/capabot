@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Send, Plus } from 'lucide-react'
-import { api, type StreamChunk } from '@/lib/api'
+import { Send, Plus, History } from 'lucide-react'
+import { api, type StreamChunk, type Conversation } from '@/lib/api'
 
 interface ToolCall {
   name: string
-  label: string // human-readable: actual command for shell_exec, tool name otherwise
+  label: string
 }
 
 interface Message {
@@ -18,20 +18,98 @@ interface Message {
 function toolLabel(name: string, input?: Record<string, unknown>): string {
   if (!input) return name
   if (name === 'shell_exec') {
-    // Multi-command batch
     const cmds = input.commands
     if (Array.isArray(cmds) && cmds.length > 0) {
       const first = cmds[0] as Record<string, unknown>
       const firstLabel = [first.command, ...(Array.isArray(first.args) ? first.args : [])].join(' ')
       return cmds.length === 1 ? firstLabel : `${firstLabel} (+${cmds.length - 1} more)`
     }
-    // Single command
     const parts = [input.command, ...(Array.isArray(input.args) ? input.args : [])].filter(Boolean)
     return parts.join(' ') || name
   }
-  // For other tools, show name + first meaningful param value if short
   const vals = Object.values(input).filter(v => typeof v === 'string' && (v as string).length < 40)
   return vals.length > 0 ? `${name}: ${vals[0]}` : name
+}
+
+function relativeTime(dateStr: string): string {
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  if (diff < 60) return rtf.format(-Math.round(diff), 'second')
+  if (diff < 3600) return rtf.format(-Math.round(diff / 60), 'minute')
+  if (diff < 86400) return rtf.format(-Math.round(diff / 3600), 'hour')
+  if (diff < 2592000) return rtf.format(-Math.round(diff / 86400), 'day')
+  return rtf.format(-Math.round(diff / 2592000), 'month')
+}
+
+function HistoryPanel({ onClose, onLoad }: {
+  onClose: () => void
+  onLoad: (messages: Message[], sessionId: string) => void
+}) {
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.conversations().then(setConversations).finally(() => setLoading(false))
+  }, [])
+
+  const filtered = query.trim()
+    ? conversations.filter(c => c.channel.toLowerCase().includes(query.toLowerCase()))
+    : conversations
+
+  const load = async (c: Conversation) => {
+    const { messages } = await api.conversation(c.id)
+    onLoad(
+      messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      c.id
+    )
+    onClose()
+  }
+
+  return (
+    <>
+      {/* backdrop */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      {/* panel */}
+      <div className="absolute top-12 right-0 z-50 w-72 bg-white border border-border-white rounded-2xl shadow-lg flex flex-col overflow-hidden">
+        <div className="p-3 border-b border-border-white">
+          <input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search conversations…"
+            className="w-full text-sm px-3 py-1.5 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+          />
+        </div>
+        <div className="overflow-y-auto max-h-80">
+          {loading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-10 rounded-lg animate-pulse bg-sidebar-hover-white" />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <p className="text-xs text-normal-black p-4">{query ? 'No matches.' : 'No conversations yet.'}</p>
+          ) : (
+            <div className="p-1.5 space-y-0.5">
+              {filtered.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => void load(c)}
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-sidebar-white transition-colors"
+                >
+                  <p className="text-sm text-hover-black truncate">{c.channel}</p>
+                  <p className="text-xs text-normal-black">{c.message_count} msgs · {relativeTime(c.updated_at)}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
 }
 
 export function ChatPage() {
@@ -39,6 +117,7 @@ export function ChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   const sessionId = useRef<string>(crypto.randomUUID())
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -135,23 +214,45 @@ export function ChatPage() {
     setInput('')
   }
 
+  const loadHistory = (msgs: Message[], sid: string) => {
+    sessionId.current = sid
+    setMessages(msgs)
+    setError(null)
+  }
+
   const hasMessages = messages.length > 0
 
   return (
     <div className="w-full h-screen flex flex-col bg-white">
 
-      {hasMessages && (
-        <div className="flex items-center justify-between px-6 h-12 border-b border-border-white shrink-0">
+      <div className="flex items-center justify-between px-6 h-12 shrink-0 relative">
+        {hasMessages && (
           <span className="text-sm font-medium text-hover-black">Chat</span>
-          <button
-            onClick={newChat}
-            className="w-7 h-7 rounded-full flex items-center justify-center bg-sidebar-hover-white"
-            title="New chat"
-          >
-            <Plus size={14} className="text-hover-black" />
-          </button>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <button
+              onClick={() => setShowHistory(h => !h)}
+              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-sidebar-hover-white transition-colors"
+              title="History"
+            >
+              <History size={14} className="text-normal-black" />
+            </button>
+            {showHistory && (
+              <HistoryPanel onClose={() => setShowHistory(false)} onLoad={loadHistory} />
+            )}
+          </div>
+          {hasMessages && (
+            <button
+              onClick={newChat}
+              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-sidebar-hover-white transition-colors"
+              title="New chat"
+            >
+              <Plus size={14} className="text-hover-black" />
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       {error && (
         <div className="mx-6 mt-2 px-4 py-2 text-xs rounded-xl bg-red text-white shrink-0">{error}</div>

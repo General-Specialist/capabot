@@ -149,6 +149,8 @@ func runServe(configPath string) error {
 		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
 		StaticFS:       webui.FS(),
 		Scheduler:      scheduler,
+		ConfigPath:     configPath,
+		Router:         router,
 	})
 	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
 	go func() {

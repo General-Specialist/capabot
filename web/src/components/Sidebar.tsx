@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { MessageSquare, History, Terminal, Package, Settings, Clock, type LucideIcon } from 'lucide-react'
+import { MessageSquare, Package, Settings, Clock, type LucideIcon } from 'lucide-react'
 
 type NavItem = { Icon: LucideIcon; label: string; route: string; exact?: boolean }
 
 const NAV_ITEMS: NavItem[] = [
   { Icon: MessageSquare, label: 'Chat', route: '/', exact: true },
-  { Icon: History, label: 'Conversations', route: '/conversations' },
-  { Icon: Terminal, label: 'Logs', route: '/logs' },
   { Icon: Package, label: 'Skills', route: '/skills' },
   { Icon: Clock, label: 'Automations', route: '/automations' },
   { Icon: Settings, label: 'Settings', route: '/settings' },
@@ -58,10 +56,6 @@ export function Sidebar() {
         expanded ? 'w-[200px]' : 'w-[54px]'
       }`}
     >
-      <div className={`flex items-center h-[30px] shrink-0 ${expanded ? 'px-4 justify-start' : 'justify-center'}`}>
-        <span className="text-sm font-bold text-brand-primary">{expanded ? 'capabot' : 'C'}</span>
-      </div>
-
       <nav className="flex flex-col gap-1 flex-1">
         {NAV_ITEMS.map(item => (
           <NavButton

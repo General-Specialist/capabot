@@ -10,8 +10,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
-      '/v1': 'http://localhost:8080',
+      '/api': 'http://localhost:9090',
+      '/v1': 'http://localhost:9090',
     },
   },
   build: {

@@ -41,6 +41,8 @@ type Server struct {
 	logger         zerolog.Logger
 	skillsDir      string // destination for skills installed via API
 	clawHubToken   string // optional GitHub PAT for ClawHub requests
+	configPath     string // path to config.yaml for key management
+	router         *llm.Router
 }
 
 // Config holds dependencies for the API server.
@@ -66,6 +68,10 @@ type Config struct {
 	ClawHubToken string
 	// Scheduler is the cron scheduler for automations.
 	Scheduler *cron.Scheduler
+	// ConfigPath is the path to config.yaml for API key management.
+	ConfigPath string
+	// Router is the LLM router, used to hot-reload provider keys.
+	Router *llm.Router
 }
 
 // New creates a new API server and registers all routes.
@@ -90,6 +96,8 @@ func New(cfg Config) *Server {
 		logger:         cfg.Logger,
 		skillsDir:      skillsDir,
 		clawHubToken:   cfg.ClawHubToken,
+		configPath:     cfg.ConfigPath,
+		router:         cfg.Router,
 	}
 
 	// REST endpoints
@@ -112,6 +120,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("DELETE /api/automations/{id}", s.handleAutomationsDelete)
 	s.mux.HandleFunc("POST /api/automations/{id}/trigger", s.handleAutomationsTrigger)
 	s.mux.HandleFunc("GET /api/automations/{id}/runs", s.handleAutomationsRuns)
+	s.mux.HandleFunc("GET /api/config/keys", s.handleConfigKeysGet)
+	s.mux.HandleFunc("PUT /api/config/keys", s.handleConfigKeysPut)
 
 	// SPA static files
 	if cfg.StaticFS != nil {

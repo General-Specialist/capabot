@@ -15,8 +15,9 @@ interface InstalledSkill extends Skill {
 }
 
 export function SkillsPage() {
-  const [tab, setTab] = useState<'browse' | 'installed'>('browse')
+  const [tab, setTab] = useState<'browse' | 'installed'>('installed')
   const [installed, setInstalled] = useState<InstalledSkill[]>([])
+  const [installedLoading, setInstalledLoading] = useState(true)
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -31,16 +32,21 @@ export function SkillsPage() {
   const loadInstalled = () =>
     api.skills().then(res => setInstalled(res as InstalledSkill[]))
 
-  // Initial load
+  // Load installed skills immediately
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.skills(), api.skillsCatalog(undefined, 200)])
-      .then(([ins, cat]) => {
-        if (!cancelled) { setInstalled(ins as InstalledSkill[]); setCatalog(cat) }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Failed to load')
-      })
+    api.skills()
+      .then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
+      .finally(() => { if (!cancelled) setInstalledLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Load catalog in background
+  useEffect(() => {
+    let cancelled = false
+    api.skillsCatalog(undefined, 200)
+      .then(cat => { if (!cancelled) setCatalog(cat) })
+      .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Failed to load') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
@@ -97,19 +103,18 @@ export function SkillsPage() {
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl">
         <div className="flex items-center gap-6 mb-6">
-          <h1 className="text-lg font-semibold text-hover-black">Skills</h1>
           <div className="flex gap-1 text-sm">
-            <button
-              onClick={() => setTab('browse')}
-              className={`px-3 py-1 rounded-md transition-colors ${tab === 'browse' ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
-            >
-              Browse
-            </button>
             <button
               onClick={() => setTab('installed')}
               className={`px-3 py-1 rounded-md transition-colors ${tab === 'installed' ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
             >
               Installed {installed.length > 0 && <span className="ml-1 text-xs text-normal-black">({installed.length})</span>}
+            </button>
+            <button
+              onClick={() => setTab('browse')}
+              className={`px-3 py-1 rounded-md transition-colors ${tab === 'browse' ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
+            >
+              Browse
             </button>
           </div>
         </div>
@@ -200,8 +205,14 @@ export function SkillsPage() {
 
         {tab === 'installed' && (
           <>
-            {installed.length === 0 ? (
-              <p className="text-sm text-normal-black">No skills installed yet. Browse and install some above.</p>
+            {installedLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-14 rounded-lg animate-pulse bg-sidebar-hover-white" />
+                ))}
+              </div>
+            ) : installed.length === 0 ? (
+              <p className="text-sm text-normal-black">No skills installed yet. Browse and install some.</p>
             ) : (
               <div className="space-y-2">
                 {installed.map(skill => {
