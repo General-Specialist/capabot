@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,18 +128,60 @@ func buildSkillTemplate(name string) string {
 	return sb.String()
 }
 
-// runSkillInstall downloads and installs a skill from a URL.
-// Supports .zip and .tar.gz archives.
+// runSkillSearch searches the ClawHub skill directory for skills matching query.
+func runSkillSearch(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: capabot skill search <query>")
+	}
+	query := strings.Join(args, " ")
+
+	token := os.Getenv("CAPABOT_GITHUB_TOKEN")
+	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: token})
+
+	fmt.Printf("searching ClawHub for %q...\n", query)
+	results, err := client.SearchSkills(context.Background(), query)
+	if err != nil {
+		return fmt.Errorf("search failed: %w", err)
+	}
+	if len(results) == 0 {
+		fmt.Println("no skills found")
+		return nil
+	}
+	fmt.Printf("%-30s %-12s %s\n", "NAME", "VERSION", "DESCRIPTION")
+	fmt.Println(strings.Repeat("-", 80))
+	for _, s := range results {
+		ver := s.Version
+		if ver == "" {
+			ver = "-"
+		}
+		desc := s.Description
+		if len(desc) > 45 {
+			desc = desc[:42] + "..."
+		}
+		fmt.Printf("%-30s %-12s %s\n", s.Name, ver, desc)
+	}
+	return nil
+}
+
+// runSkillInstall downloads and installs a skill from a URL or ClawHub name.
+// If arg looks like a URL (contains "://") it downloads an archive.
+// Otherwise it treats arg as a ClawHub skill name and fetches it directly.
 func runSkillInstall(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: capabot skill install <url> [dest-dir]")
+		return fmt.Errorf("usage: capabot skill install <name-or-url> [dest-dir]")
 	}
-	rawURL := args[0]
+	target := args[0]
 	destDir := defaultSkillsDir()
 	if len(args) >= 2 {
 		destDir = args[1]
 	}
 
+	// If target looks like a ClawHub skill name (no "://"), use the registry client
+	if !strings.Contains(target, "://") {
+		return runSkillInstallFromClawHub(target, destDir)
+	}
+
+	rawURL := target
 	fmt.Printf("downloading %s...\n", rawURL)
 
 	resp, err := http.Get(rawURL) //nolint:noctx
@@ -194,6 +237,37 @@ func runSkillInstall(args []string) error {
 		fmt.Printf("  INSTALL: %s\n", h)
 	}
 
+	if !result.Success {
+		return fmt.Errorf("install completed with errors")
+	}
+	return nil
+}
+
+// runSkillInstallFromClawHub downloads a skill by name from the ClawHub registry
+// and imports it into destDir.
+func runSkillInstallFromClawHub(name, destDir string) error {
+	token := os.Getenv("CAPABOT_GITHUB_TOKEN")
+	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: token})
+
+	fmt.Printf("downloading %q from ClawHub...\n", name)
+	skillPath, err := client.DownloadSkill(context.Background(), name, os.TempDir())
+	if err != nil {
+		return fmt.Errorf("ClawHub download failed: %w", err)
+	}
+	defer os.RemoveAll(skillPath)
+
+	result, err := skill.ImportSkill(skillPath, destDir)
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
+
+	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)
+	for _, w := range result.Warnings {
+		fmt.Printf("  WARN: %s\n", w)
+	}
+	for _, h := range result.InstallHints {
+		fmt.Printf("  INSTALL: %s\n", h)
+	}
 	if !result.Success {
 		return fmt.Errorf("install completed with errors")
 	}

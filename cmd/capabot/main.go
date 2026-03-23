@@ -38,7 +38,7 @@ func main() {
 
 	case "skill":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: capabot skill <lint|import|create> [args...]")
+			fmt.Fprintln(os.Stderr, "usage: capabot skill <lint|import|create|init|install|search> [args...]")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
@@ -58,6 +58,11 @@ func main() {
 			}
 		case "init":
 			if err := runSkillInit(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		case "search":
+			if err := runSkillSearch(os.Args[3:]); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -130,7 +135,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  skill import <src> [dest]         Import an OpenClaw skill")
 	fmt.Fprintln(os.Stderr, "  skill create <name>               Scaffold a new skill directory")
 	fmt.Fprintln(os.Stderr, "  skill init [--wasm] <name>        Scaffold a skill (--wasm adds Go+Makefile)")
-	fmt.Fprintln(os.Stderr, "  skill install <url> [dest]        Download and install a skill archive")
+	fmt.Fprintln(os.Stderr, "  skill install <name-or-url> [dest] Download and install a skill from ClawHub or URL")
+	fmt.Fprintln(os.Stderr, "  skill search <query>              Search the ClawHub skill registry")
 	fmt.Fprintln(os.Stderr, "  agent list [--config <path>]      List configured agents")
 	fmt.Fprintln(os.Stderr, "  config set <key> <value>          Set a config value")
 	fmt.Fprintln(os.Stderr, "  migrate [--config <path>]         Run database migrations")

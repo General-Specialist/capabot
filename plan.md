@@ -373,7 +373,8 @@ Additional measures ✅:
 ```
 capabot serve              # start gateway + all configured channels
 capabot chat               # interactive CLI chat session
-capabot skill install <url> # install a skill from URL (.zip/.tar.gz)
+capabot skill install <name-or-url> # install from ClawHub name or URL (.zip/.tar.gz)
+capabot skill search <query>        # search ClawHub skill registry
 capabot skill import <dir>  # import an OpenClaw skill directory
 capabot skill create <name> # scaffold a new skill directory
 capabot skill lint [path...] # lint SKILL.md files for compatibility
@@ -386,8 +387,9 @@ capabot dev                 # hot-reload mode for skill development
 ### 9.2 Developer Tooling ✅
 - [x] `capabot dev` — polling-based (2s) hot-reload watcher for skill directories; auto-lints changed files
 - [x] `capabot skill create <name>` — scaffolds new skill directory with SKILL.md template
-- [x] `capabot skill install <url>` — downloads .zip or .tar.gz, extracts with path traversal protection, calls `ImportSkill`
-- [ ] WASM skill template: `capabot skill init --wasm` (future)
+- [x] `capabot skill install <name-or-url>` — ClawHub name → `DownloadSkill` + `ImportSkill`; URL → .zip/.tar.gz archive with path traversal protection
+- [x] `capabot skill search <query>` — searches ClawHub registry, tabular output (name / version / description)
+- [x] `capabot skill init [--wasm] <name>` — WASM skill scaffold: SKILL.md + main.go (Go WASM stub) + Makefile (`GOOS=wasip1 GOARCH=wasm`)
 - [ ] OpenClaw bulk importer: `capabot migrate-from-openclaw` (post-launch)
 
 ---
@@ -479,6 +481,9 @@ capabot dev                 # hot-reload mode for skill development
 - OpenRouter provider ✅ (100+ models via single API key)
 - WASM host functions ✅ (`http_get`, `memory_store`, `memory_recall` via `WASMHostConfig`)
 - `capabot skill init [--wasm]` ✅ (WASM skill scaffold with Go source + Makefile)
+- `capabot skill search <query>` ✅ (ClawHub registry search with tabular output)
+- `capabot skill install <name>` ✅ (ClawHub name → download → import; URL → archive extract → import)
+- ClawHub client ✅ (`ListSkills`, `SearchSkills`, `DownloadSkill`; path traversal protection; rate-limit hint)
 - Per-tenant isolation ✅ (`X-Tenant-ID` header → context → storage routing)
 - Makefile ✅ (`build`, `test`, `lint`, `web`, `dev`, `migrate` and more)
 
