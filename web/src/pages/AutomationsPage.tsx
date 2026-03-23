@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Play, Trash2, ChevronRight } from 'lucide-react'
-import { api, type Automation, type AutomationRun } from '@/lib/api'
+import { api, type Automation, type AutomationRun, type Skill } from '@/lib/api'
+import DatePicker from '@/components/DatePicker'
 
 function formatRelative(iso: string | null): string {
   if (!iso) return '—'
@@ -23,13 +24,14 @@ function formatFuture(iso: string | null): string {
   return `in ${Math.floor(diff / 86_400_000)}d`
 }
 
-const EMPTY_FORM = { name: '', cron: '', prompt: '', enabled: true }
+const EMPTY_FORM = { name: '', prompt: '', skill_name: '', enabled: true, rrule: '', start_at: null as string | null, end_at: null as string | null }
 
 export function AutomationsPage() {
   const [automations, setAutomations] = useState<Automation[]>([])
   const [selected, setSelected] = useState<Automation | null>(null)
   const [runs, setRuns] = useState<AutomationRun[]>([])
   const [form, setForm] = useState(EMPTY_FORM)
+  const [skills, setSkills] = useState<Skill[]>([])
   const [isNew, setIsNew] = useState(false)
   const [saving, setSaving] = useState(false)
   const [triggering, setTriggering] = useState(false)
@@ -37,11 +39,11 @@ export function AutomationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const load = () =>
-    api.automations().then(setAutomations).catch(() => {})
+  const load = () => api.automations().then(setAutomations).catch(() => {})
 
   useEffect(() => {
     load().finally(() => setLoading(false))
+    api.skills().then(setSkills).catch(() => {})
   }, [])
 
   const loadRuns = (id: number) =>
@@ -51,7 +53,7 @@ export function AutomationsPage() {
     setSelected(a)
     setIsNew(false)
     setError(null)
-    setForm({ name: a.name, cron: a.cron, prompt: a.prompt, enabled: a.enabled })
+    setForm({ name: a.name, prompt: a.prompt, skill_name: a.skill_name || '', enabled: a.enabled, rrule: a.rrule, start_at: a.start_at, end_at: a.end_at })
     loadRuns(a.id)
   }
 
@@ -63,19 +65,50 @@ export function AutomationsPage() {
     setRuns([])
   }
 
+  const handleScheduleChange = (data: {
+    absoluteStartUtc?: string | null
+    absoluteEndUtc?: string | null
+    startOffsetRule?: string | null
+    endOffsetRule?: string | null
+    recurrenceRule?: string | null
+  }) => {
+    setForm(f => ({
+      ...f,
+      rrule: data.recurrenceRule || '',
+      start_at: data.absoluteStartUtc || null,
+      end_at: data.absoluteEndUtc || null,
+    }))
+  }
+
   const save = async () => {
     setError(null)
     setSaving(true)
     try {
       if (isNew) {
-        const created = await api.automationCreate(form)
+        const created = await api.automationCreate({
+          name: form.name,
+          prompt: form.prompt,
+          skill_name: form.skill_name,
+          rrule: form.rrule,
+          start_at: form.start_at,
+          end_at: form.end_at,
+          enabled: form.enabled,
+        })
         setAutomations(prev => [...prev, created])
         selectAutomation(created)
       } else if (selected) {
-        const updated = await api.automationUpdate(selected.id, form)
+        const updated = await api.automationUpdate(selected.id, {
+          name: form.name,
+          prompt: form.prompt,
+          skill_name: form.skill_name,
+          rrule: form.rrule,
+          start_at: form.start_at,
+          end_at: form.end_at,
+          enabled: form.enabled,
+        })
         setAutomations(prev => prev.map(a => a.id === updated.id ? updated : a))
         setSelected(updated)
-        setForm({ name: updated.name, cron: updated.cron, prompt: updated.prompt, enabled: updated.enabled })
+        setForm({ name: updated.name, prompt: updated.prompt, skill_name: updated.skill_name || '', enabled: updated.enabled, rrule: updated.rrule, start_at: updated.start_at, end_at: updated.end_at })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -121,7 +154,7 @@ export function AutomationsPage() {
         <div className="flex items-center justify-end mb-6">
           <button
             onClick={startNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-primary text-white text-sm rounded-lg hover:opacity-80 transition-opacity"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 transition-opacity"
           >
             <Plus size={13} />
             New
@@ -134,7 +167,7 @@ export function AutomationsPage() {
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-lg animate-pulse bg-sidebar-hover-white" />
+                  <div key={i} className="h-14 rounded-lg animate-pulse bg-icon-hover-white" />
                 ))}
               </div>
             ) : automations.length === 0 && !showPanel ? (
@@ -146,17 +179,20 @@ export function AutomationsPage() {
                     key={a.id}
                     onClick={() => selectAutomation(a)}
                     className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                      selected?.id === a.id ? 'bg-sidebar-hover-white' : 'hover:bg-sidebar-white'
+                      selected?.id === a.id ? 'bg-icon-hover-white' : 'hover:bg-sidebar-white'
                     }`}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-hover-black truncate">{a.name}</span>
+                        {a.skill_name && (
+                          <span className="text-[10px] text-brand-primary bg-brand-primary/10 px-1.5 py-0.5 rounded shrink-0">skill</span>
+                        )}
                         {!a.enabled && (
-                          <span className="text-[10px] text-normal-black bg-sidebar-hover-white px-1.5 py-0.5 rounded shrink-0">off</span>
+                          <span className="text-[10px] text-normal-black bg-icon-hover-white px-1.5 py-0.5 rounded shrink-0">off</span>
                         )}
                       </div>
-                      <p className="text-xs text-normal-black font-mono mt-0.5">{a.cron}</p>
+                      <p className="text-xs text-normal-black font-mono mt-0.5 truncate">{a.skill_name || a.rrule || '—'}</p>
                     </div>
                     <ChevronRight size={13} className="text-normal-black shrink-0" />
                   </button>
@@ -176,19 +212,50 @@ export function AutomationsPage() {
                     placeholder="Name"
                     className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
                   />
-                  <input
-                    value={form.cron}
-                    onChange={e => setForm(f => ({ ...f, cron: e.target.value }))}
-                    placeholder="Cron expression  e.g. 0 9 * * *"
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black font-mono outline-none"
-                  />
-                  <textarea
-                    value={form.prompt}
-                    onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-                    placeholder="Prompt — what should the agent do?"
-                    rows={4}
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
-                  />
+                  <div className="px-3 rounded-lg border border-border-white bg-sidebar-white">
+                    <DatePicker
+                      recurrenceRule={form.rrule || null}
+                      absoluteStartUtc={form.start_at}
+                      absoluteEndUtc={form.end_at}
+                      showRepeat={true}
+                      onChange={handleScheduleChange}
+                    />
+                  </div>
+
+                  {/* Action: skill or prompt */}
+                  <div>
+                    <label className="text-xs text-normal-black mb-1 block">Action</label>
+                    <select
+                      value={form.skill_name}
+                      onChange={e => setForm(f => ({ ...f, skill_name: e.target.value }))}
+                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+                    >
+                      <option value="">Agent (LLM prompt)</option>
+                      {skills.map(s => (
+                        <option key={s.name} value={s.name}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {!form.skill_name && (
+                    <textarea
+                      value={form.prompt}
+                      onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
+                      placeholder="Prompt — what should the agent do?"
+                      rows={4}
+                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
+                    />
+                  )}
+
+                  {form.skill_name && (
+                    <textarea
+                      value={form.prompt}
+                      onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
+                      placeholder="Input data for the skill (optional JSON)"
+                      rows={2}
+                      className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
+                    />
+                  )}
                 </div>
 
                 {error && <p className="text-xs text-red">{error}</p>}
@@ -197,7 +264,7 @@ export function AutomationsPage() {
                   <button
                     onClick={() => void save()}
                     disabled={saving}
-                    className="px-4 py-1.5 bg-brand-primary text-white text-sm rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity"
+                    className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity"
                   >
                     {saving ? 'Saving…' : 'Save'}
                   </button>
@@ -245,17 +312,13 @@ export function AutomationsPage() {
                       {runs.map(run => (
                         <div key={run.id} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-sidebar-white text-xs">
                           <span className={`shrink-0 mt-0.5 w-2 h-2 rounded-full ${
-                            run.status === 'success' ? 'bg-terminal-green' :
+                            run.status === 'success' ? 'bg-green-500' :
                             run.status === 'error' ? 'bg-red' : 'bg-normal-black animate-pulse'
                           }`} />
                           <div className="flex-1 min-w-0">
                             <span className="text-normal-black">{formatRelative(run.started_at)}</span>
-                            {run.response && (
-                              <p className="text-hover-black mt-0.5 truncate">{run.response}</p>
-                            )}
-                            {run.error && (
-                              <p className="text-red mt-0.5 truncate">{run.error}</p>
-                            )}
+                            {run.response && <p className="text-hover-black mt-0.5 truncate">{run.response}</p>}
+                            {run.error && <p className="text-red mt-0.5 truncate">{run.error}</p>}
                           </div>
                         </div>
                       ))}

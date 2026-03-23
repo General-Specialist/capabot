@@ -108,6 +108,7 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/skills", s.handleSkills)
 	s.mux.HandleFunc("GET /api/skills/catalog", s.handleSkillsCatalog)
 	s.mux.HandleFunc("POST /api/skills/install", s.handleSkillsInstall)
+	s.mux.HandleFunc("POST /api/skills/create", s.handleSkillsCreate)
 	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
 	s.mux.HandleFunc("GET /api/providers", s.handleProviders)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)

@@ -97,6 +97,9 @@ func runServe(configPath string) error {
 	// 7b. Register Tier 3 WASM skills as callable tools
 	registerWASMSkills(ctx, skillRegistry, toolRegistry, logger)
 
+	// 7c. Register Tier 2 native Go skills as callable tools
+	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
+
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.
 	basePrompt := "You are a helpful AI assistant."
@@ -127,7 +130,7 @@ func runServe(configPath string) error {
 	}
 
 	// 8b. Start cron scheduler for automations
-	scheduler := cron.NewScheduler(store, runAgent, logger)
+	scheduler := cron.NewScheduler(store, skillRegistry, runAgent, logger)
 	go scheduler.Start(ctx)
 
 	// 9. API server (web UI + REST endpoints)
@@ -476,6 +479,48 @@ func (a *storeAdapter) SaveToolExecution(ctx context.Context, exec agent.StoreTo
 		DurationMs: exec.DurationMs,
 		Success:    exec.Success,
 	})
+}
+
+// nativeAgentTool adapts a skill.NativeTool to the agent.Tool interface.
+type nativeAgentTool struct {
+	inner *skill.NativeTool
+}
+
+func (n *nativeAgentTool) Name() string                { return n.inner.Name() }
+func (n *nativeAgentTool) Description() string         { return n.inner.Description() }
+func (n *nativeAgentTool) Parameters() json.RawMessage { return n.inner.Parameters() }
+func (n *nativeAgentTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
+	res, err := n.inner.Run(ctx, params)
+	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
+}
+
+// registerNativeSkills compiles and registers all Tier 2 native Go skills found
+// in the skill registry into the tool registry.
+func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg *agent.Registry, logger zerolog.Logger) {
+	for _, name := range skillReg.NativeSkillNames() {
+		skillDir, ok := skillReg.NativePath(name)
+		if !ok {
+			continue
+		}
+		parsed := skillReg.Get(name)
+		if parsed == nil {
+			continue
+		}
+
+		exec, err := skill.NewNativeExecutor(ctx, skillDir)
+		if err != nil {
+			logger.Error().Err(err).Str("skill", name).Str("dir", skillDir).Msg("failed to compile native skill")
+			continue
+		}
+
+		nativeTool := skill.NewNativeTool(parsed, exec)
+		if err := toolReg.Register(&nativeAgentTool{inner: nativeTool}); err != nil {
+			logger.Error().Err(err).Str("skill", name).Msg("failed to register native skill tool")
+			continue
+		}
+
+		logger.Info().Str("skill", name).Str("dir", skillDir).Msg("native skill registered (Tier 2)")
+	}
 }
 
 // registerWASMSkills compiles and registers all Tier 3 WASM skills found in

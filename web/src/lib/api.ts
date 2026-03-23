@@ -97,8 +97,11 @@ export interface StreamChunk {
 export interface Automation {
   id: number
   name: string
-  cron: string
+  rrule: string
+  start_at: string | null
+  end_at: string | null
   prompt: string
+  skill_name: string
   enabled: boolean
   last_run_at: string | null
   next_run_at: string | null
@@ -171,13 +174,15 @@ export const api = {
   skillsInstall: (name: string) => post<InstallResult>('/skills/install', { name }),
   providers: () => get<ProviderInfo[]>('/providers'),
   automations: () => get<Automation[]>('/automations'),
-  automationCreate: (data: { name: string; cron: string; prompt: string; enabled?: boolean }) =>
+  automationCreate: (data: { name: string; rrule: string; start_at?: string | null; end_at?: string | null; prompt: string; skill_name?: string; enabled?: boolean }) =>
     post<Automation>('/automations', data),
-  automationUpdate: (id: number, data: Partial<{ name: string; cron: string; prompt: string; enabled: boolean }>) =>
+  automationUpdate: (id: number, data: Partial<{ name: string; rrule: string; start_at: string | null; end_at: string | null; prompt: string; skill_name: string; enabled: boolean }>) =>
     put<Automation>(`/automations/${id}`, data),
   automationDelete: (id: number) => del<{ success: boolean }>(`/automations/${id}`),
   automationTrigger: (id: number) => post<{ triggered: boolean }>(`/automations/${id}/trigger`, {}),
   automationRuns: (id: number) => get<AutomationRun[]>(`/automations/${id}/runs`),
+  skillCreate: (data: { name: string; description: string; parameters?: Record<string, unknown>; code: string }) =>
+    post<{ name: string; success: boolean; tier: number }>('/skills/create', data),
   configKeys: () => get<ProviderKeys>('/config/keys'),
   configKeysSave: async (keys: ProviderKeys) => {
     const res = await fetch(BASE + '/config/keys', {

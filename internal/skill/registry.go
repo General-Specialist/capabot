@@ -13,19 +13,21 @@ import (
 // Skills loaded from earlier directories take precedence over later ones
 // (workspace > user > bundled).
 type Registry struct {
-	mu         sync.RWMutex
-	skills     map[string]*ParsedSkill // keyed by skill name
-	skillPaths map[string]string       // skill name → directory path on disk
-	wasmPaths  map[string]string       // skill name → absolute path to .wasm file (Tier 3)
-	dirs       []string                // directories loaded in precedence order
+	mu          sync.RWMutex
+	skills      map[string]*ParsedSkill // keyed by skill name
+	skillPaths  map[string]string       // skill name → directory path on disk
+	wasmPaths   map[string]string       // skill name → absolute path to .wasm file (Tier 3)
+	nativePaths map[string]string       // skill name → directory containing main.go (Tier 2)
+	dirs        []string                // directories loaded in precedence order
 }
 
 // NewRegistry creates an empty skill registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		skills:     make(map[string]*ParsedSkill),
-		skillPaths: make(map[string]string),
-		wasmPaths:  make(map[string]string),
+		skills:      make(map[string]*ParsedSkill),
+		skillPaths:  make(map[string]string),
+		wasmPaths:   make(map[string]string),
+		nativePaths: make(map[string]string),
 	}
 }
 
@@ -88,6 +90,12 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 			r.wasmPaths[name] = wasmPath
 		}
 
+		// Detect Tier 2: companion main.go alongside the SKILL.md (native Go skill)
+		mainGoPath := filepath.Join(skillDir, "main.go")
+		if _, err := os.Stat(mainGoPath); err == nil {
+			r.nativePaths[name] = skillDir
+		}
+
 		loaded++
 	}
 
@@ -110,6 +118,7 @@ func (r *Registry) Unregister(name string) {
 	delete(r.skills, name)
 	delete(r.skillPaths, name)
 	delete(r.wasmPaths, name)
+	delete(r.nativePaths, name)
 }
 
 // WASMPath returns the path to the compiled WASM module for the skill with
@@ -127,6 +136,25 @@ func (r *Registry) WASMSkillNames() []string {
 	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.wasmPaths))
 	for name := range r.wasmPaths {
+		names = append(names, name)
+	}
+	return names
+}
+
+// NativePath returns the directory of the named native Go skill, or ("", false).
+func (r *Registry) NativePath(name string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p, ok := r.nativePaths[name]
+	return p, ok
+}
+
+// NativeSkillNames returns the names of all skills that have a companion main.go.
+func (r *Registry) NativeSkillNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.nativePaths))
+	for name := range r.nativePaths {
 		names = append(names, name)
 	}
 	return names

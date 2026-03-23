@@ -371,8 +371,11 @@ func (s *Store) DeleteMemory(ctx context.Context, tenantID, key string) error {
 type Automation struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
-	Cron      string     `json:"cron"`
+	RRule     string     `json:"rrule"`
+	StartAt   *time.Time `json:"start_at"`
+	EndAt     *time.Time `json:"end_at"`
 	Prompt    string     `json:"prompt"`
+	SkillName string     `json:"skill_name"`
 	Enabled   bool       `json:"enabled"`
 	LastRunAt *time.Time `json:"last_run_at"`
 	NextRunAt *time.Time `json:"next_run_at"`
@@ -395,14 +398,20 @@ type AutomationRun struct {
 func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		var nextRunAt interface{}
+		var nextRunAt, startAt, endAt interface{}
 		if a.NextRunAt != nil {
 			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
 		}
+		if a.StartAt != nil {
+			startAt = a.StartAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		if a.EndAt != nil {
+			endAt = a.EndAt.UTC().Format("2006-01-02 15:04:05")
+		}
 		result, err := tx.ExecContext(ctx,
-			`INSERT INTO automations (name, cron, prompt, enabled, next_run_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			a.Name, a.Cron, a.Prompt, boolInt(a.Enabled), nextRunAt,
+			`INSERT INTO automations (name, rrule, start_at, end_at, prompt, skill_name, enabled, next_run_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			a.Name, a.RRule, startAt, endAt, a.Prompt, a.SkillName, boolInt(a.Enabled), nextRunAt,
 		)
 		if err != nil {
 			return err
@@ -416,7 +425,7 @@ func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, erro
 // ListAutomations returns all automations ordered by name.
 func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
-		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations ORDER BY name ASC`,
 	)
 	if err != nil {
@@ -429,7 +438,7 @@ func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 // GetAutomation retrieves a single automation by ID.
 func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error) {
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
-		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations WHERE id = ?`, id,
 	)
 	if err != nil {
@@ -449,14 +458,20 @@ func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error)
 // UpdateAutomation updates an existing automation's fields.
 func (s *Store) UpdateAutomation(ctx context.Context, a Automation) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		var nextRunAt interface{}
+		var nextRunAt, startAt, endAt interface{}
 		if a.NextRunAt != nil {
 			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
 		}
+		if a.StartAt != nil {
+			startAt = a.StartAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		if a.EndAt != nil {
+			endAt = a.EndAt.UTC().Format("2006-01-02 15:04:05")
+		}
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automations SET name=?, cron=?, prompt=?, enabled=?, next_run_at=?, updated_at=datetime('now')
+			`UPDATE automations SET name=?, rrule=?, start_at=?, end_at=?, prompt=?, skill_name=?, enabled=?, next_run_at=?, updated_at=datetime('now')
 			 WHERE id=?`,
-			a.Name, a.Cron, a.Prompt, boolInt(a.Enabled), nextRunAt, a.ID,
+			a.Name, a.RRule, startAt, endAt, a.Prompt, a.SkillName, boolInt(a.Enabled), nextRunAt, a.ID,
 		)
 		return err
 	})
@@ -476,8 +491,9 @@ func (s *Store) DeleteAutomation(ctx context.Context, id int64) error {
 // ListDueAutomations returns enabled automations whose next_run_at is in the past.
 func (s *Store) ListDueAutomations(ctx context.Context) ([]Automation, error) {
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
-		`SELECT id, name, cron, prompt, enabled, last_run_at, next_run_at, created_at, updated_at
-		 FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= datetime('now')`,
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
+		 FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= datetime('now')
+		   AND (end_at IS NULL OR end_at > datetime('now'))`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing due automations: %w", err)
@@ -566,14 +582,22 @@ func scanAutomations(rows *sql.Rows) ([]Automation, error) {
 		var a Automation
 		var enabledInt int
 		var createdAt, updatedAt string
-		var lastRunAt, nextRunAt *string
-		if err := rows.Scan(&a.ID, &a.Name, &a.Cron, &a.Prompt, &enabledInt,
+		var startAt, endAt, lastRunAt, nextRunAt *string
+		if err := rows.Scan(&a.ID, &a.Name, &a.RRule, &startAt, &endAt, &a.Prompt, &a.SkillName, &enabledInt,
 			&lastRunAt, &nextRunAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scanning automation: %w", err)
 		}
 		a.Enabled = enabledInt != 0
 		a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if startAt != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *startAt)
+			a.StartAt = &t
+		}
+		if endAt != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *endAt)
+			a.EndAt = &t
+		}
 		if lastRunAt != nil {
 			t, _ := time.Parse("2006-01-02 15:04:05", *lastRunAt)
 			a.LastRunAt = &t

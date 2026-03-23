@@ -12,10 +12,36 @@ import (
 )
 
 type automationInput struct {
-	Name    string `json:"name"`
-	Cron    string `json:"cron"`
-	Prompt  string `json:"prompt"`
-	Enabled *bool  `json:"enabled"`
+	Name      string  `json:"name"`
+	RRule     string  `json:"rrule"`
+	StartAt   *string `json:"start_at"`
+	EndAt     *string `json:"end_at"`
+	Prompt    string  `json:"prompt"`
+	SkillName string  `json:"skill_name"`
+	Enabled   *bool   `json:"enabled"`
+}
+
+func parseOptionalTime(s *string) *time.Time {
+	if s == nil || *s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, *s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+func computeNextRun(rrule string, from time.Time) *time.Time {
+	if rrule == "" {
+		return nil
+	}
+	sched, err := cron.Parse(rrule)
+	if err != nil {
+		return nil
+	}
+	next := sched.Next(from)
+	return &next
 }
 
 func (s *Server) handleAutomationsList(w http.ResponseWriter, r *http.Request) {
@@ -48,26 +74,38 @@ func (s *Server) handleAutomationsCreate(w http.ResponseWriter, r *http.Request)
 		writeError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if inp.Prompt == "" {
-		writeError(w, "prompt is required", http.StatusBadRequest)
+	if inp.Prompt == "" && inp.SkillName == "" {
+		writeError(w, "prompt or skill_name is required", http.StatusBadRequest)
 		return
 	}
-	sched, err := cron.Parse(inp.Cron)
-	if err != nil {
-		writeError(w, fmt.Sprintf("invalid cron expression: %v", err), http.StatusBadRequest)
-		return
+	if inp.RRule != "" {
+		if _, err := cron.Parse(inp.RRule); err != nil {
+			writeError(w, fmt.Sprintf("invalid rrule: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
-	next := sched.Next(time.Now())
+	startAt := parseOptionalTime(inp.StartAt)
+	endAt := parseOptionalTime(inp.EndAt)
+
+	from := time.Now()
+	if startAt != nil && startAt.After(from) {
+		from = *startAt
+	}
+	nextRunAt := computeNextRun(inp.RRule, from)
+
 	enabled := true
 	if inp.Enabled != nil {
 		enabled = *inp.Enabled
 	}
 	id, err := s.store.CreateAutomation(r.Context(), memory.Automation{
 		Name:      inp.Name,
-		Cron:      inp.Cron,
+		RRule:     inp.RRule,
+		StartAt:   startAt,
+		EndAt:     endAt,
 		Prompt:    inp.Prompt,
+		SkillName: inp.SkillName,
 		Enabled:   enabled,
-		NextRunAt: &next,
+		NextRunAt: nextRunAt,
 	})
 	if err != nil {
 		writeError(w, fmt.Sprintf("creating automation: %v", err), http.StatusInternalServerError)
@@ -118,19 +156,32 @@ func (s *Server) handleAutomationsUpdate(w http.ResponseWriter, r *http.Request)
 	if inp.Prompt != "" {
 		existing.Prompt = inp.Prompt
 	}
+	// Allow clearing skill_name by sending empty string explicitly
+	existing.SkillName = inp.SkillName
 	if inp.Enabled != nil {
 		existing.Enabled = *inp.Enabled
 	}
-	// If cron changed, recompute next_run_at
-	if inp.Cron != "" && inp.Cron != existing.Cron {
-		sched, err := cron.Parse(inp.Cron)
-		if err != nil {
-			writeError(w, fmt.Sprintf("invalid cron expression: %v", err), http.StatusBadRequest)
-			return
+	// Update start/end times if provided.
+	if inp.StartAt != nil {
+		existing.StartAt = parseOptionalTime(inp.StartAt)
+	}
+	if inp.EndAt != nil {
+		existing.EndAt = parseOptionalTime(inp.EndAt)
+	}
+	// If rrule changed, recompute next_run_at.
+	if inp.RRule != existing.RRule {
+		if inp.RRule != "" {
+			if _, err := cron.Parse(inp.RRule); err != nil {
+				writeError(w, fmt.Sprintf("invalid rrule: %v", err), http.StatusBadRequest)
+				return
+			}
 		}
-		next := sched.Next(time.Now())
-		existing.Cron = inp.Cron
-		existing.NextRunAt = &next
+		existing.RRule = inp.RRule
+		from := time.Now()
+		if existing.StartAt != nil && existing.StartAt.After(from) {
+			from = *existing.StartAt
+		}
+		existing.NextRunAt = computeNextRun(inp.RRule, from)
 	}
 	if err := s.store.UpdateAutomation(r.Context(), existing); err != nil {
 		writeError(w, fmt.Sprintf("updating automation: %v", err), http.StatusInternalServerError)
