@@ -3,8 +3,12 @@ package log
 import (
 	"bytes"
 	"context"
+	"regexp"
 	"sync"
 )
+
+// ansiRe matches ANSI SGR escape sequences (colors, bold, reset, etc.)
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 const ringCap = 500
 
@@ -28,7 +32,7 @@ func NewBroadcaster() *Broadcaster {
 
 // Write implements io.Writer — captures a log line and fans it out.
 func (b *Broadcaster) Write(p []byte) (int, error) {
-	line := string(bytes.TrimRight(p, "\n"))
+	line := ansiRe.ReplaceAllString(string(bytes.TrimRight(p, "\n")), "")
 	if line == "" {
 		return len(p), nil
 	}

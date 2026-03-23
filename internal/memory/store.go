@@ -73,6 +73,19 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	})
 }
 
+// UpsertSession creates a session if it doesn't exist, or bumps updated_at if it does.
+func (s *Store) UpsertSession(ctx context.Context, sess Session) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (id, tenant_id, channel, user_id, metadata)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')`,
+			sess.ID, sess.TenantID, sess.Channel, sess.UserID, sess.Metadata,
+		)
+		return err
+	})
+}
+
 // DeleteOldSessions removes sessions (and their messages/tool_executions) that
 // have not been updated within the given duration. Returns the number of sessions deleted.
 func (s *Store) DeleteOldSessions(ctx context.Context, olderThan time.Duration) (int, error) {

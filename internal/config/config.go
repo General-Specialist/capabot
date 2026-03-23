@@ -122,8 +122,10 @@ func LoadFromFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("reading config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parsing config file: %w", err)
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 
 	cfg = applyEnvOverrides(cfg)
@@ -159,8 +161,11 @@ func applyEnvOverrides(cfg Config) Config {
 	if v := os.Getenv("CAPABOT_OPENAI_BASE_URL"); v != "" {
 		cfg.Providers.OpenAI.BaseURL = v
 	}
-	if v := os.Getenv("CAPABOT_GEMINI_API_KEY"); v != "" {
-		cfg.Providers.Gemini.APIKey = v
+	for _, envKey := range []string{"CAPABOT_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		if v := os.Getenv(envKey); v != "" {
+			cfg.Providers.Gemini.APIKey = v
+			break
+		}
 	}
 	if v := os.Getenv("CAPABOT_GEMINI_MODEL"); v != "" {
 		cfg.Providers.Gemini.Model = v

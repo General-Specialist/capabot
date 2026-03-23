@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
@@ -35,79 +36,117 @@ func NewShellExecTool(allowlist []string, timeoutSec int) *ShellExecTool {
 }
 
 func (t *ShellExecTool) Name() string        { return "shell_exec" }
-func (t *ShellExecTool) Description() string { return "Execute a shell command (allowlist-only)." }
+func (t *ShellExecTool) Description() string { return "Execute one or more shell commands (allowlist-only)." }
 
 func (t *ShellExecTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"command": {"type": "string", "description": "Command binary name (checked against allowlist)"},
-			"args": {"type": "array", "items": {"type": "string"}, "description": "Arguments"},
-			"cwd": {"type": "string", "description": "Working directory (optional)"}
-		},
-		"required": ["command"]
+			"commands": {
+				"type": "array",
+				"description": "List of commands to run sequentially. Use this to batch multiple operations.",
+				"items": {
+					"type": "object",
+					"properties": {
+						"command": {"type": "string", "description": "Command binary name (checked against allowlist)"},
+						"args":    {"type": "array", "items": {"type": "string"}, "description": "Arguments"},
+						"cwd":     {"type": "string", "description": "Working directory (optional)"}
+					},
+					"required": ["command"]
+				}
+			},
+			"command": {"type": "string", "description": "Single command binary name (shorthand for one-item commands array)"},
+			"args":    {"type": "array", "items": {"type": "string"}, "description": "Arguments for single command"},
+			"cwd":     {"type": "string", "description": "Working directory for single command (optional)"}
+		}
 	}`)
+}
+
+type cmdSpec struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	CWD     string   `json:"cwd"`
 }
 
 func (t *ShellExecTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
 	var p struct {
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-		CWD     string   `json:"cwd"`
+		Commands []cmdSpec `json:"commands"`
+		Command  string    `json:"command"`
+		Args     []string  `json:"args"`
+		CWD      string    `json:"cwd"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return agent.ToolResult{Content: "invalid parameters", IsError: true}, nil
 	}
-	if p.Command == "" {
-		return agent.ToolResult{Content: "command is required", IsError: true}, nil
+
+	// Normalise: single command shorthand → commands array
+	cmds := p.Commands
+	if len(cmds) == 0 {
+		if p.Command == "" {
+			return agent.ToolResult{Content: "command is required", IsError: true}, nil
+		}
+		cmds = []cmdSpec{{Command: p.Command, Args: p.Args, CWD: p.CWD}}
 	}
 
-	// Allowlist check — empty allowlist means everything is blocked
-	if len(t.allowlist) == 0 || !t.allowlist[p.Command] {
-		return agent.ToolResult{
-			Content: fmt.Sprintf("command %q is not in the allowlist", p.Command),
-			IsError: true,
-		}, nil
-	}
-
-	// Locate the binary in PATH to avoid shell injection via PATH manipulation
-	binary, err := exec.LookPath(p.Command)
-	if err != nil {
-		return agent.ToolResult{
-			Content: fmt.Sprintf("command %q not found in PATH", p.Command),
-			IsError: true,
-		}, nil
-	}
-
-	// Apply timeout
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(t.timeoutSec)*time.Second)
 	defer cancel()
 
-	// Build args immutably
-	args := make([]string, len(p.Args))
-	copy(args, p.Args)
+	var sb strings.Builder
+	anyError := false
 
-	//nolint:gosec // G204: allowlist-checked binary path only
-	cmd := exec.CommandContext(ctx, binary, args...)
-	if p.CWD != "" {
-		cmd.Dir = p.CWD
-	}
+	for i, spec := range cmds {
+		if spec.Command == "" {
+			continue
+		}
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+		// Allowlist check
+		if len(t.allowlist) == 0 || !t.allowlist[spec.Command] {
+			if len(cmds) > 1 {
+				fmt.Fprintf(&sb, "[%d] %s: not in allowlist\n", i+1, spec.Command)
+			} else {
+				sb.WriteString(fmt.Sprintf("command %q is not in the allowlist", spec.Command))
+			}
+			anyError = true
+			continue
+		}
 
-	runErr := cmd.Run()
+		binary, err := exec.LookPath(spec.Command)
+		if err != nil {
+			fmt.Fprintf(&sb, "[%d] %s: not found in PATH\n", i+1, spec.Command)
+			anyError = true
+			continue
+		}
 
-	exitCode := 0
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
+		args := make([]string, len(spec.Args))
+		copy(args, spec.Args)
+
+		//nolint:gosec // G204: allowlist-checked binary path only
+		cmd := exec.CommandContext(ctx, binary, args...)
+		if spec.CWD != "" {
+			cmd.Dir = spec.CWD
+		}
+
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+
+		runErr := cmd.Run()
+		exitCode := 0
+		if runErr != nil {
+			if exitErr, ok := runErr.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = -1
+			}
+			anyError = true
+		}
+
+		if len(cmds) == 1 {
+			fmt.Fprintf(&sb, "exit code: %d\n%s", exitCode, out.String())
 		} else {
-			exitCode = -1
+			fmt.Fprintf(&sb, "[%d] %s (exit %d)\n%s\n", i+1, spec.Command, exitCode, out.String())
 		}
 	}
 
-	content := fmt.Sprintf("exit code: %d\n%s", exitCode, out.String())
-	return agent.ToolResult{Content: content, IsError: exitCode != 0}, nil
+	return agent.ToolResult{Content: sb.String(), IsError: anyError}, nil
 }

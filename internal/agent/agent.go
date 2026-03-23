@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,11 +22,12 @@ const (
 
 // AgentEvent is emitted during agent execution so callers can stream progress.
 type AgentEvent struct {
-	Kind     EventKind `json:"kind"`
-	ToolName string    `json:"tool_name,omitempty"`
-	ToolID   string    `json:"tool_id,omitempty"`
-	Content  string    `json:"content,omitempty"`
-	IsError  bool      `json:"is_error,omitempty"`
+	Kind      EventKind       `json:"kind"`
+	ToolName  string          `json:"tool_name,omitempty"`
+	ToolID    string          `json:"tool_id,omitempty"`
+	ToolInput json.RawMessage `json:"tool_input,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 	// Iteration is the ReAct loop index (1-based).
 	Iteration int `json:"iteration,omitempty"`
 }
@@ -279,7 +281,7 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 		Str("id", tc.ID).
 		Msg("executing tool")
 
-	a.emit(AgentEvent{Kind: EventToolStart, ToolName: tc.Name, ToolID: tc.ID})
+	a.emit(AgentEvent{Kind: EventToolStart, ToolName: tc.Name, ToolID: tc.ID, ToolInput: tc.Input})
 
 	start := time.Now()
 	result, err := tool.Execute(ctx, tc.Input)

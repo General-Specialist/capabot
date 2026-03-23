@@ -3,6 +3,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -93,6 +95,7 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/skills", s.handleSkills)
 	s.mux.HandleFunc("GET /api/skills/catalog", s.handleSkillsCatalog)
 	s.mux.HandleFunc("POST /api/skills/install", s.handleSkillsInstall)
+	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
 	s.mux.HandleFunc("GET /api/providers", s.handleProviders)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 	s.mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -241,18 +244,22 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	all := s.skillReg.List()
 	type skillDTO struct {
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		Version         string `json:"version"`
-		HasInstructions bool   `json:"has_instructions"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Version      string `json:"version"`
+		Instructions string `json:"instructions"`
+		Removable    bool   `json:"removable"`
 	}
 	out := make([]skillDTO, len(all))
 	for i, sk := range all {
+		path, hasPath := s.skillReg.SkillPath(sk.Manifest.Name)
+		removable := hasPath && strings.HasPrefix(path, s.skillsDir)
 		out[i] = skillDTO{
-			Name:            sk.Manifest.Name,
-			Description:     sk.Manifest.Description,
-			Version:         sk.Manifest.Version,
-			HasInstructions: sk.Instructions != "",
+			Name:         sk.Manifest.Name,
+			Description:  sk.Manifest.Description,
+			Version:      sk.Manifest.Version,
+			Instructions: sk.Instructions,
+			Removable:    removable,
 		}
 	}
 	writeJSON(w, out)
@@ -298,17 +305,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID := TenantIDFromContext(r.Context())
+	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, req.Text)
+
 	messages := []llm.ChatMessage{{Role: "user", Content: req.Text}}
-	result, err := s.defaultAgent(r.Context(), req.SessionID, messages, nil)
+	result, err := s.defaultAgent(r.Context(), sessionID, messages, nil)
 	if err != nil {
 		writeError(w, fmt.Sprintf("agent error: %v", err), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]any{
-		"response":   result.Response,
-		"tool_calls": result.ToolCalls,
-		"iterations": result.Iterations,
-		"usage":      result.Usage,
+		"session_id":  sessionID,
+		"response":    result.Response,
+		"tool_calls":  result.ToolCalls,
+		"iterations":  result.Iterations,
+		"usage":       result.Usage,
 		"stop_reason": result.StopReason,
 	})
 }
@@ -352,19 +363,27 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		defer close(doneCh)
 		for ev := range eventCh {
 			sendSSE(w, flusher, map[string]any{
-				"event":     string(ev.Kind),
-				"tool_name": ev.ToolName,
-				"tool_id":   ev.ToolID,
-				"content":   ev.Content,
-				"is_error":  ev.IsError,
-				"iteration": ev.Iteration,
+				"event":      string(ev.Kind),
+				"tool_name":  ev.ToolName,
+				"tool_id":    ev.ToolID,
+				"tool_input": ev.ToolInput,
+				"content":    ev.Content,
+				"is_error":   ev.IsError,
+				"iteration":  ev.Iteration,
 			})
 		}
 	}()
 
+	// Ensure session exists and user message is persisted before running.
+	tenantID := TenantIDFromContext(r.Context())
+	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, req.Text)
+
+	// Send session_id as first event so the client can track the conversation.
+	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
+
 	// Run the agent, feeding events into eventCh.
 	messages := []llm.ChatMessage{{Role: "user", Content: req.Text}}
-	result, err := s.defaultAgent(r.Context(), req.SessionID, messages, func(ev agent.AgentEvent) {
+	result, err := s.defaultAgent(r.Context(), sessionID, messages, func(ev agent.AgentEvent) {
 		select {
 		case eventCh <- ev:
 		default: // drop if buffer full rather than blocking agent
@@ -424,17 +443,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSkillsCatalog(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
-	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: s.clawHubToken})
-
-	var (
-		results []skill.ClawHubSkillEntry
-		err     error
-	)
-	if query == "" {
-		results, err = client.ListSkills(r.Context())
-	} else {
-		results, err = client.SearchSkills(r.Context(), query)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 {
+		limit = 10000
 	}
+
+	client := skill.NewClawHubClient(skill.ClawHubConfig{})
+	results, err := client.BrowseSkills(r.Context(), query, limit, offset)
 	if err != nil {
 		writeError(w, fmt.Sprintf("ClawHub error: %v", err), http.StatusBadGateway)
 		return
@@ -454,7 +470,7 @@ func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: s.clawHubToken})
+	client := skill.NewClawHubClient(skill.ClawHubConfig{})
 
 	tmpDir, err := os.MkdirTemp("", "capabot-install-*")
 	if err != nil {
@@ -475,12 +491,76 @@ func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hot-reload the skill registry so the agent can use the new skill immediately.
+	if s.skillReg != nil {
+		s.skillReg.LoadDir(s.skillsDir) //nolint:errcheck
+	}
+
 	writeJSON(w, map[string]any{
 		"skill_name": result.SkillName,
 		"tier":       result.Tier,
 		"success":    result.Success,
 		"warnings":   result.Warnings,
 	})
+}
+
+func (s *Server) handleSkillsUninstall(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if s.skillReg == nil {
+		writeError(w, "skill registry not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	skillPath, ok := s.skillReg.SkillPath(name)
+	if !ok {
+		writeError(w, fmt.Sprintf("skill %q not found", name), http.StatusNotFound)
+		return
+	}
+
+	// Only allow removing skills that live inside the API-managed skills dir.
+	if !strings.HasPrefix(skillPath, s.skillsDir) {
+		writeError(w, "skill is not removable (system or workspace skill)", http.StatusForbidden)
+		return
+	}
+
+	if err := os.RemoveAll(skillPath); err != nil {
+		writeError(w, fmt.Sprintf("removing skill: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.skillReg.Unregister(name)
+	writeJSON(w, map[string]any{"success": true, "name": name})
+}
+
+// newSessionID generates a random hex session ID.
+func newSessionID() string {
+	b := make([]byte, 16)
+	rand.Read(b) //nolint:errcheck
+	return hex.EncodeToString(b)
+}
+
+// ensureSession upserts a session and saves the user message. Returns the session ID.
+func (s *Server) ensureSession(ctx context.Context, sessionID, tenantID, text string) string {
+	if sessionID == "" {
+		sessionID = newSessionID()
+	}
+	if s.store != nil {
+		_ = s.store.UpsertSession(ctx, memory.Session{
+			ID:       sessionID,
+			TenantID: tenantID,
+			Channel:  "web",
+		})
+		_, _ = s.store.SaveMessage(ctx, memory.Message{
+			SessionID: sessionID,
+			Role:      "user",
+			Content:   text,
+		})
+	}
+	return sessionID
 }
 
 // --- helpers ---

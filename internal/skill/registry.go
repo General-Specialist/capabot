@@ -13,17 +13,19 @@ import (
 // Skills loaded from earlier directories take precedence over later ones
 // (workspace > user > bundled).
 type Registry struct {
-	mu        sync.RWMutex
-	skills    map[string]*ParsedSkill // keyed by skill name
-	wasmPaths map[string]string       // skill name → absolute path to .wasm file (Tier 3)
-	dirs      []string                // directories loaded in precedence order
+	mu         sync.RWMutex
+	skills     map[string]*ParsedSkill // keyed by skill name
+	skillPaths map[string]string       // skill name → directory path on disk
+	wasmPaths  map[string]string       // skill name → absolute path to .wasm file (Tier 3)
+	dirs       []string                // directories loaded in precedence order
 }
 
 // NewRegistry creates an empty skill registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		skills:    make(map[string]*ParsedSkill),
-		wasmPaths: make(map[string]string),
+		skills:     make(map[string]*ParsedSkill),
+		skillPaths: make(map[string]string),
+		wasmPaths:  make(map[string]string),
 	}
 }
 
@@ -76,10 +78,12 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 			continue
 		}
 
+		skillDir := filepath.Join(dir, entry.Name())
 		r.skills[name] = parsed
+		r.skillPaths[name] = skillDir
 
 		// Detect Tier 3: companion skill.wasm alongside the SKILL.md
-		wasmPath := filepath.Join(dir, entry.Name(), "skill.wasm")
+		wasmPath := filepath.Join(skillDir, "skill.wasm")
 		if _, err := os.Stat(wasmPath); err == nil {
 			r.wasmPaths[name] = wasmPath
 		}
@@ -88,6 +92,24 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 	}
 
 	return loaded, nil
+}
+
+// SkillPath returns the on-disk directory of the named skill, or ("", false).
+func (r *Registry) SkillPath(name string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p, ok := r.skillPaths[name]
+	return p, ok
+}
+
+// Unregister removes a skill from the in-memory registry by name.
+// It does NOT delete files from disk — callers must do that separately.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.skills, name)
+	delete(r.skillPaths, name)
+	delete(r.wasmPaths, name)
 }
 
 // WASMPath returns the path to the compiled WASM module for the skill with

@@ -34,7 +34,8 @@ export interface Skill {
   name: string
   description: string
   version: string
-  has_instructions: boolean
+  instructions: string
+  removable: boolean
 }
 
 export interface CatalogSkill {
@@ -43,6 +44,8 @@ export interface CatalogSkill {
   version: string
   path: string
   html_url: string
+  downloads: number
+  stars: number
 }
 
 export interface InstallResult {
@@ -61,6 +64,8 @@ export interface HealthStatus {
   status: string
   version: string
   uptime_seconds: number
+  skills_loaded: number
+  providers_count: number
 }
 
 export interface ChatResponse {
@@ -72,9 +77,20 @@ export interface ChatResponse {
 }
 
 export interface StreamChunk {
-  delta?: string
+  // agent event fields
+  event?: string
+  content?: string
+  tool_name?: string
+  tool_id?: string
+  tool_input?: Record<string, unknown>
+  is_error?: boolean
+  iteration?: number
+  // completion fields
+  session_id?: string
   done?: boolean
-  tool_call?: { id: string; name: string }
+  tool_calls?: number
+  iterations?: number
+  usage?: { input_tokens: number; output_tokens: number }
   error?: string
 }
 
@@ -100,7 +116,13 @@ export const api = {
   conversations: (limit = 50) => get<Conversation[]>(`/conversations?limit=${limit}`),
   conversation: (id: string) => get<{ session: Conversation; messages: Message[] }>(`/conversations/${id}`),
   skills: () => get<Skill[]>('/skills'),
-  skillsCatalog: (q?: string) => get<CatalogSkill[]>(`/skills/catalog${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  skillsCatalog: (q?: string, limit = 200, offset = 0) => {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    params.set('limit', String(limit))
+    params.set('offset', String(offset))
+    return get<CatalogSkill[]>(`/skills/catalog?${params}`)
+  },
   skillsInstall: (name: string) => post<InstallResult>('/skills/install', { name }),
   providers: () => get<ProviderInfo[]>('/providers'),
   chat: (text: string, sessionId?: string) =>

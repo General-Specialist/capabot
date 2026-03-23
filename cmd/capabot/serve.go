@@ -21,6 +21,7 @@ import (
 	"github.com/polymath/capabot/internal/skill"
 	"github.com/polymath/capabot/internal/tools"
 	"github.com/polymath/capabot/internal/transport"
+	webui "github.com/polymath/capabot/web"
 	"github.com/rs/zerolog"
 )
 
@@ -76,6 +77,18 @@ func runServe(configPath string) error {
 	// 6. Initialize built-in tools (pass store for memory tools)
 	toolRegistry := initToolRegistry(cfg, store)
 
+	// Log which providers were configured (key presence only, not values)
+	logger.Info().
+		Bool("anthropic", cfg.Providers.Anthropic.APIKey != "").
+		Bool("openai", cfg.Providers.OpenAI.APIKey != "").
+		Bool("gemini", cfg.Providers.Gemini.APIKey != "").
+		Bool("openrouter", cfg.Providers.OpenRouter.APIKey != "").
+		Msg("providers")
+	if cfg.Providers.Anthropic.APIKey == "" && cfg.Providers.OpenAI.APIKey == "" &&
+		cfg.Providers.Gemini.APIKey == "" && cfg.Providers.OpenRouter.APIKey == "" {
+		logger.Warn().Msg("no LLM providers configured — chat will not work. See config.example.yaml")
+	}
+
 	// 7. Initialize skill registry
 	skillRegistry := initSkillRegistry(cfg)
 	logger.Info().Int("skills", skillRegistry.Len()).Msg("skills loaded")
@@ -106,6 +119,9 @@ func runServe(configPath string) error {
 		if onEvent != nil {
 			a.SetOnEvent(onEvent)
 		}
+		if store != nil {
+			a.SetStore(&storeAdapter{store: store})
+		}
 		return a.Run(runCtx, sessionID, messages)
 	}
 
@@ -126,6 +142,7 @@ func runServe(configPath string) error {
 		RateLimitRPM:   cfg.Security.RateLimitRPM,
 		SkillsDir:      defaultSkillsDir(),
 		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
+		StaticFS:       webui.FS(),
 	})
 	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
 	go func() {
@@ -416,6 +433,34 @@ func (w *wasmAgentTool) Parameters() json.RawMessage { return w.inner.Parameters
 func (w *wasmAgentTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
 	res, err := w.inner.Run(ctx, params)
 	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
+}
+
+// storeAdapter adapts *memory.Store to the agent.StoreWriter interface,
+// bridging the type gap without creating an import cycle.
+type storeAdapter struct {
+	store *memory.Store
+}
+
+func (a *storeAdapter) SaveMessage(ctx context.Context, msg agent.StoreMessage) (int64, error) {
+	return a.store.SaveMessage(ctx, memory.Message{
+		SessionID:  msg.SessionID,
+		Role:       msg.Role,
+		Content:    msg.Content,
+		ToolCallID: msg.ToolCallID,
+		ToolName:   msg.ToolName,
+		TokenCount: msg.TokenCount,
+	})
+}
+
+func (a *storeAdapter) SaveToolExecution(ctx context.Context, exec agent.StoreToolExecution) error {
+	return a.store.SaveToolExecution(ctx, memory.ToolExecution{
+		SessionID:  exec.SessionID,
+		ToolName:   exec.ToolName,
+		Input:      exec.Input,
+		Output:     exec.Output,
+		DurationMs: exec.DurationMs,
+		Success:    exec.Success,
+	})
 }
 
 // registerWASMSkills compiles and registers all Tier 3 WASM skills found in

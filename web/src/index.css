@@ -301,6 +301,9 @@ body::-webkit-scrollbar {
     }
 
     /* Accent Colors */
+    .bg-brand-primary {
+        background-color: var(--color-brand-primary);
+    }
     .bg-brand-secondary {
         background-color: var(--color-brand-secondary);
         color: #000000 !important;

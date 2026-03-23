@@ -135,8 +135,7 @@ func runSkillSearch(args []string) error {
 	}
 	query := strings.Join(args, " ")
 
-	token := os.Getenv("CAPABOT_GITHUB_TOKEN")
-	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: token})
+	client := skill.NewClawHubClient(skill.ClawHubConfig{})
 
 	fmt.Printf("searching ClawHub for %q...\n", query)
 	results, err := client.SearchSkills(context.Background(), query)
@@ -246,8 +245,7 @@ func runSkillInstall(args []string) error {
 // runSkillInstallFromClawHub downloads a skill by name from the ClawHub registry
 // and imports it into destDir.
 func runSkillInstallFromClawHub(name, destDir string) error {
-	token := os.Getenv("CAPABOT_GITHUB_TOKEN")
-	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: token})
+	client := skill.NewClawHubClient(skill.ClawHubConfig{})
 
 	fmt.Printf("downloading %q from ClawHub...\n", name)
 	skillPath, err := client.DownloadSkill(context.Background(), name, os.TempDir())
