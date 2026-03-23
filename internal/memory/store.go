@@ -116,14 +116,15 @@ func (s *Store) DeleteOldSessions(ctx context.Context, olderThan time.Duration) 
 	return count, err
 }
 
-// ListSessions returns the most recent sessions ordered by updated_at descending.
-func (s *Store) ListSessions(ctx context.Context, limit, offset int) ([]Session, error) {
+// ListSessions returns the most recent sessions for tenantID ordered by updated_at descending.
+func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset int) ([]Session, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
 		`SELECT id, tenant_id, channel, user_id, created_at, updated_at, metadata
-		 FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?`, limit, offset,
+		 FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+		tenantID, limit, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
@@ -154,14 +155,14 @@ func (s *Store) CountMessages(ctx context.Context, sessionID string) (int, error
 	return count, err
 }
 
-// GetSession retrieves a session by ID.
-func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
+// GetSession retrieves a session by ID scoped to a tenant.
+func (s *Store) GetSession(ctx context.Context, tenantID, id string) (Session, error) {
 	var sess Session
 	var createdAt, updatedAt string
 
 	err := s.pool.ReadDB().QueryRowContext(ctx,
 		`SELECT id, tenant_id, channel, user_id, created_at, updated_at, metadata
-		 FROM sessions WHERE id = ?`, id,
+		 FROM sessions WHERE id = ? AND tenant_id = ?`, id, tenantID,
 	).Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.UserID,
 		&createdAt, &updatedAt, &sess.Metadata)
 	if err != nil {

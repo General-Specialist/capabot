@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ type Server struct {
 	mux            *http.ServeMux
 	handler        http.Handler // mux wrapped with middleware
 	logger         zerolog.Logger
+	skillsDir      string // destination for skills installed via API
+	clawHubToken   string // optional GitHub PAT for ClawHub requests
 }
 
 // Config holds dependencies for the API server.
@@ -52,10 +55,22 @@ type Config struct {
 	APIKey string
 	// RateLimitRPM limits API requests per minute per IP. 0 = disabled.
 	RateLimitRPM int
+	// SkillsDir is the directory where skills installed via the API are written.
+	// Defaults to the user's ~/.capabot/skills if empty.
+	SkillsDir string
+	// ClawHubToken is an optional GitHub PAT to raise ClawHub API rate limits.
+	ClawHubToken string
 }
 
 // New creates a new API server and registers all routes.
 func New(cfg Config) *Server {
+	skillsDir := cfg.SkillsDir
+	if skillsDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			skillsDir = home + "/.capabot/skills"
+		}
+	}
+
 	s := &Server{
 		store:          cfg.Store,
 		skillReg:       cfg.SkillReg,
@@ -66,6 +81,8 @@ func New(cfg Config) *Server {
 		logBroadcaster: cfg.LogBroadcaster,
 		mux:            http.NewServeMux(),
 		logger:         cfg.Logger,
+		skillsDir:      skillsDir,
+		clawHubToken:   cfg.ClawHubToken,
 	}
 
 	// REST endpoints
@@ -74,6 +91,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/conversations", s.handleConversations)
 	s.mux.HandleFunc("GET /api/conversations/{id}", s.handleConversation)
 	s.mux.HandleFunc("GET /api/skills", s.handleSkills)
+	s.mux.HandleFunc("GET /api/skills/catalog", s.handleSkillsCatalog)
+	s.mux.HandleFunc("POST /api/skills/install", s.handleSkillsInstall)
 	s.mux.HandleFunc("GET /api/providers", s.handleProviders)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 	s.mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -162,7 +181,8 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 	offsetStr := r.URL.Query().Get("offset")
 	offset, _ := strconv.Atoi(offsetStr)
 
-	sessions, err := s.store.ListSessions(r.Context(), limit, offset)
+	tenantID := TenantIDFromContext(r.Context())
+	sessions, err := s.store.ListSessions(r.Context(), tenantID, limit, offset)
 	if err != nil {
 		writeError(w, fmt.Sprintf("listing conversations: %v", err), http.StatusInternalServerError)
 		return
@@ -197,7 +217,8 @@ func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	sess, err := s.store.GetSession(r.Context(), id)
+	tenantID := TenantIDFromContext(r.Context())
+	sess, err := s.store.GetSession(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, fmt.Sprintf("session not found: %v", err), http.StatusNotFound)
 		return
@@ -399,6 +420,67 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (s *Server) handleSkillsCatalog(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: s.clawHubToken})
+
+	var (
+		results []skill.ClawHubSkillEntry
+		err     error
+	)
+	if query == "" {
+		results, err = client.ListSkills(r.Context())
+	} else {
+		results, err = client.SearchSkills(r.Context(), query)
+	}
+	if err != nil {
+		writeError(w, fmt.Sprintf("ClawHub error: %v", err), http.StatusBadGateway)
+		return
+	}
+	if results == nil {
+		results = []skill.ClawHubSkillEntry{}
+	}
+	writeJSON(w, results)
+}
+
+func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	client := skill.NewClawHubClient(skill.ClawHubConfig{GitHubToken: s.clawHubToken})
+
+	tmpDir, err := os.MkdirTemp("", "capabot-install-*")
+	if err != nil {
+		writeError(w, fmt.Sprintf("temp dir: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillPath, err := client.DownloadSkill(r.Context(), req.Name, tmpDir)
+	if err != nil {
+		writeError(w, fmt.Sprintf("download failed: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	result, err := skill.ImportSkill(skillPath, s.skillsDir)
+	if err != nil {
+		writeError(w, fmt.Sprintf("import failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"skill_name": result.SkillName,
+		"tier":       result.Tier,
+		"success":    result.Success,
+		"warnings":   result.Warnings,
+	})
 }
 
 // --- helpers ---

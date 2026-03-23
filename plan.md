@@ -326,7 +326,7 @@ type AgentConfig struct {
 - [x] **Chat** — real-time streaming chat with tool call progress display
 - [x] **Conversations** — browse sessions, full history view
 - [x] **Conversation Detail** — per-session message history
-- [x] **Skills** — browse installed skills, install from URL
+- [x] **Skills** — two-tab UI: "Installed" (installed skill cards) + "Browse ClawHub" (search + debounced query + per-card install with status)
 - [x] **Agents** — view configured agents
 - [x] **Providers** — view LLM providers + expandable model cards
 - [x] **Settings** — tenant config display
@@ -340,7 +340,7 @@ type AgentConfig struct {
 
 ---
 
-## Phase 8: Security Hardening (Ongoing) — ✅ IMPLEMENTED
+## Phase 8: Security Hardening (Ongoing) — ✅ COMPLETE
 
 | OpenClaw CVE | Vulnerability | Capabot Mitigation |
 |---|---|---|
@@ -362,8 +362,8 @@ Additional measures ✅:
 - [x] Session TTL cleanup (configurable, background goroutine)
 - [x] WASM sandbox: no filesystem, no network unless explicitly granted via host functions
 - [x] Graceful shutdown with `context.Context` propagation and signal handling
-- [ ] WASM host functions for controlled HTTP/memory access (future)
-- [ ] Per-tenant data isolation (architecture supports it, not yet enforced at routing layer)
+- [x] WASM host functions for controlled HTTP/memory access (`http_get`, `memory_store`, `memory_recall` via `WASMHostConfig`)
+- [x] Per-tenant data isolation (`ListSessions` and `GetSession` scoped by `tenantID`; API handlers extract tenant from `X-Tenant-ID` via context)
 
 ---
 
@@ -484,7 +484,9 @@ capabot dev                 # hot-reload mode for skill development
 - `capabot skill search <query>` ✅ (ClawHub registry search with tabular output)
 - `capabot skill install <name>` ✅ (ClawHub name → download → import; URL → archive extract → import)
 - ClawHub client ✅ (`ListSkills`, `SearchSkills`, `DownloadSkill`; path traversal protection; rate-limit hint)
-- Per-tenant isolation ✅ (`X-Tenant-ID` header → context → storage routing)
+- `GET /api/skills/catalog?q=` ✅ + `POST /api/skills/install` ✅ (ClawHub browsing and install via REST API)
+- Skills web UI browse tab ✅ (debounced search, grid of catalog cards, per-card install button with status)
+- Per-tenant isolation ✅ (`X-Tenant-ID` → context → `ListSessions`/`GetSession` filtered by tenant ID)
 - Makefile ✅ (`build`, `test`, `lint`, `web`, `dev`, `migrate` and more)
 
 **Post-launch roadmap:**

@@ -73,7 +73,7 @@ func TestStore_CRUD(t *testing.T) {
 	}
 
 	// Read session
-	got, err := store.GetSession(ctx, "sess-1")
+	got, err := store.GetSession(ctx, "tenant-a", "sess-1")
 	if err != nil {
 		t.Fatalf("getting session: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestStore_CRUD(t *testing.T) {
 	}
 
 	// Get nonexistent session
-	_, err = store.GetSession(ctx, "nonexistent")
+	_, err = store.GetSession(ctx, "tenant-a", "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent session")
 	}
@@ -208,7 +208,7 @@ func TestStore_PerTenantIsolation(t *testing.T) {
 	}
 
 	// Tenant B should have no sessions or messages
-	_, err = storeB.GetSession(ctx, "sess-a")
+	_, err = storeB.GetSession(ctx, "tenant-b", "sess-a")
 	if err == nil {
 		t.Error("tenant B should not see tenant A's session")
 	}

@@ -37,6 +37,21 @@ export interface Skill {
   has_instructions: boolean
 }
 
+export interface CatalogSkill {
+  name: string
+  description: string
+  version: string
+  path: string
+  html_url: string
+}
+
+export interface InstallResult {
+  skill_name: string
+  tier: number
+  success: boolean
+  warnings: string[]
+}
+
 export interface ProviderInfo {
   name: string
   models: { id: string; name: string; context_window: number }[]
@@ -85,6 +100,8 @@ export const api = {
   conversations: (limit = 50) => get<Conversation[]>(`/conversations?limit=${limit}`),
   conversation: (id: string) => get<{ session: Conversation; messages: Message[] }>(`/conversations/${id}`),
   skills: () => get<Skill[]>('/skills'),
+  skillsCatalog: (q?: string) => get<CatalogSkill[]>(`/skills/catalog${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  skillsInstall: (name: string) => post<InstallResult>('/skills/install', { name }),
   providers: () => get<ProviderInfo[]>('/providers'),
   chat: (text: string, sessionId?: string) =>
     post<ChatResponse>('/chat', { text, session_id: sessionId }),

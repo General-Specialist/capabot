@@ -124,6 +124,8 @@ func runServe(configPath string) error {
 		Logger:         logger,
 		APIKey:         cfg.Security.APIKey,
 		RateLimitRPM:   cfg.Security.RateLimitRPM,
+		SkillsDir:      defaultSkillsDir(),
+		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
 	})
 	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
 	go func() {
