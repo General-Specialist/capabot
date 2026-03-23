@@ -17,7 +17,7 @@ function NavButton({ Icon, label, active, expanded, onClick }: {
   const [hovered, setHovered] = useState(false)
   const cls = [
     'flex items-center cursor-pointer h-[30px] transition-colors border-none outline-none bg-transparent',
-    expanded ? 'w-full px-4 rounded-2xl' : 'w-[30px] justify-center rounded-full',
+    expanded ? 'w-full px-4 rounded-xl' : 'w-[30px] justify-center rounded-full',
     active || hovered ? 'bg-sidebar-hover-white' : '',
   ].join(' ')
 
@@ -52,7 +52,7 @@ export function Sidebar() {
     <aside
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
-      className={`flex flex-col gap-[12px] p-[12px] bg-sidebar-white rounded-3xl m-4 fixed top-0 left-0 h-[calc(100vh-32px)] z-50 transition-all duration-200 ${
+      className={`flex flex-col gap-[12px] p-[12px] bg-sidebar-white rounded-2xl m-4 fixed top-0 left-0 h-[calc(100vh-32px)] z-50 transition-all duration-200 ${
         expanded ? 'w-[200px]' : 'w-[54px]'
       }`}
     >

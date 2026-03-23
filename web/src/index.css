@@ -217,6 +217,9 @@ body::-webkit-scrollbar {
      ============================================================================ */
 
     /* Background Colors */
+    .rounded-capsule {
+        border-radius: 9999px;
+    }
     .bg-white {
         background-color: var(--color-white);
     }

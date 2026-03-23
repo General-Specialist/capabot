@@ -27,6 +27,7 @@ type AgentEvent struct {
 	ToolID    string          `json:"tool_id,omitempty"`
 	ToolInput json.RawMessage `json:"tool_input,omitempty"`
 	Content   string          `json:"content,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
 	// Iteration is the ReAct loop index (1-based).
 	Iteration int `json:"iteration,omitempty"`
@@ -167,6 +168,11 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 		resp, err := a.provider.Chat(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("LLM call failed (iteration %d): %w", iteration+1, err)
+		}
+
+		// Emit thinking content if available
+		if resp.Thinking != "" {
+			a.emit(AgentEvent{Kind: EventThinking, Thinking: resp.Thinking, Iteration: iteration + 1})
 		}
 
 		// Track token usage

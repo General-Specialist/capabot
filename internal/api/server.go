@@ -109,6 +109,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/skills/catalog", s.handleSkillsCatalog)
 	s.mux.HandleFunc("POST /api/skills/install", s.handleSkillsInstall)
 	s.mux.HandleFunc("POST /api/skills/create", s.handleSkillsCreate)
+	s.mux.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
+	s.mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)
 	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
 	s.mux.HandleFunc("GET /api/providers", s.handleProviders)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
@@ -400,6 +402,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				"tool_id":    ev.ToolID,
 				"tool_input": ev.ToolInput,
 				"content":    ev.Content,
+				"thinking":   ev.Thinking,
 				"is_error":   ev.IsError,
 				"iteration":  ev.Iteration,
 			})

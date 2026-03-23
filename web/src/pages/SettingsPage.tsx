@@ -70,7 +70,7 @@ export function SettingsPage() {
                 value={keys[key]}
                 onChange={e => setKeys(k => ({ ...k, [key]: e.target.value }))}
                 placeholder={placeholder}
-                className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black font-mono outline-none"
+                className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black font-mono outline-none"
               />
             </div>
           ))}

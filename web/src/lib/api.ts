@@ -91,6 +91,7 @@ export interface StreamChunk {
   // agent event fields
   event?: string
   content?: string
+  thinking?: string
   tool_name?: string
   tool_id?: string
   tool_input?: Record<string, unknown>
@@ -194,6 +195,9 @@ export const api = {
   automationRuns: (id: number) => get<AutomationRun[]>(`/automations/${id}/runs`),
   skillCreate: (data: { name: string; description: string; parameters?: Record<string, unknown>; code: string }) =>
     post<{ name: string; success: boolean; tier: number }>('/skills/create', data),
+  skillGet: (name: string) => get<{ name: string; description: string; code: string; tier: number }>(`/skills/${name}`),
+  skillUpdate: (name: string, data: { description?: string; code?: string }) =>
+    put<{ success: boolean; name: string }>(`/skills/${name}`, data),
   configKeys: () => get<ProviderKeys>('/config/keys'),
   configKeysSave: async (keys: ProviderKeys) => {
     const res = await fetch(BASE + '/config/keys', {

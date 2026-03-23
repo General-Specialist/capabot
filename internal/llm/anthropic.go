@@ -57,12 +57,18 @@ func (a *AnthropicProvider) Models() []ModelInfo {
 
 // anthropicRequest is the wire format for the Anthropic Messages API.
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	Messages  []anthropicMessage `json:"messages"`
-	System    string             `json:"system,omitempty"`
-	MaxTokens int                `json:"max_tokens"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
-	Stream    bool               `json:"stream,omitempty"`
+	Model     string                  `json:"model"`
+	Messages  []anthropicMessage      `json:"messages"`
+	System    string                  `json:"system,omitempty"`
+	MaxTokens int                     `json:"max_tokens"`
+	Tools     []anthropicTool         `json:"tools,omitempty"`
+	Stream    bool                    `json:"stream,omitempty"`
+	Thinking  *anthropicThinkingConfig `json:"thinking,omitempty"`
+}
+
+type anthropicThinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type anthropicMessage struct {
@@ -73,6 +79,7 @@ type anthropicMessage struct {
 type anthropicContentBlock struct {
 	Type      string                 `json:"type"`
 	Text      string                 `json:"text,omitempty"`
+	Thinking  string                 `json:"thinking,omitempty"`
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
 	Input     json.RawMessage        `json:"input,omitempty"`
@@ -199,6 +206,21 @@ func (a *AnthropicProvider) buildRequest(req ChatRequest, stream bool) anthropic
 	if len(req.Tools) > 0 {
 		apiReq.Tools = convertAnthropicTools(req.Tools)
 	}
+
+	// Enable extended thinking — budget 80% of max_tokens, minimum 1024.
+	budget := maxTokens * 80 / 100
+	if budget < 1024 {
+		budget = 1024
+	}
+	// Ensure max_tokens is large enough for thinking + response.
+	if apiReq.MaxTokens < budget+1024 {
+		apiReq.MaxTokens = budget + 4096
+	}
+	apiReq.Thinking = &anthropicThinkingConfig{
+		Type:         "enabled",
+		BudgetTokens: budget,
+	}
+
 	return apiReq
 }
 
@@ -328,6 +350,8 @@ func extractAnthropicResponse(apiResp anthropicResponse) *ChatResponse {
 
 	for _, block := range apiResp.Content {
 		switch block.Type {
+		case "thinking":
+			result.Thinking += block.Thinking
 		case "text":
 			result.Content += block.Text
 		case "tool_use":
@@ -352,6 +376,7 @@ type anthropicSSEState struct {
 	currentToolName string
 	inputJSONBuf    strings.Builder
 	inToolBlock     bool
+	inThinkingBlock bool
 }
 
 // parseAnthropicSSE reads SSE events from the response body and sends StreamChunks to ch.
@@ -390,6 +415,9 @@ func parseAnthropicSSE(body io.Reader, ch chan<- StreamChunk) {
 			}
 
 		case "content_block_stop":
+			if state.inThinkingBlock {
+				state.inThinkingBlock = false
+			}
 			if state.inToolBlock {
 				input := json.RawMessage(state.inputJSONBuf.String())
 				if len(input) == 0 {
@@ -437,11 +465,14 @@ func handleAnthropicBlockStart(event map[string]json.RawMessage, state *anthropi
 	if err := json.Unmarshal(raw, &block); err != nil {
 		return
 	}
-	if block.Type == "tool_use" {
+	switch block.Type {
+	case "tool_use":
 		state.inToolBlock = true
 		state.currentToolID = block.ID
 		state.currentToolName = block.Name
 		state.inputJSONBuf.Reset()
+	case "thinking":
+		state.inThinkingBlock = true
 	}
 }
 
@@ -453,6 +484,7 @@ func handleAnthropicBlockDelta(event map[string]json.RawMessage, state *anthropi
 	var delta struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
+		Thinking    string `json:"thinking"`
 		PartialJSON string `json:"partial_json"`
 	}
 	if err := json.Unmarshal(raw, &delta); err != nil {
@@ -460,6 +492,10 @@ func handleAnthropicBlockDelta(event map[string]json.RawMessage, state *anthropi
 	}
 
 	switch delta.Type {
+	case "thinking_delta":
+		if delta.Thinking != "" {
+			return &StreamChunk{Thinking: delta.Thinking}
+		}
 	case "text_delta":
 		if delta.Text != "" {
 			return &StreamChunk{Delta: delta.Text}

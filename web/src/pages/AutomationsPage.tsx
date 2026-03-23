@@ -82,15 +82,15 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
   skills: Skill[]
 }) {
   return (
-    <div className="rounded-lg border border-border-white p-5 space-y-4 mt-1">
+    <div className="rounded-2xl border border-border-white p-5 space-y-4 mt-1">
       <div className="space-y-3">
         <input
           value={form.name}
           onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
           placeholder="Name"
-          className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+          className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
         />
-        <div className="px-3 rounded-lg border border-border-white bg-sidebar-white">
+        <div className="px-3 rounded-2xl border border-border-white bg-sidebar-white">
           <DatePicker
             recurrenceRule={form.rrule || null}
             absoluteStartUtc={form.start_at}
@@ -105,7 +105,7 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
           onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
           placeholder={form.skill_name ? 'Optional: add a prompt to let the agent decide when/how to use this skill' : 'Prompt — what should the agent do?'}
           rows={form.skill_name ? 2 : 4}
-          className="w-full text-sm px-3 py-2 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
+          className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
         />
         {form.skill_name && !form.prompt && skills.find(s => s.name === form.skill_name)?.tier >= 2 && (
           <p className="text-xs text-brand-primary">Runs directly — no LLM tokens used</p>
@@ -115,16 +115,16 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
       {error && <p className="text-xs text-red">{error}</p>}
 
       <div className="flex items-center gap-2">
-        <button onClick={onSave} disabled={saving} className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity">
+        <button onClick={onSave} disabled={saving} className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 disabled:opacity-40 transition-opacity">
           {saving ? 'Saving…' : 'Save'}
         </button>
         {selected && (
           <>
-            <button onClick={onTrigger} disabled={triggering} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border-white rounded-lg text-hover-black hover:bg-sidebar-white disabled:opacity-40 transition-colors">
+            <button onClick={onTrigger} disabled={triggering} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border-white rounded-capsule text-hover-black hover:bg-sidebar-white disabled:opacity-40 transition-colors">
               {triggering ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> : <Play size={12} />}
               Run now
             </button>
-            <button onClick={onDelete} disabled={deleting} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-normal-black hover:text-red hover:bg-sidebar-white border border-border-white rounded-lg disabled:opacity-40 transition-colors">
+            <button onClick={onDelete} disabled={deleting} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-normal-black hover:text-red hover:bg-sidebar-white border border-border-white rounded-capsule disabled:opacity-40 transition-colors">
               <Trash2 size={12} />
               Delete
             </button>
@@ -272,7 +272,7 @@ export function AutomationsPage() {
         <div className="flex items-center justify-end mb-6">
           <button
             onClick={startNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-lg hover:opacity-80 transition-opacity"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
           >
             <Plus size={13} />
             New
@@ -287,7 +287,7 @@ export function AutomationsPage() {
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-14 rounded-lg animate-pulse bg-icon-hover-white" />
+                <div key={i} className="h-14 rounded-xl animate-pulse bg-icon-hover-white" />
               ))}
             </div>
           ) : automations.length === 0 && !isNew ? (
@@ -298,7 +298,7 @@ export function AutomationsPage() {
                 <div key={a.id}>
                   <button
                     onClick={() => selected?.id === a.id ? setSelected(null) : selectAutomation(a)}
-                    className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
                       selected?.id === a.id ? 'bg-icon-hover-white' : 'hover:bg-sidebar-white'
                     }`}
                   >

@@ -74,10 +74,6 @@ func (s *Server) handleAutomationsCreate(w http.ResponseWriter, r *http.Request)
 		writeError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if inp.Prompt == "" && inp.SkillName == "" {
-		writeError(w, "prompt or skill_name is required", http.StatusBadRequest)
-		return
-	}
 	if inp.RRule != "" {
 		if _, err := cron.Parse(inp.RRule); err != nil {
 			writeError(w, fmt.Sprintf("invalid rrule: %v", err), http.StatusBadRequest)
@@ -153,9 +149,7 @@ func (s *Server) handleAutomationsUpdate(w http.ResponseWriter, r *http.Request)
 	if inp.Name != "" {
 		existing.Name = inp.Name
 	}
-	if inp.Prompt != "" {
-		existing.Prompt = inp.Prompt
-	}
+	existing.Prompt = inp.Prompt
 	// Allow clearing skill_name by sending empty string explicitly
 	existing.SkillName = inp.SkillName
 	if inp.Enabled != nil {

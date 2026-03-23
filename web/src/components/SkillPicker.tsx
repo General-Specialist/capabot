@@ -21,7 +21,7 @@ export default function SkillPicker({ skills, value, onChange }: SkillPickerProp
   const toggle = (name: string) => onChange(value === name ? '' : name)
 
   return (
-    <div className="rounded-lg border border-border-white overflow-hidden">
+    <div className="rounded-2xl border border-border-white overflow-hidden">
       {/* Search */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-white bg-sidebar-white">
         <Search size={12} className="text-normal-black shrink-0" />

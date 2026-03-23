@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Send, Plus, History, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown } from 'lucide-react'
+import { Send, Square, Plus, History, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react'
 import { api, type StreamChunk, type Conversation, type LLMMessage } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
@@ -15,6 +15,7 @@ interface ToolCall {
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  thinking?: string
   streaming?: boolean
   toolCalls?: ToolCall[]
   usage?: { input_tokens: number; output_tokens: number }
@@ -99,14 +100,14 @@ function HistoryPanel({ onClose, onLoad }: {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search conversations…"
-            className="w-full text-sm px-3 py-1.5 rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+            className="w-full text-sm px-3 py-1.5 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
           />
         </div>
         <div className="overflow-y-auto max-h-80">
           {loading ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-10 rounded-lg animate-pulse bg-sidebar-hover-white" />
+                <div key={i} className="h-10 rounded-xl animate-pulse bg-sidebar-hover-white" />
               ))}
             </div>
           ) : filtered.length === 0 ? (
@@ -117,7 +118,7 @@ function HistoryPanel({ onClose, onLoad }: {
                 <button
                   key={c.id}
                   onClick={() => void load(c)}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-sidebar-white transition-colors"
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-sidebar-white transition-colors"
                 >
                   <p className="text-sm text-hover-black truncate">{c.channel}</p>
                   <p className="text-xs text-normal-black">{c.message_count} msgs · {relativeTime(c.updated_at)}</p>
@@ -177,12 +178,37 @@ function ToolCallChip({ tc }: { tc: ToolCall }) {
   )
 }
 
+function ThinkingChip({ text, streaming }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="text-xs font-mono">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-normal-black cursor-pointer hover:text-hover-black"
+      >
+        <Lightbulb size={12} className={`shrink-0 opacity-60 ${streaming ? 'animate-pulse' : ''}`} />
+        <span>Thinking</span>
+        {open
+          ? <ChevronDown size={10} className="shrink-0 opacity-40" />
+          : <ChevronRight size={10} className="shrink-0 opacity-40" />
+        }
+      </button>
+      {open && (
+        <pre className="mt-1 ml-4.5 p-2 rounded-lg bg-sidebar-white text-normal-black text-xs overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+          {text}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 export function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [thinking, setThinking] = useState(false)
   const sessionId = useRef<string>(crypto.randomUUID())
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -216,6 +242,7 @@ export function ChatPage() {
     toolCallsRef.current = []
     pendingToolCallsRef.current = []
     pendingToolResultsRef.current = []
+    setThinking(false)
 
     // Add user message to LLM history, build full history to send
     llmHistoryRef.current = [...llmHistoryRef.current, { role: 'user', content: trimmed }]
@@ -227,10 +254,19 @@ export function ChatPage() {
       { role: 'assistant', content: '', streaming: true, toolCalls: [] },
     ])
     let accumulated = ''
+    let accumulatedThinking = ''
     try {
       await api.chatStream(historyToSend, sessionId.current, (chunk: StreamChunk) => {
         if (chunk.session_id) sessionId.current = chunk.session_id
+        if (chunk.event === 'thinking') {
+          setThinking(true)
+          if (chunk.thinking) {
+            accumulatedThinking += chunk.thinking
+            updateLast({ thinking: accumulatedThinking })
+          }
+        }
         if (chunk.event === 'tool_start' && chunk.tool_name) {
+          setThinking(false)
           const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
           toolCallsRef.current = [...toolCallsRef.current, tc]
           updateLast({ toolCalls: [...toolCallsRef.current] })
@@ -254,6 +290,7 @@ export function ChatPage() {
           }
         }
         if (chunk.event === 'response' && chunk.content) {
+          setThinking(false)
           accumulated = chunk.content
           updateLast({ content: accumulated, streaming: true })
         }
@@ -270,6 +307,7 @@ export function ChatPage() {
           llmHistoryRef.current = [...llmHistoryRef.current, assistantMsg, ...toolMsgs]
           pendingToolCallsRef.current = []
           pendingToolResultsRef.current = []
+          setThinking(false)
           updateLast({ content: accumulated, streaming: false, usage: chunk.usage })
           setLoading(false)
         }
@@ -370,7 +408,7 @@ export function ChatPage() {
       </div>
 
       {error && (
-        <div className="mx-6 mt-2 px-4 py-2 text-xs rounded-xl bg-red text-white shrink-0">{error}</div>
+        <div className="mx-6 mt-2 px-4 py-2 text-xs rounded-capsule bg-red text-white shrink-0">{error}</div>
       )}
 
       {!hasMessages ? (
@@ -382,6 +420,7 @@ export function ChatPage() {
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onSubmit={handleSubmit}
+            onStop={() => { abortRef.current?.abort(); setLoading(false) }}
             loading={loading}
             className="w-full max-w-xl"
           />
@@ -393,12 +432,15 @@ export function ChatPage() {
               {messages.map((msg, i) =>
                 msg.role === 'user' ? (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[75%] px-5 py-3 rounded-3xl text-sm leading-relaxed bg-brand-primary text-white">
+                    <div className="max-w-[75%] px-5 py-3 rounded-capsule text-sm leading-relaxed bg-brand-primary text-white">
                       <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                     </div>
                   </div>
                 ) : (
                   <div key={i} className="flex flex-col items-start gap-1">
+                    {msg.thinking && (
+                      <ThinkingChip text={msg.thinking} streaming={msg.streaming && thinking} />
+                    )}
                     {(msg.toolCalls ?? []).length > 0 && (
                       <div className="flex flex-col gap-1 w-full max-w-[85%]">
                         {(msg.toolCalls ?? []).map((tc, j) => (
@@ -415,9 +457,14 @@ export function ChatPage() {
                           >
                             {msg.content}
                           </ReactMarkdown>
-                        ) : (
+                        ) : thinking && !msg.thinking ? (
+                          <span className="flex items-center gap-1.5 text-normal-black opacity-70">
+                            <Lightbulb size={13} className="animate-pulse" />
+                            <span className="text-xs">Thinking…</span>
+                          </span>
+                        ) : !thinking ? (
                           <span className="inline-block w-1.5 h-4 align-text-bottom animate-pulse rounded-sm bg-normal-black opacity-50" />
-                        )}
+                        ) : null}
                       </div>
                     )}
                     {!msg.streaming && msg.usage && (
@@ -440,6 +487,7 @@ export function ChatPage() {
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
                 onSubmit={handleSubmit}
+                onStop={() => { abortRef.current?.abort(); setLoading(false) }}
                 loading={loading}
               />
             </div>
@@ -456,6 +504,7 @@ const InputBar = ({
   onChange,
   onKeyDown,
   onSubmit,
+  onStop,
   loading,
   className,
 }: {
@@ -464,12 +513,13 @@ const InputBar = ({
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onSubmit: (e: React.FormEvent) => void
+  onStop: () => void
   loading: boolean
   className?: string
 }) => (
   <form
     onSubmit={onSubmit}
-    className={`flex items-center gap-3 rounded-full border border-border-white bg-sidebar-white px-4 py-2.5 ${className ?? ''}`}
+    className={`flex items-center gap-3 rounded-capsule border border-border-white bg-sidebar-white px-4 py-2.5 ${className ?? ''}`}
   >
     <textarea
       ref={ref}
@@ -482,12 +532,22 @@ const InputBar = ({
       className="flex-1 resize-none text-sm leading-relaxed bg-transparent outline-none text-hover-black disabled:opacity-50"
       style={{ maxHeight: 160 }}
     />
-    <button
-      type="submit"
-      disabled={loading || !value.trim()}
-      className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-brand-primary disabled:opacity-30"
-    >
-      <Send size={13} className="text-white" />
-    </button>
+    {loading ? (
+      <button
+        type="button"
+        onClick={onStop}
+        className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-brand-primary"
+      >
+        <Square size={11} className="text-white fill-white" />
+      </button>
+    ) : (
+      <button
+        type="submit"
+        disabled={!value.trim()}
+        className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-brand-primary disabled:opacity-30"
+      >
+        <Send size={13} className="text-white" />
+      </button>
+    )}
   </form>
 )

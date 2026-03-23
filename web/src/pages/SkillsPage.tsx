@@ -127,7 +127,7 @@ export function SkillsPage() {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="Search ClawHub…"
-                className="w-full pl-8 pr-4 py-2 text-sm rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none"
+                className="w-full pl-8 pr-4 py-2 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
               />
               {searching && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 border border-normal-black border-t-transparent rounded-full animate-spin" />
@@ -139,7 +139,7 @@ export function SkillsPage() {
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-lg animate-pulse bg-sidebar-hover-white" />
+                  <div key={i} className="h-14 rounded-xl animate-pulse bg-sidebar-hover-white" />
                 ))}
               </div>
             ) : catalog.length === 0 ? (
@@ -151,7 +151,7 @@ export function SkillsPage() {
                   const isInstalling = installing[skill.name]
                   const result = installResults[skill.name]
                   return (
-                    <div key={skill.name} className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-sidebar-white transition-colors">
+                    <div key={skill.name} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-sidebar-white transition-colors">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
                         {skill.description && (
@@ -208,7 +208,7 @@ export function SkillsPage() {
             {installedLoading ? (
               <div className="space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-lg animate-pulse bg-sidebar-hover-white" />
+                  <div key={i} className="h-14 rounded-xl animate-pulse bg-sidebar-hover-white" />
                 ))}
               </div>
             ) : installed.length === 0 ? (
@@ -219,7 +219,7 @@ export function SkillsPage() {
                   const isExpanded = expanded[skill.name]
                   const isRemoving = removing[skill.name]
                   return (
-                    <div key={skill.name} className="rounded-lg border border-border-white overflow-hidden">
+                    <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">

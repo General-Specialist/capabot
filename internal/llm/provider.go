@@ -77,6 +77,7 @@ type ToolResult struct {
 // ChatResponse represents the full response from an LLM provider.
 type ChatResponse struct {
 	Content    string     `json:"content"`
+	Thinking   string     `json:"thinking,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	StopReason string     `json:"stop_reason"`
 	Usage      Usage      `json:"usage"`
@@ -94,6 +95,7 @@ type Usage struct {
 // StreamChunk represents a single piece of a streaming response.
 type StreamChunk struct {
 	Delta    string    `json:"delta,omitempty"`
+	Thinking string    `json:"thinking,omitempty"`
 	ToolCall *ToolCall `json:"tool_call,omitempty"`
 	Done     bool      `json:"done"`
 	Usage    *Usage    `json:"usage,omitempty"`

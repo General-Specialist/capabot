@@ -100,8 +100,9 @@ func runServe(configPath string) error {
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
-	// 7d. Register the skill_create tool so the agent can create new skills
+	// 7d. Register skill_create and skill_edit tools
 	_ = toolRegistry.Register(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
+	_ = toolRegistry.Register(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
 
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.

@@ -238,8 +238,12 @@ func extractResponse(resp *genai.GenerateContentResponse) (*ChatResponse, error)
 			result.Metadata = candidate.Content
 
 			for _, part := range candidate.Content.Parts {
-				// Skip thinking/reasoning parts — no user-visible content.
-				if part.Thought || (part.Text == "" && part.FunctionCall == nil && len(part.ThoughtSignature) > 0) {
+				// Capture thinking/reasoning parts.
+				if part.Thought {
+					result.Thinking += part.Text
+					continue
+				}
+				if part.Text == "" && part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
 					continue
 				}
 				if part.Text != "" {
@@ -285,8 +289,11 @@ func extractStreamChunk(resp *genai.GenerateContentResponse) StreamChunk {
 		candidate := resp.Candidates[0]
 		if candidate.Content != nil {
 			for _, part := range candidate.Content.Parts {
-				// Skip thinking/reasoning parts — no user-visible content.
-				if part.Thought || (part.Text == "" && part.FunctionCall == nil && len(part.ThoughtSignature) > 0) {
+				if part.Thought {
+					chunk.Thinking += part.Text
+					continue
+				}
+				if part.Text == "" && part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
 					continue
 				}
 				if part.Text != "" {

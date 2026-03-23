@@ -143,6 +143,82 @@ func (n *nativeToolBridge) Execute(ctx context.Context, params json.RawMessage) 
 	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
 }
 
+// handleSkillGet returns the source files for a single skill.
+func (s *Server) handleSkillGet(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	parsed := s.skillReg.Get(name)
+	if parsed == nil {
+		writeError(w, "skill not found", http.StatusNotFound)
+		return
+	}
+	skillDir, isNative := s.skillReg.NativePath(name)
+	code := ""
+	if isNative {
+		data, _ := os.ReadFile(filepath.Join(skillDir, "main.go"))
+		code = string(data)
+	}
+	tier := 1
+	if isNative {
+		tier = 2
+	}
+	writeJSON(w, map[string]any{
+		"name":        parsed.Manifest.Name,
+		"description": parsed.Manifest.Description,
+		"code":        code,
+		"tier":        tier,
+	})
+}
+
+// handleSkillUpdate overwrites a skill's code/description and recompiles.
+func (s *Server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	var inp struct {
+		Description string `json:"description"`
+		Code        string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	skillDir, isNative := s.skillReg.NativePath(name)
+	if !isNative {
+		writeError(w, "only native (Tier 2) skills can be edited via this endpoint", http.StatusBadRequest)
+		return
+	}
+
+	if inp.Description != "" {
+		md := buildSkillMD(name, inp.Description, nil)
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(md), 0o644); err != nil {
+			writeError(w, fmt.Sprintf("writing SKILL.md: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+	if inp.Code != "" {
+		if err := os.WriteFile(filepath.Join(skillDir, "main.go"), []byte(inp.Code), 0o644); err != nil {
+			writeError(w, fmt.Sprintf("writing main.go: %v", err), http.StatusInternalServerError)
+			return
+		}
+		_ = os.Remove(filepath.Join(skillDir, "skill.bin"))
+		if _, err := skill.NewNativeExecutor(r.Context(), skillDir); err != nil {
+			writeError(w, fmt.Sprintf("compilation failed: %v", err), http.StatusUnprocessableEntity)
+			return
+		}
+	}
+
+	s.skillReg.LoadDir(filepath.Dir(skillDir)) //nolint:errcheck
+	s.registerNewNativeSkill(r.Context(), name)
+	writeJSON(w, map[string]any{"success": true, "name": name})
+}
+
 func buildSkillMD(name, description string, parameters json.RawMessage) string {
 	var sb strings.Builder
 	sb.WriteString("---\n")
