@@ -154,7 +154,7 @@ internal/
   agent/             ReAct loop — observe, think, act
   llm/               Provider abstraction (Anthropic, OpenAI, Gemini, OpenRouter)
   skill/             SKILL.md parser, registry, WASM runner
-  memory/            SQLite storage — sessions, messages, vector recall
+  memory/            Postgres storage — sessions, messages, vector recall
   tools/             Built-in tools (web, files, shell, browser, memory)
   transport/         Channel adapters (HTTP, Telegram, Discord, Slack)
   api/               REST API + SSE streaming

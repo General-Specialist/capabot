@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"math"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
-// Store provides repository-pattern access to the SQLite database.
+// Store provides repository-pattern access to the Postgres database.
 type Store struct {
 	pool *Pool
 }
@@ -68,7 +66,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (id, tenant_id, channel, title, user_id, metadata)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			sess.ID, sess.TenantID, sess.Channel, sess.Title, sess.UserID, sess.Metadata,
 		)
 		return err
@@ -80,52 +78,27 @@ func (s *Store) UpsertSession(ctx context.Context, sess Session) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (id, tenant_id, channel, title, user_id, metadata)
-			 VALUES (?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')`,
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT(id) DO UPDATE SET updated_at = NOW()`,
 			sess.ID, sess.TenantID, sess.Channel, sess.Title, sess.UserID, sess.Metadata,
 		)
 		return err
 	})
 }
 
-// DeleteOldSessions removes sessions (and their messages/tool_executions) that
-// have not been updated within the given duration. Returns the number of sessions deleted.
+// DeleteOldSessions removes sessions older than the given duration.
+// Messages and tool_executions cascade automatically.
 func (s *Store) DeleteOldSessions(ctx context.Context, olderThan time.Duration) (int, error) {
-	cutoff := time.Now().Add(-olderThan).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().Add(-olderThan)
 	var count int
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		// Collect IDs to delete so we can cascade manually (no ON DELETE CASCADE)
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM sessions WHERE updated_at < ?`, cutoff)
+		result, err := tx.ExecContext(ctx,
+			`DELETE FROM sessions WHERE updated_at < $1`, cutoff)
 		if err != nil {
-			return fmt.Errorf("querying old sessions: %w", err)
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
 			return err
 		}
-
-		for _, id := range ids {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM tool_executions WHERE session_id = ?`, id); err != nil {
-				return fmt.Errorf("deleting tool executions for %s: %w", id, err)
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, id); err != nil {
-				return fmt.Errorf("deleting messages for %s: %w", id, err)
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id); err != nil {
-				return fmt.Errorf("deleting session %s: %w", id, err)
-			}
-			count++
-		}
+		n, _ := result.RowsAffected()
+		count = int(n)
 		return nil
 	})
 	return count, err
@@ -136,9 +109,9 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, tenant_id, channel, title, user_id, created_at, updated_at, metadata
-		 FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+		 FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
 		tenantID, limit, offset,
 	)
 	if err != nil {
@@ -149,13 +122,10 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 	var sessions []Session
 	for rows.Next() {
 		var sess Session
-		var createdAt, updatedAt string
 		if err := rows.Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.Title, &sess.UserID,
-			&createdAt, &updatedAt, &sess.Metadata); err != nil {
+			&sess.CreatedAt, &sess.UpdatedAt, &sess.Metadata); err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
 		}
-		sess.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		sess.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
@@ -164,8 +134,8 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 // CountMessages returns the number of messages in a session.
 func (s *Store) CountMessages(ctx context.Context, sessionID string) (int, error) {
 	var count int
-	err := s.pool.ReadDB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages WHERE session_id = ?`, sessionID,
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE session_id = $1`, sessionID,
 	).Scan(&count)
 	return count, err
 }
@@ -173,19 +143,14 @@ func (s *Store) CountMessages(ctx context.Context, sessionID string) (int, error
 // GetSession retrieves a session by ID scoped to a tenant.
 func (s *Store) GetSession(ctx context.Context, tenantID, id string) (Session, error) {
 	var sess Session
-	var createdAt, updatedAt string
-
-	err := s.pool.ReadDB().QueryRowContext(ctx,
+	err := s.pool.DB().QueryRowContext(ctx,
 		`SELECT id, tenant_id, channel, title, user_id, created_at, updated_at, metadata
-		 FROM sessions WHERE id = ? AND tenant_id = ?`, id, tenantID,
+		 FROM sessions WHERE id = $1 AND tenant_id = $2`, id, tenantID,
 	).Scan(&sess.ID, &sess.TenantID, &sess.Channel, &sess.Title, &sess.UserID,
-		&createdAt, &updatedAt, &sess.Metadata)
+		&sess.CreatedAt, &sess.UpdatedAt, &sess.Metadata)
 	if err != nil {
 		return Session{}, fmt.Errorf("getting session %s: %w", id, err)
 	}
-
-	sess.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	sess.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 	return sess, nil
 }
 
@@ -193,25 +158,21 @@ func (s *Store) GetSession(ctx context.Context, tenantID, id string) (Session, e
 func (s *Store) SaveMessage(ctx context.Context, msg Message) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx,
+		return tx.QueryRowContext(ctx,
 			`INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, tool_input, token_count)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 RETURNING id`,
 			msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, msg.ToolName, msg.ToolInput, msg.TokenCount,
-		)
-		if err != nil {
-			return err
-		}
-		id, err = result.LastInsertId()
-		return err
+		).Scan(&id)
 	})
 	return id, err
 }
 
 // GetMessages retrieves all messages for a session, ordered by creation time.
 func (s *Store) GetMessages(ctx context.Context, sessionID string) ([]Message, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, session_id, role, content, tool_call_id, tool_name, tool_input, token_count, created_at
-		 FROM messages WHERE session_id = ? ORDER BY id ASC`, sessionID,
+		 FROM messages WHERE session_id = $1 ORDER BY id ASC`, sessionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying messages: %w", err)
@@ -221,12 +182,10 @@ func (s *Store) GetMessages(ctx context.Context, sessionID string) ([]Message, e
 	var messages []Message
 	for rows.Next() {
 		var m Message
-		var createdAt string
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content,
-			&m.ToolCallID, &m.ToolName, &m.ToolInput, &m.TokenCount, &createdAt); err != nil {
+			&m.ToolCallID, &m.ToolName, &m.ToolInput, &m.TokenCount, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning message: %w", err)
 		}
-		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
@@ -242,11 +201,11 @@ func (s *Store) StoreMemory(ctx context.Context, entry MemoryEntry) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO memory (tenant_id, key, value, embedding)
-			 VALUES (?, ?, ?, ?)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT(tenant_id, key) DO UPDATE SET
-			   value = excluded.value,
-			   embedding = excluded.embedding,
-			   updated_at = datetime('now')`,
+			   value = EXCLUDED.value,
+			   embedding = EXCLUDED.embedding,
+			   updated_at = NOW()`,
 			entry.TenantID, entry.Key, entry.Value, embeddingBytes,
 		)
 		return err
@@ -257,9 +216,9 @@ func (s *Store) StoreMemory(ctx context.Context, entry MemoryEntry) error {
 // brute-force cosine similarity. Returns up to limit results above the
 // minimum score threshold.
 func (s *Store) RecallMemory(ctx context.Context, tenantID string, queryEmbedding []float32, limit int, minScore float64) ([]MemoryMatch, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, tenant_id, key, value, embedding, created_at, updated_at
-		 FROM memory WHERE tenant_id = ? AND embedding IS NOT NULL`,
+		 FROM memory WHERE tenant_id = $1 AND embedding IS NOT NULL`,
 		tenantID,
 	)
 	if err != nil {
@@ -270,20 +229,16 @@ func (s *Store) RecallMemory(ctx context.Context, tenantID string, queryEmbeddin
 	var matches []MemoryMatch
 	for rows.Next() {
 		var entry MemoryEntry
-		var embeddingJSON []byte
-		var createdAt, updatedAt string
+		var embeddingBytes []byte
 
 		if err := rows.Scan(&entry.ID, &entry.TenantID, &entry.Key, &entry.Value,
-			&embeddingJSON, &createdAt, &updatedAt); err != nil {
+			&embeddingBytes, &entry.CreatedAt, &entry.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning memory entry: %w", err)
 		}
 
-		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
-
-		entry.Embedding = decodeEmbedding(embeddingJSON)
+		entry.Embedding = decodeEmbedding(embeddingBytes)
 		if entry.Embedding == nil {
-			continue // skip entries with corrupted embeddings
+			continue
 		}
 
 		score := cosineSimilarity(queryEmbedding, entry.Embedding)
@@ -295,7 +250,6 @@ func (s *Store) RecallMemory(ctx context.Context, tenantID string, queryEmbeddin
 		return nil, err
 	}
 
-	// Sort by score descending
 	sortByScoreDesc(matches)
 
 	if len(matches) > limit {
@@ -319,15 +273,11 @@ type ToolExecution struct {
 
 // SaveToolExecution records a tool execution in the audit log.
 func (s *Store) SaveToolExecution(ctx context.Context, exec ToolExecution) error {
-	successInt := 0
-	if exec.Success {
-		successInt = 1
-	}
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO tool_executions (session_id, tool_name, input, output, duration_ms, success)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			exec.SessionID, exec.ToolName, exec.Input, exec.Output, exec.DurationMs, successInt,
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			exec.SessionID, exec.ToolName, exec.Input, exec.Output, exec.DurationMs, exec.Success,
 		)
 		return err
 	})
@@ -335,9 +285,9 @@ func (s *Store) SaveToolExecution(ctx context.Context, exec ToolExecution) error
 
 // GetToolExecutions returns all tool executions for a session.
 func (s *Store) GetToolExecutions(ctx context.Context, sessionID string) ([]ToolExecution, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, session_id, tool_name, input, output, duration_ms, success, created_at
-		 FROM tool_executions WHERE session_id = ? ORDER BY id ASC`, sessionID)
+		 FROM tool_executions WHERE session_id = $1 ORDER BY id ASC`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -345,11 +295,9 @@ func (s *Store) GetToolExecutions(ctx context.Context, sessionID string) ([]Tool
 	var out []ToolExecution
 	for rows.Next() {
 		var e ToolExecution
-		var successInt int
-		if err := rows.Scan(&e.ID, &e.SessionID, &e.ToolName, &e.Input, &e.Output, &e.DurationMs, &successInt, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.ToolName, &e.Input, &e.Output, &e.DurationMs, &e.Success, &e.CreatedAt); err != nil {
 			return nil, err
 		}
-		e.Success = successInt == 1
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -357,9 +305,9 @@ func (s *Store) GetToolExecutions(ctx context.Context, sessionID string) ([]Tool
 
 // ListMemory returns all memory entries for a tenant.
 func (s *Store) ListMemory(ctx context.Context, tenantID string) ([]MemoryEntry, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, tenant_id, key, value, created_at, updated_at
-		 FROM memory WHERE tenant_id = ? ORDER BY key ASC`, tenantID,
+		 FROM memory WHERE tenant_id = $1 ORDER BY key ASC`, tenantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing memory: %w", err)
@@ -369,12 +317,9 @@ func (s *Store) ListMemory(ctx context.Context, tenantID string) ([]MemoryEntry,
 	var entries []MemoryEntry
 	for rows.Next() {
 		var e MemoryEntry
-		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.Key, &e.Value, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.Key, &e.Value, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning memory entry: %w", err)
 		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		e.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
@@ -384,7 +329,7 @@ func (s *Store) ListMemory(ctx context.Context, tenantID string) ([]MemoryEntry,
 func (s *Store) DeleteMemory(ctx context.Context, tenantID, key string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`DELETE FROM memory WHERE tenant_id = ? AND key = ?`,
+			`DELETE FROM memory WHERE tenant_id = $1 AND key = $2`,
 			tenantID, key,
 		)
 		return err
@@ -422,33 +367,19 @@ type AutomationRun struct {
 func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		var nextRunAt, startAt, endAt interface{}
-		if a.NextRunAt != nil {
-			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
-		}
-		if a.StartAt != nil {
-			startAt = a.StartAt.UTC().Format("2006-01-02 15:04:05")
-		}
-		if a.EndAt != nil {
-			endAt = a.EndAt.UTC().Format("2006-01-02 15:04:05")
-		}
-		result, err := tx.ExecContext(ctx,
+		return tx.QueryRowContext(ctx,
 			`INSERT INTO automations (name, rrule, start_at, end_at, prompt, skill_name, enabled, next_run_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			a.Name, a.RRule, startAt, endAt, a.Prompt, a.SkillName, boolInt(a.Enabled), nextRunAt,
-		)
-		if err != nil {
-			return err
-		}
-		id, err = result.LastInsertId()
-		return err
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 RETURNING id`,
+			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, a.SkillName, a.Enabled, a.NextRunAt,
+		).Scan(&id)
 	})
 	return id, err
 }
 
 // ListAutomations returns all automations ordered by name.
 func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations ORDER BY name ASC`,
 	)
@@ -461,9 +392,9 @@ func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 
 // GetAutomation retrieves a single automation by ID.
 func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
-		 FROM automations WHERE id = ?`, id,
+		 FROM automations WHERE id = $1`, id,
 	)
 	if err != nil {
 		return Automation{}, fmt.Errorf("getting automation: %w", err)
@@ -482,42 +413,29 @@ func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error)
 // UpdateAutomation updates an existing automation's fields.
 func (s *Store) UpdateAutomation(ctx context.Context, a Automation) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		var nextRunAt, startAt, endAt interface{}
-		if a.NextRunAt != nil {
-			nextRunAt = a.NextRunAt.UTC().Format("2006-01-02 15:04:05")
-		}
-		if a.StartAt != nil {
-			startAt = a.StartAt.UTC().Format("2006-01-02 15:04:05")
-		}
-		if a.EndAt != nil {
-			endAt = a.EndAt.UTC().Format("2006-01-02 15:04:05")
-		}
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automations SET name=?, rrule=?, start_at=?, end_at=?, prompt=?, skill_name=?, enabled=?, next_run_at=?, updated_at=datetime('now')
-			 WHERE id=?`,
-			a.Name, a.RRule, startAt, endAt, a.Prompt, a.SkillName, boolInt(a.Enabled), nextRunAt, a.ID,
+			`UPDATE automations SET name=$1, rrule=$2, start_at=$3, end_at=$4, prompt=$5, skill_name=$6, enabled=$7, next_run_at=$8, updated_at=NOW()
+			 WHERE id=$9`,
+			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, a.SkillName, a.Enabled, a.NextRunAt, a.ID,
 		)
 		return err
 	})
 }
 
-// DeleteAutomation removes an automation and its run history.
+// DeleteAutomation removes an automation. Runs cascade automatically.
 func (s *Store) DeleteAutomation(ctx context.Context, id int64) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM automation_runs WHERE automation_id=?`, id); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM automations WHERE id=?`, id)
+		_, err := tx.ExecContext(ctx, `DELETE FROM automations WHERE id=$1`, id)
 		return err
 	})
 }
 
 // ListDueAutomations returns enabled automations whose next_run_at is in the past.
 func (s *Store) ListDueAutomations(ctx context.Context) ([]Automation, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
-		 FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= datetime('now')
-		   AND (end_at IS NULL OR end_at > datetime('now'))`,
+		 FROM automations WHERE enabled=TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
+		   AND (end_at IS NULL OR end_at > NOW())`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing due automations: %w", err)
@@ -530,14 +448,10 @@ func (s *Store) ListDueAutomations(ctx context.Context) ([]Automation, error) {
 func (s *Store) StartAutomationRun(ctx context.Context, automationID int64) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx,
-			`INSERT INTO automation_runs (automation_id, status) VALUES (?, 'running')`, automationID,
-		)
-		if err != nil {
-			return err
-		}
-		id, err = result.LastInsertId()
-		return err
+		return tx.QueryRowContext(ctx,
+			`INSERT INTO automation_runs (automation_id, status) VALUES ($1, 'running') RETURNING id`,
+			automationID,
+		).Scan(&id)
 	})
 	return id, err
 }
@@ -546,19 +460,19 @@ func (s *Store) StartAutomationRun(ctx context.Context, automationID int64) (int
 func (s *Store) FinishAutomationRun(ctx context.Context, runID int64, status, response, errMsg string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automation_runs SET finished_at=datetime('now'), status=?, response=?, error=? WHERE id=?`,
+			`UPDATE automation_runs SET finished_at=NOW(), status=$1, response=$2, error=$3 WHERE id=$4`,
 			status, response, errMsg, runID,
 		)
 		return err
 	})
 }
 
-// MarkStaleRunsAsFailed sets any runs still in "running" state to "failed".
-// Called on startup to clean up runs that were interrupted by a crash or restart.
+// MarkStaleRunsAsFailed sets any runs still in "running" state to "error".
+// Called on startup to clean up runs interrupted by a crash or restart.
 func (s *Store) MarkStaleRunsAsFailed(ctx context.Context) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automation_runs SET finished_at=datetime('now'), status='error', error='interrupted by restart'
+			`UPDATE automation_runs SET finished_at=NOW(), status='error', error='interrupted by restart'
 			 WHERE status='running'`,
 		)
 		return err
@@ -569,10 +483,8 @@ func (s *Store) MarkStaleRunsAsFailed(ctx context.Context) error {
 func (s *Store) UpdateAutomationSchedule(ctx context.Context, id int64, lastRunAt, nextRunAt time.Time) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automations SET last_run_at=?, next_run_at=?, updated_at=datetime('now') WHERE id=?`,
-			lastRunAt.UTC().Format("2006-01-02 15:04:05"),
-			nextRunAt.UTC().Format("2006-01-02 15:04:05"),
-			id,
+			`UPDATE automations SET last_run_at=$1, next_run_at=$2, updated_at=NOW() WHERE id=$3`,
+			lastRunAt, nextRunAt, id,
 		)
 		return err
 	})
@@ -583,33 +495,16 @@ func (s *Store) ListAutomationRuns(ctx context.Context, automationID int64, limi
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, automation_id, started_at, finished_at, status, response, error
-		 FROM automation_runs WHERE automation_id=? ORDER BY id DESC LIMIT ?`,
+		 FROM automation_runs WHERE automation_id=$1 ORDER BY id DESC LIMIT $2`,
 		automationID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing automation runs: %w", err)
 	}
 	defer rows.Close()
-
-	var runs []AutomationRun
-	for rows.Next() {
-		var r AutomationRun
-		var startedAt, finishedAt string
-		var finishedAtPtr *string
-		if err := rows.Scan(&r.ID, &r.AutomationID, &startedAt, &finishedAtPtr, &r.Status, &r.Response, &r.Error); err != nil {
-			return nil, fmt.Errorf("scanning automation run: %w", err)
-		}
-		r.StartedAt, _ = time.Parse("2006-01-02 15:04:05", startedAt)
-		if finishedAtPtr != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *finishedAtPtr)
-			r.FinishedAt = &t
-		}
-		_ = finishedAt
-		runs = append(runs, r)
-	}
-	return runs, rows.Err()
+	return scanAutomationRuns(rows)
 }
 
 // ListAllAutomationRuns returns runs across all automations, newest first.
@@ -621,79 +516,45 @@ func (s *Store) ListAllAutomationRuns(ctx context.Context, since time.Time, limi
 	var rows *sql.Rows
 	var err error
 	if since.IsZero() {
-		rows, err = s.pool.ReadDB().QueryContext(ctx,
+		rows, err = s.pool.DB().QueryContext(ctx,
 			`SELECT id, automation_id, started_at, finished_at, status, response, error
-			 FROM automation_runs ORDER BY id DESC LIMIT ?`, limit)
+			 FROM automation_runs ORDER BY id DESC LIMIT $1`, limit)
 	} else {
-		rows, err = s.pool.ReadDB().QueryContext(ctx,
+		rows, err = s.pool.DB().QueryContext(ctx,
 			`SELECT id, automation_id, started_at, finished_at, status, response, error
-			 FROM automation_runs WHERE started_at >= ? ORDER BY id DESC LIMIT ?`,
-			since.Format("2006-01-02 15:04:05"), limit)
+			 FROM automation_runs WHERE started_at >= $1 ORDER BY id DESC LIMIT $2`,
+			since, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("listing all automation runs: %w", err)
 	}
 	defer rows.Close()
-
-	var runs []AutomationRun
-	for rows.Next() {
-		var r AutomationRun
-		var startedAt, finishedAt string
-		var finishedAtPtr *string
-		if err := rows.Scan(&r.ID, &r.AutomationID, &startedAt, &finishedAtPtr, &r.Status, &r.Response, &r.Error); err != nil {
-			return nil, fmt.Errorf("scanning automation run: %w", err)
-		}
-		r.StartedAt, _ = time.Parse("2006-01-02 15:04:05", startedAt)
-		if finishedAtPtr != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *finishedAtPtr)
-			r.FinishedAt = &t
-		}
-		_ = finishedAt
-		runs = append(runs, r)
-	}
-	return runs, rows.Err()
+	return scanAutomationRuns(rows)
 }
 
 func scanAutomations(rows *sql.Rows) ([]Automation, error) {
 	var list []Automation
 	for rows.Next() {
 		var a Automation
-		var enabledInt int
-		var createdAt, updatedAt string
-		var startAt, endAt, lastRunAt, nextRunAt *string
-		if err := rows.Scan(&a.ID, &a.Name, &a.RRule, &startAt, &endAt, &a.Prompt, &a.SkillName, &enabledInt,
-			&lastRunAt, &nextRunAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.RRule, &a.StartAt, &a.EndAt, &a.Prompt, &a.SkillName, &a.Enabled,
+			&a.LastRunAt, &a.NextRunAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning automation: %w", err)
-		}
-		a.Enabled = enabledInt != 0
-		a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
-		if startAt != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *startAt)
-			a.StartAt = &t
-		}
-		if endAt != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *endAt)
-			a.EndAt = &t
-		}
-		if lastRunAt != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *lastRunAt)
-			a.LastRunAt = &t
-		}
-		if nextRunAt != nil {
-			t, _ := time.Parse("2006-01-02 15:04:05", *nextRunAt)
-			a.NextRunAt = &t
 		}
 		list = append(list, a)
 	}
 	return list, rows.Err()
 }
 
-func boolInt(b bool) int {
-	if b {
-		return 1
+func scanAutomationRuns(rows *sql.Rows) ([]AutomationRun, error) {
+	var runs []AutomationRun
+	for rows.Next() {
+		var r AutomationRun
+		if err := rows.Scan(&r.ID, &r.AutomationID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.Response, &r.Error); err != nil {
+			return nil, fmt.Errorf("scanning automation run: %w", err)
+		}
+		runs = append(runs, r)
 	}
-	return 0
+	return runs, rows.Err()
 }
 
 // cosineSimilarity computes the cosine similarity between two vectors.
@@ -731,7 +592,6 @@ func sortByScoreDesc(matches []MemoryMatch) {
 }
 
 // encodeEmbedding serializes a float32 slice to raw little-endian bytes.
-// This is ~10x faster to decode than JSON for large embeddings.
 func encodeEmbedding(v []float32) []byte {
 	buf := make([]byte, len(v)*4)
 	for i, f := range v {
@@ -762,7 +622,7 @@ type Persona struct {
 }
 
 func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
-	rows, err := s.pool.ReadDB().QueryContext(ctx,
+	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, name, prompt, created_at, updated_at FROM personas ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
@@ -771,12 +631,9 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	var out []Persona
 	for rows.Next() {
 		var p Persona
-		var createdAt, updatedAt string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
-		p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -784,25 +641,19 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 
 func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, error) {
 	var p Persona
-	var createdAt, updatedAt string
-	err := s.pool.ReadDB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, created_at, updated_at FROM personas WHERE name = ?`, name,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &createdAt, &updatedAt)
-	p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT id, name, prompt, created_at, updated_at FROM personas WHERE name = $1`, name,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
 func (s *Store) CreatePersona(ctx context.Context, name, prompt string) (int64, error) {
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO personas (name, prompt) VALUES (?, ?)`, name, prompt)
-		if err != nil {
-			return err
-		}
-		id, err = res.LastInsertId()
-		return err
+		return tx.QueryRowContext(ctx,
+			`INSERT INTO personas (name, prompt) VALUES ($1, $2) RETURNING id`,
+			name, prompt,
+		).Scan(&id)
 	})
 	return id, err
 }
@@ -810,7 +661,7 @@ func (s *Store) CreatePersona(ctx context.Context, name, prompt string) (int64, 
 func (s *Store) UpdatePersona(ctx context.Context, id int64, name, prompt string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE personas SET name=?, prompt=?, updated_at=datetime('now') WHERE id=?`,
+			`UPDATE personas SET name=$1, prompt=$2, updated_at=NOW() WHERE id=$3`,
 			name, prompt, id)
 		return err
 	})
@@ -818,7 +669,7 @@ func (s *Store) UpdatePersona(ctx context.Context, id int64, name, prompt string
 
 func (s *Store) DeletePersona(ctx context.Context, id int64) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=?`, id)
+		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=$1`, id)
 		return err
 	})
 }

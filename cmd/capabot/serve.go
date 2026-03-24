@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -62,7 +61,7 @@ func runServe(configPath string) error {
 	}()
 
 	// 4. Initialize memory store
-	store, pool, err := initStore(ctx, cfg.Database.Dir)
+	store, pool, err := initStore(ctx, cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("initializing store: %w", err)
 	}
@@ -387,13 +386,9 @@ func resolvePersona(ctx context.Context, store *memory.Store, text string, logge
 	return remainder, persona.Prompt
 }
 
-// initStore opens the SQLite pool, runs migrations, and returns Store + Pool.
-func initStore(ctx context.Context, dbDir string) (*memory.Store, *memory.Pool, error) {
-	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("creating database directory: %w", err)
-	}
-	dbPath := filepath.Join(dbDir, "capabot.db")
-	pool, err := memory.NewPool(dbPath, 4)
+// initStore opens the Postgres pool, runs migrations, and returns Store + Pool.
+func initStore(ctx context.Context, dbURL string) (*memory.Store, *memory.Pool, error) {
+	pool, err := memory.NewPool(dbURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening database pool: %w", err)
 	}

@@ -12,7 +12,7 @@ func runMigrate(configPath string) error {
 	}
 
 	ctx := context.Background()
-	_, pool, err := initStore(ctx, cfg.Database.Dir)
+	_, pool, err := initStore(ctx, cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}

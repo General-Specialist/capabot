@@ -1,1 +1,0 @@
-ALTER TABLE messages ADD COLUMN tool_input TEXT NOT NULL DEFAULT '';

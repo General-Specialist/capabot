@@ -15,8 +15,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
-	if cfg.Database.Dir == "" {
-		t.Error("expected non-empty default database dir")
+	if cfg.Database.URL == "" {
+		t.Error("expected non-empty default database URL")
 	}
 	if cfg.Agent.MaxIterations != 25 {
 		t.Errorf("expected default max iterations 25, got %d", cfg.Agent.MaxIterations)
@@ -41,7 +41,7 @@ server:
   addr: ":9090"
 log_level: "debug"
 database:
-  dir: "/tmp/capabot-test"
+  url: "postgres://localhost:5432/capabot-test?sslmode=disable"
 providers:
   anthropic:
     api_key: "test-key-123"
@@ -69,8 +69,8 @@ skills:
 	if cfg.LogLevel != "debug" {
 		t.Errorf("expected log level debug, got %s", cfg.LogLevel)
 	}
-	if cfg.Database.Dir != "/tmp/capabot-test" {
-		t.Errorf("expected db dir /tmp/capabot-test, got %s", cfg.Database.Dir)
+	if cfg.Database.URL != "postgres://localhost:5432/capabot-test?sslmode=disable" {
+		t.Errorf("expected db URL postgres://localhost:5432/capabot-test?sslmode=disable, got %s", cfg.Database.URL)
 	}
 	if cfg.Providers.Anthropic.APIKey != "test-key-123" {
 		t.Errorf("expected api key test-key-123, got %s", cfg.Providers.Anthropic.APIKey)
@@ -105,7 +105,7 @@ providers:
 	t.Setenv("CAPABOT_LOG_LEVEL", "warn")
 	t.Setenv("CAPABOT_SERVER_ADDR", ":7070")
 	t.Setenv("CAPABOT_ANTHROPIC_API_KEY", "env-key")
-	t.Setenv("CAPABOT_DB_DIR", "/env/db/path")
+	t.Setenv("CAPABOT_DATABASE_URL", "postgres://localhost:5432/envdb?sslmode=disable")
 
 	cfg, err := LoadFromFile(cfgPath)
 	if err != nil {
@@ -121,8 +121,8 @@ providers:
 	if cfg.Providers.Anthropic.APIKey != "env-key" {
 		t.Errorf("expected env override api key env-key, got %s", cfg.Providers.Anthropic.APIKey)
 	}
-	if cfg.Database.Dir != "/env/db/path" {
-		t.Errorf("expected env override db dir /env/db/path, got %s", cfg.Database.Dir)
+	if cfg.Database.URL != "postgres://localhost:5432/envdb?sslmode=disable" {
+		t.Errorf("expected env override db URL, got %s", cfg.Database.URL)
 	}
 }
 

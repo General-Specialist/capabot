@@ -16,11 +16,10 @@ var migrationFS embed.FS
 // Migrate applies all pending migrations to the database.
 func Migrate(ctx context.Context, pool *Pool) error {
 	return pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		// Ensure schema_versions table exists
 		_, err := tx.ExecContext(ctx, `
 			CREATE TABLE IF NOT EXISTS schema_versions (
 				version INTEGER PRIMARY KEY,
-				applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+				applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			)
 		`)
 		if err != nil {
@@ -47,7 +46,7 @@ func Migrate(ctx context.Context, pool *Pool) error {
 			}
 
 			if _, err := tx.ExecContext(ctx,
-				"INSERT INTO schema_versions (version) VALUES (?)",
+				"INSERT INTO schema_versions (version) VALUES ($1)",
 				m.version,
 			); err != nil {
 				return fmt.Errorf("recording migration %03d: %w", m.version, err)
@@ -75,7 +74,6 @@ func loadMigrations() ([]migration, error) {
 			continue
 		}
 
-		// Parse version from filename: "001_init.sql" → 1
 		parts := strings.SplitN(entry.Name(), "_", 2)
 		if len(parts) < 2 {
 			continue

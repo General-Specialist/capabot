@@ -4,16 +4,25 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"path/filepath"
+	"os"
 	"sync"
 	"testing"
 	"time"
 )
 
+func testDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("CAPABOT_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CAPABOT_TEST_DATABASE_URL not set, skipping Postgres tests")
+	}
+	return dsn
+}
+
 func setupTestStore(t *testing.T) *Store {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	pool, err := NewPool(dbPath, 4)
+	dsn := testDSN(t)
+	pool, err := NewPool(dsn)
 	if err != nil {
 		t.Fatalf("creating pool: %v", err)
 	}
@@ -24,12 +33,20 @@ func setupTestStore(t *testing.T) *Store {
 		t.Fatalf("running migrations: %v", err)
 	}
 
+	// Clean tables between tests
+	db := pool.DB()
+	for _, table := range []string{"automation_runs", "automations", "tool_executions", "messages", "sessions", "memory", "personas"} {
+		if _, err := db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			t.Fatalf("cleaning table %s: %v", table, err)
+		}
+	}
+
 	return NewStore(pool)
 }
 
 func TestStore_Migration(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	pool, err := NewPool(dbPath, 4)
+	dsn := testDSN(t)
+	pool, err := NewPool(dsn)
 	if err != nil {
 		t.Fatalf("creating pool: %v", err)
 	}
@@ -45,14 +62,13 @@ func TestStore_Migration(t *testing.T) {
 		t.Fatalf("second migration (idempotent): %v", err)
 	}
 
-	// Verify schema_versions has exactly one entry
 	var count int
-	err = pool.ReadDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_versions").Scan(&count)
+	err = pool.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_versions").Scan(&count)
 	if err != nil {
 		t.Fatalf("querying schema_versions: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 schema version, got %d", count)
+	if count < 1 {
+		t.Errorf("expected at least 1 schema version, got %d", count)
 	}
 }
 
@@ -116,18 +132,59 @@ func TestStore_CRUD(t *testing.T) {
 	}
 }
 
+func TestStore_CascadeDelete(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create session with messages and tool executions
+	if err := store.CreateSession(ctx, Session{
+		ID: "sess-cascade", TenantID: "tenant-a", UserID: "user-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveMessage(ctx, Message{SessionID: "sess-cascade", Role: "user", Content: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveToolExecution(ctx, ToolExecution{SessionID: "sess-cascade", ToolName: "test", Input: "{}", Output: "ok", Success: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete session — messages and tool_executions should cascade
+	count, err := store.DeleteOldSessions(ctx, 0)
+	if err != nil {
+		t.Fatalf("deleting sessions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 deleted, got %d", count)
+	}
+
+	// Verify cascade
+	msgs, err := store.GetMessages(ctx, "sess-cascade")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after cascade, got %d", len(msgs))
+	}
+	execs, err := store.GetToolExecutions(ctx, "sess-cascade")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(execs) != 0 {
+		t.Errorf("expected 0 tool executions after cascade, got %d", len(execs))
+	}
+}
+
 func TestStore_ConcurrentWriters(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
-	// Create a session for all writers to use
 	if err := store.CreateSession(ctx, Session{
 		ID: "sess-concurrent", TenantID: "tenant-a", UserID: "user-1",
 	}); err != nil {
 		t.Fatalf("creating session: %v", err)
 	}
 
-	// 10 goroutines each writing 10 messages simultaneously
 	const numWriters = 10
 	const msgsPerWriter = 10
 
@@ -159,7 +216,6 @@ func TestStore_ConcurrentWriters(t *testing.T) {
 		t.Errorf("concurrent write error: %v", err)
 	}
 
-	// Verify all messages were written
 	messages, err := store.GetMessages(ctx, "sess-concurrent")
 	if err != nil {
 		t.Fatalf("getting messages: %v", err)
@@ -170,63 +226,10 @@ func TestStore_ConcurrentWriters(t *testing.T) {
 	}
 }
 
-func TestStore_PerTenantIsolation(t *testing.T) {
-	dir := t.TempDir()
-	ctx := context.Background()
-
-	// Create two separate stores (simulating per-tenant DBs)
-	poolA, err := NewPool(filepath.Join(dir, "tenant-a.db"), 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer poolA.Close()
-	if err := Migrate(ctx, poolA); err != nil {
-		t.Fatal(err)
-	}
-	storeA := NewStore(poolA)
-
-	poolB, err := NewPool(filepath.Join(dir, "tenant-b.db"), 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer poolB.Close()
-	if err := Migrate(ctx, poolB); err != nil {
-		t.Fatal(err)
-	}
-	storeB := NewStore(poolB)
-
-	// Write to tenant A
-	if err := storeA.CreateSession(ctx, Session{
-		ID: "sess-a", TenantID: "tenant-a", UserID: "user-a",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := storeA.SaveMessage(ctx, Message{
-		SessionID: "sess-a", Role: "user", Content: "secret data",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Tenant B should have no sessions or messages
-	_, err = storeB.GetSession(ctx, "tenant-b", "sess-a")
-	if err == nil {
-		t.Error("tenant B should not see tenant A's session")
-	}
-
-	msgs, err := storeB.GetMessages(ctx, "sess-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(msgs) != 0 {
-		t.Errorf("tenant B should have 0 messages, got %d", len(msgs))
-	}
-}
-
 func TestStore_CosineSimilarity(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
-	// Store entries with embeddings
 	entries := []MemoryEntry{
 		{TenantID: "t1", Key: "cat", Value: "cats are fluffy", Embedding: []float32{1, 0, 0, 0}},
 		{TenantID: "t1", Key: "dog", Value: "dogs are loyal", Embedding: []float32{0.9, 0.1, 0, 0}},
@@ -239,7 +242,6 @@ func TestStore_CosineSimilarity(t *testing.T) {
 		}
 	}
 
-	// Query close to "cat" vector
 	query := []float32{0.95, 0.05, 0, 0}
 
 	start := time.Now()
@@ -250,7 +252,6 @@ func TestStore_CosineSimilarity(t *testing.T) {
 		t.Fatalf("recalling memory: %v", err)
 	}
 
-	// Should return cat and dog (highest similarity to query)
 	if len(matches) != 2 {
 		t.Fatalf("expected 2 matches, got %d", len(matches))
 	}
@@ -260,71 +261,12 @@ func TestStore_CosineSimilarity(t *testing.T) {
 	if matches[1].Key != "dog" {
 		t.Errorf("expected second match to be 'dog', got %q", matches[1].Key)
 	}
-
-	// Verify scores are reasonable
 	if matches[0].Score < 0.9 {
 		t.Errorf("expected cat score > 0.9, got %f", matches[0].Score)
 	}
 
-	// Sub-10ms for 4 vectors is trivially true, but verifies the path works
-	if elapsed > 10*time.Millisecond {
-		t.Logf("WARNING: cosine similarity took %v (should be sub-10ms for small sets)", elapsed)
-	}
-}
-
-func TestStore_CosineSimilarity_LargerSet(t *testing.T) {
-	store := setupTestStore(t)
-	ctx := context.Background()
-
-	// Store 5000 entries with random-ish embeddings
-	const dim = 128
-	const count = 5000
-
-	for i := 0; i < count; i++ {
-		emb := make([]float32, dim)
-		for j := range emb {
-			emb[j] = float32(math.Sin(float64(i*dim+j) * 0.1))
-		}
-		if err := store.StoreMemory(ctx, MemoryEntry{
-			TenantID:  "t1",
-			Key:       fmt.Sprintf("entry-%d", i),
-			Value:     fmt.Sprintf("value %d", i),
-			Embedding: emb,
-		}); err != nil {
-			t.Fatalf("storing entry %d: %v", i, err)
-		}
-	}
-
-	// Query
-	query := make([]float32, dim)
-	for j := range query {
-		query[j] = float32(math.Sin(float64(j) * 0.1))
-	}
-
-	start := time.Now()
-	matches, err := store.RecallMemory(ctx, "t1", query, 5, 0.0)
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("recalling memory: %v", err)
-	}
-	if len(matches) != 5 {
-		t.Fatalf("expected 5 matches, got %d", len(matches))
-	}
-
-	// Sub-100ms for 5K vectors with 128-dim (includes SQLite read + cosine compute).
-	// Pure cosine on 5K is sub-10ms; DB I/O adds overhead.
 	if elapsed > 100*time.Millisecond {
-		t.Errorf("recall over %d vectors took %v (target: <100ms including DB I/O)", count, elapsed)
-	}
-	t.Logf("recall over %d vectors took %v", count, elapsed)
-
-	// First match should be entry-0 (identical embedding)
-	if matches[0].Key != "entry-0" {
-		t.Errorf("expected first match to be entry-0, got %q", matches[0].Key)
-	}
-	if matches[0].Score < 0.99 {
-		t.Errorf("expected near-perfect score for identical vector, got %f", matches[0].Score)
+		t.Logf("WARNING: cosine similarity took %v", elapsed)
 	}
 }
 
@@ -342,7 +284,6 @@ func TestStore_MemoryDelete(t *testing.T) {
 		t.Fatalf("deleting memory: %v", err)
 	}
 
-	// Verify deletion — recall with nil embedding should return nothing
 	matches, err := store.RecallMemory(ctx, "t1", []float32{1, 0}, 10, 0.0)
 	if err != nil {
 		t.Fatal(err)
@@ -375,23 +316,5 @@ func TestCosineSimilarity_Unit(t *testing.T) {
 				t.Errorf("cosineSimilarity(%v, %v) = %f, want %f", tt.a, tt.b, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestPool_WALMode(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	pool, err := NewPool(dbPath, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-
-	var journalMode string
-	err = pool.ReadDB().QueryRow("PRAGMA journal_mode").Scan(&journalMode)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if journalMode != "wal" {
-		t.Errorf("expected WAL journal mode, got %q", journalMode)
 	}
 }

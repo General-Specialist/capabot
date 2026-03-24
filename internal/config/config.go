@@ -26,9 +26,9 @@ type ServerConfig struct {
 	Addr string `yaml:"addr"`
 }
 
-// DatabaseConfig holds SQLite storage settings.
+// DatabaseConfig holds Postgres connection settings.
 type DatabaseConfig struct {
-	Dir string `yaml:"dir"`
+	URL string `yaml:"url"`
 }
 
 // ProvidersConfig holds LLM provider configurations.
@@ -147,8 +147,8 @@ func applyEnvOverrides(cfg Config) Config {
 	if v := os.Getenv("CAPABOT_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 	}
-	if v := os.Getenv("CAPABOT_DB_DIR"); v != "" {
-		cfg.Database.Dir = v
+	if v := os.Getenv("CAPABOT_DATABASE_URL"); v != "" {
+		cfg.Database.URL = v
 	}
 	if v := os.Getenv("CAPABOT_ANTHROPIC_API_KEY"); v != "" {
 		cfg.Providers.Anthropic.APIKey = v

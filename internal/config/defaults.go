@@ -13,7 +13,7 @@ func Default() Config {
 		},
 		LogLevel: "info",
 		Database: DatabaseConfig{
-			Dir: defaultDataDir(),
+			URL: "postgres://localhost:5432/capabot?sslmode=disable",
 		},
 		Providers: ProvidersConfig{
 			Anthropic: AnthropicConfig{
@@ -27,8 +27,8 @@ func Default() Config {
 			},
 		},
 		Agent: AgentConfig{
-			MaxIterations:      0, // 0 = unlimited
-			ContextBudgetPct:   0.8,
+			MaxIterations:       0, // 0 = unlimited
+			ContextBudgetPct:    0.8,
 			MaxToolOutputTokens: 4096,
 		},
 		Skills: SkillsConfig{
@@ -39,14 +39,6 @@ func Default() Config {
 			DrainTimeout:   30,
 		},
 	}
-}
-
-func defaultDataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", ".capabot", "data")
-	}
-	return filepath.Join(home, ".capabot", "data")
 }
 
 func defaultSkillsDir() string {
