@@ -10,7 +10,7 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 |---|---|---|---|
 | Cold start | 2–5s | <100ms | **20x faster** |
 | Idle memory | ~200MB | ~23MB | **~9x lower** |
-| Codebase | ~1.2M lines JS | ~18K lines Go | **67x less code** |
+| Codebase | ~1.2M lines JS | ~25K lines Go+TS | **48x less code** |
 | Install | npm + runtime + deps | single binary | |
 | Skills | 30K+ on ClawHub | 30K+ on ClawHub | |
 | Providers | 25+ | 4 (Anthropic, OpenAI, Gemini, OpenRouter) | |
@@ -21,16 +21,20 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 ## Quick start
 
 ```bash
+go install github.com/air-verse/air@latest   # Go hot-reload
+
 cp config.example.yaml ~/.capabot/config.yaml
 # add your API key in config.yaml
-
-capabot serve   # API at http://localhost:9090
 ```
 
-Then in a second terminal:
+Then two terminals:
 
 ```bash
-cd web && bun install && bun run dev   # UI at http://localhost:5173
+# terminal 1 — backend (http://localhost:9090)
+cd capabot && air
+
+# terminal 2 — frontend (http://localhost:5173)
+cd capabot/web && bun install && bun run dev
 ```
 
 ## Configuration
@@ -115,13 +119,7 @@ capabot migrate    Run database migrations
 
 ## Development
 
-```bash
-go install github.com/air-verse/air@latest   # Go hot-reload
-
-# Two terminals:
-air                          # backend (http://localhost:9090)
-cd web && bun run dev        # frontend (http://localhost:5173)
-```
+See Quick start above. `air` watches for Go changes and rebuilds automatically; Vite handles frontend HMR.
 
 ## Architecture
 
