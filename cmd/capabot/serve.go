@@ -22,7 +22,6 @@ import (
 	"github.com/polymath/capabot/internal/skill"
 	"github.com/polymath/capabot/internal/tools"
 	"github.com/polymath/capabot/internal/transport"
-	webui "github.com/polymath/capabot/web"
 	"github.com/rs/zerolog"
 )
 
@@ -167,7 +166,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		RateLimitRPM:   cfg.Security.RateLimitRPM,
 		SkillsDir:      defaultSkillsDir(),
 		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
-		StaticFS:       webui.FS(),
+		StaticFS:       nil,
 		Scheduler:      scheduler,
 		ConfigPath:     configPath,
 		Router:         router,

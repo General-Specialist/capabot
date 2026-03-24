@@ -2,18 +2,7 @@
 
 OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less code — and every ClawHub skill works out of the box.
 
-```bash
-# macOS/Linux
-curl -fsSL https://raw.githubusercontent.com/General-Specialist/capabot/main/install.sh | sh
-
-# Windows: 
-irm https://raw.githubusercontent.com/General-Specialist/capabot/main/install.ps1 | iex
-
-cp config.example.yaml ~/.capabot/config.yaml  # add your API key
-capabot serve                                   # http://localhost:9090
-```
-
-**Questions, feedback, or just want to hang?** I respond basically ASAP — [join the Discord](https://discord.gg/ktAy8fZH)
+**Questions, feedback, or just want to hang?** [Join the Discord](https://discord.gg/ktAy8fZH)
 
 ## vs OpenClaw
 
@@ -22,45 +11,27 @@ capabot serve                                   # http://localhost:9090
 | Cold start | 2–5s | <100ms | **20x faster** |
 | Idle memory | ~200MB | ~23MB | **~9x lower** |
 | Codebase | ~1.2M lines JS | ~18K lines Go | **67x less code** |
-| Install | npm + runtime + deps | single binary, auto-updates | |
+| Install | npm + runtime + deps | single binary | |
 | Skills | 30K+ on ClawHub | 30K+ on ClawHub | |
 | Providers | 25+ | 4 (Anthropic, OpenAI, Gemini, OpenRouter) | |
-| Transports | WhatsApp, Telegram, Slack, Discord, Signal, iMessage | Telegram, Discord, Slack, HTTP | |
-| Web UI | yes | yes (embedded, no separate deploy) | |
+| Web UI | yes | yes | |
 | Multi-agent | yes | yes | |
 | WASM sandbox | no | yes | |
-
-## Install
-
-**macOS / Linux:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/General-Specialist/capabot/main/install.sh | sh
-```
-
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/General-Specialist/capabot/main/install.ps1 | iex
-```
-
-Capabot auto-updates in the background — every run checks for new releases and silently replaces the binary. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
 
 ## Quick start
 
 ```bash
-# Copy the example config
 cp config.example.yaml ~/.capabot/config.yaml
+# add your API key in config.yaml
 
-# Add your API key
-# providers.anthropic.api_key / providers.gemini.api_key / etc.
-
-# Start the server
-capabot serve
-
-# Or chat directly in the terminal
-capabot chat
+capabot serve   # API at http://localhost:9090
 ```
 
-The web UI is available at `http://localhost:9090`.
+Then in a second terminal:
+
+```bash
+cd web && bun install && bun run dev   # UI at http://localhost:5173
+```
 
 ## Configuration
 
@@ -96,24 +67,13 @@ All values can be overridden with environment variables: `CAPABOT_ANTHROPIC_API_
 Skills are Markdown files that describe what an agent can do. Any OpenClaw `SKILL.md` works out of the box.
 
 ```bash
-# Install a skill from ClawHub
-capabot skill install code-reviewer
-
-# Search ClawHub
-capabot skill search "git"
-
-# Create a new skill
-capabot skill create my-skill
-
-# Lint for compatibility
+capabot skill install code-reviewer   # Install from ClawHub
+capabot skill search "git"            # Search ClawHub
+capabot skill create my-skill         # Create a new skill
 capabot skill lint ./my-skill/SKILL.md
 ```
 
-Skills live in `~/.capabot/skills/<name>/SKILL.md` and are hot-reloaded in dev mode:
-
-```bash
-capabot dev   # watches for skill changes, auto-lints
-```
+Skills live in `~/.capabot/skills/<name>/SKILL.md`.
 
 For skills that need real computation, compile to WASM and drop `skill.wasm` alongside `SKILL.md`. The runtime is fully sandboxed (no filesystem, no network).
 
@@ -127,6 +87,7 @@ For skills that need real computation, compile to WASM and drop `skill.wasm` alo
 | `glob` | Recursive file pattern matching (`**/*.go`) |
 | `grep` | Regex content search — files, content, or count mode |
 | `shell_exec` | Run allowlisted shell commands |
+| `browser` | Playwright-based browser automation |
 | `web_search` | DuckDuckGo / Brave / SearXNG search |
 | `web_fetch` | Fetch and extract text from URLs |
 | `image_read` | Read images (JPEG, PNG, GIF, WEBP) for vision models |
@@ -137,19 +98,17 @@ For skills that need real computation, compile to WASM and drop `skill.wasm` alo
 | `todo` | Session-scoped task list with status tracking |
 | `schedule` | Delay execution (for chaining time-sensitive actions) |
 
-Vision and document tools work natively with each provider — Anthropic receives `document`/`image` blocks, OpenAI receives `image_url`/`file` parts, Gemini receives `inlineData` blobs.
-
 ## Automations
 
-Schedule agent prompts to run on a cron schedule from the web UI (`/automations`) or config. Supports manual trigger, run history, and enable/disable per automation.
+Schedule agent prompts to run on a recurring schedule from the web UI (`/automations`). Supports manual trigger, live streaming of agent traces, run history, and stop-in-flight.
 
 ## CLI
 
 ```
-capabot serve      Start the API server and configured transports
+capabot serve      Start the API server
 capabot dev        Hot-reload mode for skill development
 capabot chat       Interactive terminal chat
-capabot skill      Manage skills (install, search, create, lint, import)
+capabot skill      Manage skills (install, search, create, lint)
 capabot agent      List configured agents
 capabot migrate    Run database migrations
 ```
@@ -157,28 +116,12 @@ capabot migrate    Run database migrations
 ## Development
 
 ```bash
-# Install air for Go hot-reload
-go install github.com/air-verse/air@latest
+go install github.com/air-verse/air@latest   # Go hot-reload
 
-# Install frontend deps
-cd web && bun install && cd ..
-
-# Run both in separate terminals:
-air                 # Go backend with hot-reload (http://localhost:9090)
-cd web && bun dev   # Vite frontend with HMR (http://localhost:5173)
+# Two terminals:
+air                          # backend (http://localhost:9090)
+cd web && bun run dev        # frontend (http://localhost:5173)
 ```
-
-## Building from source
-
-```bash
-make build          # ./capabot
-make build-linux    # Linux amd64
-make build-arm      # Linux arm64
-make test
-make test-cover
-```
-
-Requires Go 1.22+. `CGO_ENABLED=0` — compiles anywhere, runs anywhere.
 
 ## Architecture
 
@@ -189,28 +132,21 @@ internal/
   llm/               Provider abstraction (Anthropic, OpenAI, Gemini, OpenRouter)
   skill/             SKILL.md parser, registry, WASM runner
   memory/            SQLite storage — sessions, messages, vector recall
-  tools/             Built-in tools (web, files, shell, memory, schedule)
+  tools/             Built-in tools (web, files, shell, browser, memory)
   transport/         Channel adapters (HTTP, Telegram, Discord, Slack)
   api/               REST API + SSE streaming
+  cron/              Automation scheduler
   orchestrator/      Multi-agent coordination
-web/                 React SPA (embedded in binary)
+web/                 React + Vite frontend
 ```
-
-The agent loop is a standard ReAct cycle: the LLM observes context, picks a tool, capabot runs it, feeds the result back, repeat. Max 25 iterations by default.
 
 ## Security
 
 - Shell execution uses direct `os/exec` argv — no shell interpretation, no injection
 - Binary paths resolved via `exec.LookPath` against an allowlist
 - WASM skills run in a fully isolated sandbox (wazero, pure Go)
-- Content filtering on all incoming messages (20+ prompt injection patterns)
+- Content filtering on all incoming messages
 - Rate limiting, bearer token auth, per-tenant data isolation
-
-## Status
-
-All core features are complete. The binary is self-contained and production-ready for single-node deployments.
-
-Planned but not yet implemented: additional transports (WhatsApp, Matrix, Teams), horizontal scaling (Postgres backend), mobile apps.
 
 ## License
 

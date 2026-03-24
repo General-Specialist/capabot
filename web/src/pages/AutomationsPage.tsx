@@ -74,7 +74,7 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
   onSave: () => void
   onTrigger: () => void
   onDelete: () => void
-  onScheduleChange: (r: string | null, s: string | null, e: string | null) => void
+  onScheduleChange: (data: { absoluteStartUtc?: string | null; absoluteEndUtc?: string | null; startOffsetRule?: string | null; endOffsetRule?: string | null; recurrenceRule?: string | null }) => void
   skills: Skill[]
 }) {
   return (
@@ -103,7 +103,7 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
           rows={form.skill_name ? 2 : 4}
           className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
         />
-        {form.skill_name && !form.prompt && skills.find(s => s.name === form.skill_name)?.tier >= 2 && (
+        {form.skill_name && !form.prompt && (skills.find(s => s.name === form.skill_name)?.tier ?? 0) >= 2 && (
           <p className="text-xs text-brand-primary">Runs directly — no LLM tokens used</p>
         )}
       </div>
@@ -260,7 +260,6 @@ export function AutomationsPage() {
     }
   }
 
-  const showPanel = isNew || selected !== null
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
