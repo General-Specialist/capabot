@@ -5,6 +5,7 @@ import { SkillsPage } from '@/pages/SkillsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { PersonasPage } from '@/pages/PersonasPage'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/automations" element={<AutomationsPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/personas" element={<PersonasPage />} />
           </Routes>
         </main>
       </div>

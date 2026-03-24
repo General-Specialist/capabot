@@ -156,6 +156,14 @@ export interface TraceMessage {
   tool_input?: string
 }
 
+export interface Persona {
+  id: number
+  name: string
+  prompt: string
+  created_at: string
+  updated_at: string
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path)
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
@@ -233,6 +241,20 @@ export const api = {
       body: JSON.stringify(keys),
     })
     if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  },
+
+  personas: () => get<Persona[]>('/personas'),
+  personaCreate: (name: string, prompt: string) => post<{ id: number }>('/personas', { name, prompt }),
+  personaUpdate: (id: number, name: string, prompt: string) => {
+    return fetch(BASE + `/personas/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, prompt }),
+    }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
+  },
+  personaDelete: (id: number) => {
+    return fetch(BASE + `/personas/${id}`, { method: 'DELETE' })
+      .then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
 
   chat: (messages: LLMMessage[], sessionId?: string) =>

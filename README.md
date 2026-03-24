@@ -11,7 +11,7 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 | Cold start | 2–5s | <100ms | **20x faster** |
 | Idle memory | ~200MB | ~23MB | **~9x lower** |
 | Codebase | ~1.2M lines JS | ~25K lines Go+TS | **48x less code** |
-| Install | npm + runtime + deps | single binary | |
+| Install | npm + runtime + deps | git clone, auto-updates | |
 | Skills | 30K+ on ClawHub | 30K+ on ClawHub | |
 | Providers | 25+ | 4 (Anthropic, OpenAI, Gemini, OpenRouter) | |
 | Web UI | yes | yes | |
@@ -25,7 +25,7 @@ git clone https://github.com/General-Specialist/capabot.git
 cd capabot
 ```
 
-To update later, just `git pull`.
+capabot auto-updates in the background — on every run it checks for new commits and pulls them automatically. `air` then rebuilds. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
 
 **Prerequisites:**
 

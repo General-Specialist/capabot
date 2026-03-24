@@ -19,3 +19,4 @@ coverage.out
 # Web
 web/node_modules/
 web/dist/
+config.yaml

@@ -145,6 +145,21 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		return a.Run(runCtx, sessionID, messages)
 	}
 
+	// runAgentWithPrompt is like runAgent but with a custom system prompt (used for personas).
+	runAgentWithPrompt := func(runCtx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
+		customCfg := agentCfg
+		customCfg.SystemPrompt = sysPrompt
+		ctxMgr := agent.NewContextManager(ctxMgrCfg)
+		a := agent.New(customCfg, router, toolRegistry, ctxMgr, logger)
+		if onEvent != nil {
+			a.SetOnEvent(onEvent)
+		}
+		if store != nil {
+			a.SetStore(&storeAdapter{store: store})
+		}
+		return a.Run(runCtx, sessionID, messages)
+	}
+
 	// 8b. Start cron scheduler for automations
 	scheduler := cron.NewScheduler(store, skillRegistry, runAgent, logger)
 	go scheduler.Start(ctx)
@@ -218,7 +233,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	}
 
 	// 10. Start bot transports
-	messageHandler := makeMessageHandler(runAgent, contentFilter, logger)
+	messageHandler := makeMessageHandler(runAgent, runAgentWithPrompt, store, contentFilter, logger)
 
 	// HTTP bot transport (always started)
 	httpTransport := transport.NewHTTPTransport(transport.HTTPConfig{
@@ -284,8 +299,11 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 
 // makeMessageHandler returns a factory that wires inbound messages to the agent runner.
 // Transports don't support streaming, so onEvent is passed as nil.
+// If the message starts with @PersonaName, the persona's prompt is used as the system prompt.
 func makeMessageHandler(
 	runAgent func(context.Context, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
+	runAgentWithPrompt func(context.Context, string, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
+	store *memory.Store,
 	filter *agent.ContentFilter,
 	logger zerolog.Logger,
 ) func(t transport.Transport) func(context.Context, transport.InboundMessage) {
@@ -299,8 +317,26 @@ func makeMessageHandler(
 				})
 				return
 			}
-			messages := []llm.ChatMessage{{Role: "user", Content: msg.Text}}
-			result, err := runAgent(msgCtx, msg.ChannelID, messages, nil)
+			if store != nil {
+				_ = store.UpsertSession(msgCtx, memory.Session{
+					ID:       msg.ChannelID,
+					TenantID: "default",
+					Channel:  t.Name(),
+					Metadata: "{}",
+				})
+			}
+
+			// Detect @PersonaName mention at the start of the message.
+			text, personaPrompt := resolvePersona(msgCtx, store, msg.Text, logger)
+			messages := []llm.ChatMessage{{Role: "user", Content: text}}
+
+			var result *agent.RunResult
+			var err error
+			if personaPrompt != "" {
+				result, err = runAgentWithPrompt(msgCtx, personaPrompt, msg.ChannelID, messages, nil)
+			} else {
+				result, err = runAgent(msgCtx, msg.ChannelID, messages, nil)
+			}
 			if err != nil {
 				logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
 				_ = t.Send(msgCtx, transport.OutboundMessage{
@@ -315,6 +351,40 @@ func makeMessageHandler(
 			})
 		}
 	}
+}
+
+// resolvePersona checks if text starts with @Name, looks up the persona, and returns
+// the stripped text and the persona's system prompt. Returns original text and "" if no match.
+func resolvePersona(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, string) {
+	if store == nil || len(text) < 2 || text[0] != '@' {
+		return text, ""
+	}
+	// Extract the name: everything from @ up to the first space (or end of string).
+	rest := text[1:]
+	name := rest
+	remainder := ""
+	if idx := len(rest); idx > 0 {
+		for i, c := range rest {
+			if c == ' ' || c == '\n' {
+				name = rest[:i]
+				remainder = rest[i+1:]
+				break
+			}
+		}
+	}
+	if name == "" {
+		return text, ""
+	}
+	persona, err := store.GetPersonaByName(ctx, name)
+	if err != nil {
+		// Not found — treat as normal message.
+		logger.Debug().Str("mention", name).Msg("persona not found, treating as plain text")
+		return text, ""
+	}
+	if remainder == "" {
+		remainder = text // edge case: "@Name" with nothing after — keep original
+	}
+	return remainder, persona.Prompt
 }
 
 // initStore opens the SQLite pool, runs migrations, and returns Store + Pool.

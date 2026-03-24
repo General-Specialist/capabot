@@ -751,3 +751,74 @@ func decodeEmbedding(b []byte) []float32 {
 	}
 	return v
 }
+
+// Persona is a named system prompt.
+type Persona struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Prompt    string    `json:"prompt"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, name, prompt, created_at, updated_at FROM personas ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Persona
+	for rows.Next() {
+		var p Persona
+		var createdAt, updatedAt string
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, error) {
+	var p Persona
+	var createdAt, updatedAt string
+	err := s.pool.ReadDB().QueryRowContext(ctx,
+		`SELECT id, name, prompt, created_at, updated_at FROM personas WHERE name = ?`, name,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &createdAt, &updatedAt)
+	p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	return p, err
+}
+
+func (s *Store) CreatePersona(ctx context.Context, name, prompt string) (int64, error) {
+	var id int64
+	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO personas (name, prompt) VALUES (?, ?)`, name, prompt)
+		if err != nil {
+			return err
+		}
+		id, err = res.LastInsertId()
+		return err
+	})
+	return id, err
+}
+
+func (s *Store) UpdatePersona(ctx context.Context, id int64, name, prompt string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE personas SET name=?, prompt=?, updated_at=datetime('now') WHERE id=?`,
+			name, prompt, id)
+		return err
+	})
+}
+
+func (s *Store) DeletePersona(ctx context.Context, id int64) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=?`, id)
+		return err
+	})
+}

@@ -8,7 +8,7 @@ import (
 	"github.com/polymath/capabot/internal/updater"
 )
 
-const defaultConfigPath = "~/.capabot/config.yaml"
+const defaultConfigPath = "config.yaml"
 
 func main() {
 	go updater.CheckAndUpdate()

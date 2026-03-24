@@ -129,6 +129,10 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/runs", s.handleAllRuns)
 	s.mux.HandleFunc("GET /api/config/keys", s.handleConfigKeysGet)
 	s.mux.HandleFunc("PUT /api/config/keys", s.handleConfigKeysPut)
+	s.mux.HandleFunc("GET /api/personas", s.handlePersonasList)
+	s.mux.HandleFunc("POST /api/personas", s.handlePersonasCreate)
+	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
+	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
 
 	// SPA static files
 	if cfg.StaticFS != nil {
