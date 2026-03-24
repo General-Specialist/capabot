@@ -174,10 +174,9 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 		}
 	}
 
-	// Skill set + no prompt → run it directly without the LLM (zero tokens).
-	// Skill set + prompt → run the LLM agent; the skill is registered as a tool
-	// so the agent can call it as part of its reasoning.
-	if auto.SkillName != "" && auto.Prompt == "" {
+	// Single executable skill + no prompt → run directly without LLM (zero tokens).
+	// Otherwise the agent gets all skill_names registered as tools.
+	if len(auto.SkillNames) == 1 && auto.Prompt == "" {
 		s.fireSkill(ctx, auto, runID, log)
 		return
 	}
@@ -213,14 +212,15 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 
 // fireSkill runs a native or WASM skill directly, bypassing the LLM entirely.
 func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID int64, log zerolog.Logger) {
-	log.Info().Str("skill", auto.SkillName).Msg("running skill directly (no LLM)")
+	skillName := auto.SkillNames[0]
+	log.Info().Str("skill", skillName).Msg("running skill directly (no LLM)")
 
 	// Build input JSON — pass the prompt as context if provided
 	input := map[string]string{"prompt": auto.Prompt}
 	inputJSON, _ := json.Marshal(input)
 
 	// Try native skill first, then WASM
-	if skillDir, ok := s.skillReg.NativePath(auto.SkillName); ok {
+	if skillDir, ok := s.skillReg.NativePath(skillName); ok {
 		exec, err := skill.NewNativeExecutor(ctx, skillDir)
 		if err != nil {
 			log.Error().Err(err).Msg("compiling native skill")
@@ -243,11 +243,11 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 			status = "error"
 		}
 		_ = s.store.FinishAutomationRun(ctx, runID, status, result.Content, "")
-		log.Info().Str("skill", auto.SkillName).Msg("skill automation complete")
+		log.Info().Str("skill", skillName).Msg("skill automation complete")
 		return
 	}
 
-	if wasmPath, ok := s.skillReg.WASMPath(auto.SkillName); ok {
+	if wasmPath, ok := s.skillReg.WASMPath(skillName); ok {
 		exec, err := skill.NewWASMExecutorFromFile(ctx, wasmPath)
 		if err != nil {
 			log.Error().Err(err).Msg("loading WASM skill")
@@ -271,12 +271,10 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 			status = "error"
 		}
 		_ = s.store.FinishAutomationRun(ctx, runID, status, result.Content, "")
-		log.Info().Str("skill", auto.SkillName).Msg("WASM skill automation complete")
+		log.Info().Str("skill", skillName).Msg("WASM skill automation complete")
 		return
 	}
 
-	// Tier 1 (prompt-only) or skill not found — no executable, mark as error
-	// (Tier 1 skills always need a prompt; the caller should have set one)
-	log.Warn().Str("skill", auto.SkillName).Msg("skill has no executable — needs a prompt to run via agent")
-	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q has no executable; add a prompt to run it via the agent", auto.SkillName))
+	log.Warn().Str("skill", skillName).Msg("skill has no executable — needs a prompt to run via agent")
+	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q has no executable; add a prompt to run it via the agent", skillName))
 }

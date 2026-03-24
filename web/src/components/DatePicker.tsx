@@ -21,18 +21,18 @@ import Calendar from "./Calendar";
 import PillSwitch from "./PillSwitch";
 
 interface DatePickerProps {
-  absoluteStartUtc?: string | null;
-  absoluteEndUtc?: string | null;
-  startOffsetRule?: string | null;
-  endOffsetRule?: string | null;
-  recurrenceRule?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  start_offset?: string | null;
+  end_offset?: string | null;
+  rrule?: string | null;
   showRepeat?: boolean;
   onChange?: (data: {
-    absoluteStartUtc?: string | null;
-    absoluteEndUtc?: string | null;
-    startOffsetRule?: string | null;
-    endOffsetRule?: string | null;
-    recurrenceRule?: string | null;
+    start_at?: string | null;
+    end_at?: string | null;
+    start_offset?: string | null;
+    end_offset?: string | null;
+    rrule?: string | null;
   }) => void;
 }
 
@@ -204,11 +204,11 @@ const DateEditor: React.FC<{
 };
 
 const getInitialState = (props: {
-  absoluteStartUtc?: string | null;
-  absoluteEndUtc?: string | null;
-  startOffsetRule?: string | null;
-  endOffsetRule?: string | null;
-  recurrenceRule?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  start_offset?: string | null;
+  end_offset?: string | null;
+  rrule?: string | null;
 }): PickerState => {
   const parseRRule = (rrule: string | null | undefined): { freq: string | null; interval: string; byWeekday: string[] } => {
     if (!rrule) return { freq: null, interval: "1", byWeekday: [] };
@@ -222,20 +222,20 @@ const getInitialState = (props: {
     };
   };
 
-  const startParsed = parseISO(props.startOffsetRule);
-  const endParsed = parseISO(props.endOffsetRule);
-  const { freq, interval, byWeekday } = parseRRule(props.recurrenceRule);
+  const startParsed = parseISO(props.start_offset);
+  const endParsed = parseISO(props.end_offset);
+  const { freq, interval, byWeekday } = parseRRule(props.rrule);
 
   return {
     start: {
-      abs: props.absoluteStartUtc ? new Date(props.absoluteStartUtc) : null,
-      offset: props.startOffsetRule || null,
+      abs: props.start_at ? new Date(props.start_at) : null,
+      offset: props.start_offset || null,
       relValue: startParsed && startParsed !== "today" ? startParsed.value : 30,
       relUnit: startParsed && startParsed !== "today" ? startParsed.unit : "days",
     },
     end: {
-      abs: props.absoluteEndUtc ? new Date(props.absoluteEndUtc) : null,
-      offset: props.endOffsetRule || null,
+      abs: props.end_at ? new Date(props.end_at) : null,
+      offset: props.end_offset || null,
       relValue: endParsed && endParsed !== "today" ? endParsed.value : 30,
       relUnit: endParsed && endParsed !== "today" ? endParsed.unit : "days",
     },
@@ -246,11 +246,11 @@ const getInitialState = (props: {
 };
 
 const DatePicker: React.FC<DatePickerProps> = ({
-  absoluteStartUtc,
-  absoluteEndUtc,
-  startOffsetRule,
-  endOffsetRule,
-  recurrenceRule,
+  start_at,
+  end_at,
+  start_offset,
+  end_offset,
+  rrule: recurrenceRule,
   showRepeat = true,
   onChange,
 }) => {
@@ -265,13 +265,13 @@ const DatePicker: React.FC<DatePickerProps> = ({
   });
 
   const [state, setState] = useState<PickerState>(() =>
-    getInitialState({ absoluteStartUtc, absoluteEndUtc, startOffsetRule, endOffsetRule, recurrenceRule })
+    getInitialState({ start_at, end_at, start_offset, end_offset, rrule: recurrenceRule })
   );
 
   useEffect(() => {
     if (isOpen) return;
-    setState(getInitialState({ absoluteStartUtc, absoluteEndUtc, startOffsetRule, endOffsetRule, recurrenceRule }));
-  }, [absoluteStartUtc, startOffsetRule, absoluteEndUtc, endOffsetRule, recurrenceRule, isOpen]);
+    setState(getInitialState({ start_at, end_at, start_offset, end_offset, rrule: recurrenceRule }));
+  }, [start_at, start_offset, end_at, end_offset, recurrenceRule, isOpen]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -322,11 +322,11 @@ const DatePicker: React.FC<DatePickerProps> = ({
       finalRRule = parts.join(";");
     }
     onChange?.({
-      absoluteStartUtc: state.start.abs && !state.start.offset ? state.start.abs.toISOString() : null,
-      startOffsetRule: state.start.offset || null,
-      absoluteEndUtc: state.end.abs && !state.end.offset ? state.end.abs.toISOString() : null,
-      endOffsetRule: state.end.offset || null,
-      recurrenceRule: finalRRule,
+      start_at: state.start.abs && !state.start.offset ? state.start.abs.toISOString() : null,
+      start_offset: state.start.offset || null,
+      end_at: state.end.abs && !state.end.offset ? state.end.abs.toISOString() : null,
+      end_offset: state.end.offset || null,
+      rrule: finalRRule,
     });
     setIsOpen(false);
   };

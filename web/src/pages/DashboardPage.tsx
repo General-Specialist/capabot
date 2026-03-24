@@ -228,23 +228,24 @@ export function DashboardPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        <h2 className="text-sm font-medium text-normal-black mb-3">Today</h2>
-
         {todayRuns.length === 0 ? (
-          <p className="text-sm text-normal-black">No runs today.</p>
+          <h2 className="text-sm font-medium text-hover-black mb-3">No runs today.</h2>
         ) : (
-          <div className="space-y-2">
-            {todayRuns.map(run => (
-              <RunCard key={run.id} run={run} automationName={nameMap.get(run.automation_id) || `#${run.automation_id}`} />
-            ))}
-          </div>
+          <>
+            <h2 className="text-sm font-medium text-hover-black mb-3">Today</h2>
+            <div className="space-y-2">
+              {todayRuns.map(run => (
+                <RunCard key={run.id} run={run} automationName={nameMap.get(run.automation_id) || `#${run.automation_id}`} />
+              ))}
+            </div>
+          </>
         )}
 
         {!showAll && (
           <button
             type="button"
             onClick={loadAll}
-            className="mt-4 text-sm text-brand-primary hover:opacity-70 transition-opacity"
+            className="mt-4 text-sm text-normal-black hover:opacity-70 transition-opacity"
           >
             Show all history
           </button>

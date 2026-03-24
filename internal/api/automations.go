@@ -12,13 +12,15 @@ import (
 )
 
 type automationInput struct {
-	Name      string  `json:"name"`
-	RRule     string  `json:"rrule"`
-	StartAt   *string `json:"start_at"`
-	EndAt     *string `json:"end_at"`
-	Prompt    string  `json:"prompt"`
-	SkillName string  `json:"skill_name"`
-	Enabled   *bool   `json:"enabled"`
+	Name        string   `json:"name"`
+	RRule       string   `json:"rrule"`
+	StartAt     *string  `json:"start_at"`
+	EndAt       *string  `json:"end_at"`
+	Prompt      string   `json:"prompt"`
+	SkillNames  []string `json:"skill_names"`
+	StartOffset string   `json:"start_offset"`
+	EndOffset   string   `json:"end_offset"`
+	Enabled     *bool    `json:"enabled"`
 }
 
 func parseOptionalTime(s *string) *time.Time {
@@ -93,15 +95,21 @@ func (s *Server) handleAutomationsCreate(w http.ResponseWriter, r *http.Request)
 	if inp.Enabled != nil {
 		enabled = *inp.Enabled
 	}
+	skillNames := inp.SkillNames
+	if skillNames == nil {
+		skillNames = []string{}
+	}
 	id, err := s.store.CreateAutomation(r.Context(), memory.Automation{
-		Name:      inp.Name,
-		RRule:     inp.RRule,
-		StartAt:   startAt,
-		EndAt:     endAt,
-		Prompt:    inp.Prompt,
-		SkillName: inp.SkillName,
-		Enabled:   enabled,
-		NextRunAt: nextRunAt,
+		Name:        inp.Name,
+		RRule:       inp.RRule,
+		StartAt:     startAt,
+		EndAt:       endAt,
+		Prompt:      inp.Prompt,
+		SkillNames:  skillNames,
+		StartOffset: inp.StartOffset,
+		EndOffset:   inp.EndOffset,
+		Enabled:     enabled,
+		NextRunAt:   nextRunAt,
 	})
 	if err != nil {
 		writeError(w, fmt.Sprintf("creating automation: %v", err), http.StatusInternalServerError)
@@ -150,19 +158,20 @@ func (s *Server) handleAutomationsUpdate(w http.ResponseWriter, r *http.Request)
 		existing.Name = inp.Name
 	}
 	existing.Prompt = inp.Prompt
-	// Allow clearing skill_name by sending empty string explicitly
-	existing.SkillName = inp.SkillName
+	existing.StartOffset = inp.StartOffset
+	existing.EndOffset = inp.EndOffset
+	if inp.SkillNames != nil {
+		existing.SkillNames = inp.SkillNames
+	}
 	if inp.Enabled != nil {
 		existing.Enabled = *inp.Enabled
 	}
-	// Update start/end times if provided.
 	if inp.StartAt != nil {
 		existing.StartAt = parseOptionalTime(inp.StartAt)
 	}
 	if inp.EndAt != nil {
 		existing.EndAt = parseOptionalTime(inp.EndAt)
 	}
-	// If rrule changed, recompute next_run_at.
 	if inp.RRule != existing.RRule {
 		if inp.RRule != "" {
 			if _, err := cron.Parse(inp.RRule); err != nil {

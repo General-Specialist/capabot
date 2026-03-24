@@ -1,76 +1,81 @@
 import { useState } from 'react'
-import { Search, Check } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { Skill } from '@/lib/api'
 
 interface SkillPickerProps {
   skills: Skill[]
-  value: string
-  onChange: (name: string) => void
+  value: string[]
+  onChange: (names: string[]) => void
 }
 
 export default function SkillPicker({ skills, value, onChange }: SkillPickerProps) {
   const [query, setQuery] = useState('')
+  const [focused, setFocused] = useState(false)
 
-  const filtered = query
-    ? skills.filter(s =>
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        s.description?.toLowerCase().includes(query.toLowerCase())
-      )
-    : skills
+  const selected = new Set(value)
 
-  const toggle = (name: string) => onChange(value === name ? '' : name)
+  const filtered = skills.filter(s =>
+    !selected.has(s.name) && (
+      !query ||
+      s.name.toLowerCase().includes(query.toLowerCase()) ||
+      s.description?.toLowerCase().includes(query.toLowerCase())
+    )
+  )
+
+  const add = (name: string) => {
+    onChange([...value, name])
+    setQuery('')
+  }
+
+  const remove = (name: string) => onChange(value.filter(n => n !== name))
 
   return (
-    <div className="rounded-2xl border border-border-white overflow-hidden">
-      {/* Search */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border-white bg-sidebar-white">
-        <Search size={12} className="text-normal-black shrink-0" />
+    <div className="relative">
+      <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 rounded-xl border border-border-white bg-sidebar-white min-h-[38px]">
+        {value.map(name => (
+          <span key={name} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-icon-hover-white text-xs text-hover-black font-medium">
+            {name}
+            <button type="button" onClick={() => remove(name)} className="text-normal-black hover:text-hover-black">
+              <X size={10} strokeWidth={2.5} />
+            </button>
+          </span>
+        ))}
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search skills…"
-          className="flex-1 text-sm bg-transparent text-hover-black outline-none placeholder:text-normal-black"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setTimeout(() => setFocused(false), 150)}
+          placeholder={value.length === 0 ? 'Add a skill…' : ''}
+          className="flex-1 text-sm bg-transparent text-hover-black outline-none placeholder:text-normal-black min-w-[80px]"
         />
       </div>
 
-      {/* List */}
-      <div className="max-h-48 overflow-y-auto">
-        {filtered.length === 0 ? (
-          <p className="px-3 py-3 text-xs text-normal-black">No skills found.</p>
-        ) : (
-          filtered.map(s => {
-            const checked = value === s.name
-            return (
-              <button
-                key={s.name}
-                type="button"
-                onClick={() => toggle(s.name)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sidebar-white ${checked ? 'bg-sidebar-white' : ''}`}
-              >
-                {/* Custom checkbox */}
-                <span className={`shrink-0 w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                  checked
-                    ? 'bg-brand-primary border-brand-primary'
-                    : 'border-border-white bg-transparent'
-                }`}>
-                  {checked && <Check size={10} strokeWidth={3} className="text-white" />}
-                </span>
-
-                <span className="flex-1 min-w-0">
+      {focused && (query || filtered.length > 0) && (
+        <div className="absolute z-10 mt-1 w-full rounded-xl border border-border-white bg-white shadow-sm overflow-hidden">
+          <div className="max-h-48 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-3 text-xs text-normal-black">No skills found.</p>
+            ) : (
+              filtered.map(s => (
+                <button
+                  key={s.name}
+                  type="button"
+                  onMouseDown={() => add(s.name)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-white transition-colors"
+                >
                   <span className="text-sm text-hover-black">{s.name}</span>
                   {s.description && (
-                    <span className="ml-2 text-xs text-normal-black truncate">{s.description}</span>
+                    <span className="text-xs text-normal-black truncate">{s.description}</span>
                   )}
-                </span>
-
-                {s.tier >= 2 && (
-                  <span className="text-[10px] text-brand-primary shrink-0">executable</span>
-                )}
-              </button>
-            )
-          })
-        )}
-      </div>
+                  {s.tier >= 2 && (
+                    <span className="ml-auto text-[10px] text-normal-black shrink-0">executable</span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

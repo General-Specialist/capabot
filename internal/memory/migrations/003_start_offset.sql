@@ -1,0 +1,1 @@
+ALTER TABLE automations ADD COLUMN IF NOT EXISTS start_offset TEXT NOT NULL DEFAULT '';

@@ -3,9 +3,11 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -338,18 +340,20 @@ func (s *Store) DeleteMemory(ctx context.Context, tenantID, key string) error {
 
 // Automation represents a scheduled agent run.
 type Automation struct {
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	RRule     string     `json:"rrule"`
-	StartAt   *time.Time `json:"start_at"`
-	EndAt     *time.Time `json:"end_at"`
-	Prompt    string     `json:"prompt"`
-	SkillName string     `json:"skill_name"`
-	Enabled   bool       `json:"enabled"`
-	LastRunAt *time.Time `json:"last_run_at"`
-	NextRunAt *time.Time `json:"next_run_at"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	RRule       string     `json:"rrule"`
+	StartAt     *time.Time `json:"start_at"`
+	EndAt       *time.Time `json:"end_at"`
+	Prompt      string     `json:"prompt"`
+	SkillNames  []string   `json:"skill_names"`
+	StartOffset string     `json:"start_offset"`
+	EndOffset   string     `json:"end_offset"`
+	Enabled     bool       `json:"enabled"`
+	LastRunAt   *time.Time `json:"last_run_at"`
+	NextRunAt   *time.Time `json:"next_run_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // AutomationRun is a single execution record for an automation.
@@ -368,10 +372,10 @@ func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, erro
 	var id int64
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`INSERT INTO automations (name, rrule, start_at, end_at, prompt, skill_name, enabled, next_run_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			`INSERT INTO automations (name, rrule, start_at, end_at, prompt, skill_names, start_offset, end_offset, enabled, next_run_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			 RETURNING id`,
-			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, a.SkillName, a.Enabled, a.NextRunAt,
+			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, skillNamesArg(a.SkillNames), a.StartOffset, a.EndOffset, a.Enabled, a.NextRunAt,
 		).Scan(&id)
 	})
 	return id, err
@@ -380,7 +384,7 @@ func (s *Store) CreateAutomation(ctx context.Context, a Automation) (int64, erro
 // ListAutomations returns all automations ordered by name.
 func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_names, start_offset, end_offset, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations ORDER BY name ASC`,
 	)
 	if err != nil {
@@ -393,7 +397,7 @@ func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 // GetAutomation retrieves a single automation by ID.
 func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_names, start_offset, end_offset, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations WHERE id = $1`, id,
 	)
 	if err != nil {
@@ -414,9 +418,9 @@ func (s *Store) GetAutomation(ctx context.Context, id int64) (Automation, error)
 func (s *Store) UpdateAutomation(ctx context.Context, a Automation) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE automations SET name=$1, rrule=$2, start_at=$3, end_at=$4, prompt=$5, skill_name=$6, enabled=$7, next_run_at=$8, updated_at=NOW()
-			 WHERE id=$9`,
-			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, a.SkillName, a.Enabled, a.NextRunAt, a.ID,
+			`UPDATE automations SET name=$1, rrule=$2, start_at=$3, end_at=$4, prompt=$5, skill_names=$6, start_offset=$7, end_offset=$8, enabled=$9, next_run_at=$10, updated_at=NOW()
+			 WHERE id=$11`,
+			a.Name, a.RRule, a.StartAt, a.EndAt, a.Prompt, skillNamesArg(a.SkillNames), a.StartOffset, a.EndOffset, a.Enabled, a.NextRunAt, a.ID,
 		)
 		return err
 	})
@@ -433,7 +437,7 @@ func (s *Store) DeleteAutomation(ctx context.Context, id int64) error {
 // ListDueAutomations returns enabled automations whose next_run_at is in the past.
 func (s *Store) ListDueAutomations(ctx context.Context) ([]Automation, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, rrule, start_at, end_at, prompt, skill_name, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, rrule, start_at, end_at, prompt, skill_names, start_offset, end_offset, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM automations WHERE enabled=TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
 		   AND (end_at IS NULL OR end_at > NOW())`,
 	)
@@ -532,17 +536,68 @@ func (s *Store) ListAllAutomationRuns(ctx context.Context, since time.Time, limi
 	return scanAutomationRuns(rows)
 }
 
+// pgStringArray is a []string that knows how to read/write Postgres TEXT[] literals.
+type pgStringArray []string
+
+func (a *pgStringArray) Scan(src any) error {
+	if src == nil {
+		*a = []string{}
+		return nil
+	}
+	var s string
+	switch v := src.(type) {
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		return fmt.Errorf("cannot scan %T into []string", src)
+	}
+	s = strings.TrimPrefix(strings.TrimSuffix(s, "}"), "{")
+	if s == "" {
+		*a = []string{}
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		result = append(result, strings.Trim(p, `"`))
+	}
+	*a = result
+	return nil
+}
+
+func (a pgStringArray) Value() (driver.Value, error) {
+	if len(a) == 0 {
+		return "{}", nil
+	}
+	parts := make([]string, len(a))
+	for i, s := range a {
+		parts[i] = `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	}
+	return "{" + strings.Join(parts, ",") + "}", nil
+}
+
 func scanAutomations(rows *sql.Rows) ([]Automation, error) {
 	var list []Automation
 	for rows.Next() {
 		var a Automation
-		if err := rows.Scan(&a.ID, &a.Name, &a.RRule, &a.StartAt, &a.EndAt, &a.Prompt, &a.SkillName, &a.Enabled,
+		var names pgStringArray
+		if err := rows.Scan(&a.ID, &a.Name, &a.RRule, &a.StartAt, &a.EndAt, &a.Prompt, &names, &a.StartOffset, &a.EndOffset, &a.Enabled,
 			&a.LastRunAt, &a.NextRunAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning automation: %w", err)
+		}
+		a.SkillNames = []string(names)
+		if a.SkillNames == nil {
+			a.SkillNames = []string{}
 		}
 		list = append(list, a)
 	}
 	return list, rows.Err()
+}
+
+func skillNamesArg(names []string) any {
+	return pgStringArray(names)
 }
 
 func scanAutomationRuns(rows *sql.Rows) ([]AutomationRun, error) {

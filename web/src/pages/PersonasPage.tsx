@@ -133,7 +133,7 @@ export function PersonasPage() {
                 ) : (
                   <>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono text-sm font-medium text-hover-black">@{p.name}</span>
+                      <span className="font-mono text-sm font-medium text-hover-black">{p.name}</span>
                       <div className="flex gap-1">
                         <button
                           type="button"

@@ -114,7 +114,9 @@ export interface Automation {
   start_at: string | null
   end_at: string | null
   prompt: string
-  skill_name: string
+  skill_names: string[]
+  start_offset: string
+  end_offset: string
   enabled: boolean
   last_run_at: string | null
   next_run_at: string | null
@@ -212,9 +214,9 @@ export const api = {
   skillsInstall: (name: string) => post<InstallResult>('/skills/install', { name }),
   providers: () => get<ProviderInfo[]>('/providers'),
   automations: () => get<Automation[]>('/automations'),
-  automationCreate: (data: { name: string; rrule: string; start_at?: string | null; end_at?: string | null; prompt: string; skill_name?: string; enabled?: boolean }) =>
+  automationCreate: (data: { name: string; rrule: string; start_at?: string | null; end_at?: string | null; prompt: string; skill_names?: string[]; start_offset?: string; end_offset?: string; enabled?: boolean }) =>
     post<Automation>('/automations', data),
-  automationUpdate: (id: number, data: Partial<{ name: string; rrule: string; start_at: string | null; end_at: string | null; prompt: string; skill_name: string; enabled: boolean }>) =>
+  automationUpdate: (id: number, data: Partial<{ name: string; rrule: string; start_at: string | null; end_at: string | null; prompt: string; skill_names: string[]; start_offset: string; end_offset: string; enabled: boolean }>) =>
     put<Automation>(`/automations/${id}`, data),
   automationDelete: (id: number) => del<{ success: boolean }>(`/automations/${id}`),
   automationTrigger: (id: number) => post<{ triggered: boolean }>(`/automations/${id}/trigger`, {}),
