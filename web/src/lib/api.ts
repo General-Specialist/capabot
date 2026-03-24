@@ -166,6 +166,7 @@ export interface Persona {
   prompt: string
   username: string
   avatar_url: string
+  avatar_position: string
   tags: string[]
   created_at: string
   updated_at: string
@@ -251,6 +252,12 @@ export const api = {
   },
 
   personas: () => get<Persona[]>('/personas'),
+  systemPromptGet: () => get<{ system_prompt: string }>('/personas/system-prompt'),
+  systemPromptSet: (prompt: string) => fetch(BASE + '/personas/system-prompt', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system_prompt: prompt }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   avatarUpload: async (file: File): Promise<string> => {
     const form = new FormData()
     form.append('file', file)
@@ -261,7 +268,7 @@ export const api = {
   },
   personaCreate: (data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) =>
     post<{ id: number }>('/personas', data),
-  personaUpdate: (id: number, data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) => {
+  personaUpdate: (id: number, data: { name: string; prompt: string; username?: string; avatar_url?: string; avatar_position?: string; tags?: string[] }) => {
     return fetch(BASE + `/personas/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

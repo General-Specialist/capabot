@@ -16,6 +16,30 @@ import (
 	"github.com/polymath/capabot/internal/memory"
 )
 
+func (s *Server) handleSystemPromptGet(w http.ResponseWriter, r *http.Request) {
+	v, err := s.store.GetSystemPrompt(r.Context())
+	if err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"system_prompt": v})
+}
+
+func (s *Server) handleSystemPromptPut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SystemPrompt string `json:"system_prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetSystemPrompt(r.Context(), body.SystemPrompt); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handlePersonasList(w http.ResponseWriter, r *http.Request) {
 	personas, err := s.store.ListPersonas(r.Context())
 	if err != nil {
@@ -30,11 +54,12 @@ func (s *Server) handlePersonasList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePersonasCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name      string   `json:"name"`
-		Prompt    string   `json:"prompt"`
-		Username  string   `json:"username"`
-		AvatarURL string   `json:"avatar_url"`
-		Tags      []string `json:"tags"`
+		Name           string   `json:"name"`
+		Prompt         string   `json:"prompt"`
+		Username       string   `json:"username"`
+		AvatarURL      string   `json:"avatar_url"`
+		AvatarPosition string   `json:"avatar_position"`
+		Tags           []string `json:"tags"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, "invalid JSON", http.StatusBadRequest)
@@ -49,11 +74,12 @@ func (s *Server) handlePersonasCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.store.CreatePersona(r.Context(), memory.Persona{
-		Name:      body.Name,
-		Prompt:    body.Prompt,
-		Username:  body.Username,
-		AvatarURL: body.AvatarURL,
-		Tags:      body.Tags,
+		Name:           body.Name,
+		Prompt:         body.Prompt,
+		Username:       body.Username,
+		AvatarURL:      body.AvatarURL,
+		AvatarPosition: body.AvatarPosition,
+		Tags:           body.Tags,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "duplicate key") {
@@ -87,23 +113,25 @@ func (s *Server) handlePersonasUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name      string   `json:"name"`
-		Prompt    string   `json:"prompt"`
-		Username  string   `json:"username"`
-		AvatarURL string   `json:"avatar_url"`
-		Tags      []string `json:"tags"`
+		Name           string   `json:"name"`
+		Prompt         string   `json:"prompt"`
+		Username       string   `json:"username"`
+		AvatarURL      string   `json:"avatar_url"`
+		AvatarPosition string   `json:"avatar_position"`
+		Tags           []string `json:"tags"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if err := s.store.UpdatePersona(r.Context(), memory.Persona{
-		ID:        id,
-		Name:      body.Name,
-		Prompt:    body.Prompt,
-		Username:  body.Username,
-		AvatarURL: body.AvatarURL,
-		Tags:      body.Tags,
+		ID:             id,
+		Name:           body.Name,
+		Prompt:         body.Prompt,
+		Username:       body.Username,
+		AvatarURL:      body.AvatarURL,
+		AvatarPosition: body.AvatarPosition,
+		Tags:           body.Tags,
 	}); err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -18,7 +19,6 @@ func (t *DiscordTransport) Send(ctx context.Context, msg OutboundMessage) error 
 	chunks := splitMessage(msg.Text, discordMaxMsgLen)
 	for i, chunk := range chunks {
 		var replyID string
-		// Only attach the reply reference on the first chunk.
 		if i == 0 {
 			replyID = msg.ReplyToID
 		}
@@ -65,12 +65,11 @@ func (t *DiscordTransport) postMessage(ctx context.Context, channelID, content, 
 	return nil
 }
 
-// sendViaWebhook sends a message through a channel webhook, allowing a custom
-// display name and avatar. Webhooks are created lazily and cached per channel.
+// sendViaWebhook sends a message through a per-persona webhook.
+// Each persona gets its own webhook (keyed by channel+displayName) with avatar baked in.
 func (t *DiscordTransport) sendViaWebhook(ctx context.Context, msg OutboundMessage) error {
-	webhookURL, err := t.getOrCreateWebhook(ctx, msg.ChannelID)
+	webhookURL, err := t.getOrCreatePersonaWebhook(ctx, msg.ChannelID, msg.DisplayName, msg.AvatarData)
 	if err != nil {
-		// Fall back to normal bot message if webhook creation fails.
 		t.logger.Warn().Err(err).Msg("discord: webhook fallback to bot message")
 		chunks := splitMessage(msg.Text, discordMaxMsgLen)
 		for _, chunk := range chunks {
@@ -87,9 +86,6 @@ func (t *DiscordTransport) sendViaWebhook(ctx context.Context, msg OutboundMessa
 			"content":  chunk,
 			"username": msg.DisplayName,
 		}
-		if msg.AvatarURL != "" {
-			body["avatar_url"] = msg.AvatarURL
-		}
 		data, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("discord: marshal webhook body: %w", err)
@@ -103,25 +99,37 @@ func (t *DiscordTransport) sendViaWebhook(ctx context.Context, msg OutboundMessa
 		if err != nil {
 			return fmt.Errorf("discord: webhook send: %w", err)
 		}
-		resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("discord: webhook send returned %d", resp.StatusCode)
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("discord: webhook send returned %d: %s", resp.StatusCode, respBody)
 		}
+		resp.Body.Close()
 	}
 	return nil
 }
 
-// getOrCreateWebhook returns a webhook URL for the given channel, creating one if needed.
-func (t *DiscordTransport) getOrCreateWebhook(ctx context.Context, channelID string) (string, error) {
+// webhookKey returns the cache key for a persona webhook.
+func webhookKey(channelID, displayName string) string {
+	return channelID + ":" + displayName
+}
+
+// getOrCreatePersonaWebhook returns a webhook URL for a specific persona in a channel.
+// The webhook's avatar is set via base64 data on creation so Discord stores it.
+func (t *DiscordTransport) getOrCreatePersonaWebhook(ctx context.Context, channelID, displayName, avatarData string) (string, error) {
+	key := webhookKey(channelID, displayName)
+
 	t.webhooksMu.Lock()
 	if t.webhooks == nil {
 		t.webhooks = make(map[string]string)
 	}
-	if url, ok := t.webhooks[channelID]; ok {
+	if url, ok := t.webhooks[key]; ok {
 		t.webhooksMu.Unlock()
 		return url, nil
 	}
 	t.webhooksMu.Unlock()
+
+	webhookName := "capabot-" + displayName
 
 	// Check for existing webhooks we own.
 	listURL := discordAPIBase + "/channels/" + channelID + "/webhooks"
@@ -145,17 +153,23 @@ func (t *DiscordTransport) getOrCreateWebhook(ctx context.Context, channelID str
 		_ = json.NewDecoder(resp.Body).Decode(&hooks)
 	}
 	for _, h := range hooks {
-		if h.Name == "capabot-persona" && h.Token != "" {
+		if h.Name == webhookName && h.Token != "" {
 			url := discordAPIBase + "/webhooks/" + h.ID + "/" + h.Token
 			t.webhooksMu.Lock()
-			t.webhooks[channelID] = url
+			t.webhooks[key] = url
 			t.webhooksMu.Unlock()
 			return url, nil
 		}
 	}
 
-	// Create a new webhook.
-	createBody, _ := json.Marshal(map[string]string{"name": "capabot-persona"})
+	// Create a new webhook with avatar baked in.
+	createPayload := map[string]interface{}{
+		"name": webhookName,
+	}
+	if avatarData != "" {
+		createPayload["avatar"] = avatarData
+	}
+	createBody, _ := json.Marshal(createPayload)
 	createReq, err := http.NewRequestWithContext(ctx, http.MethodPost, listURL, bytes.NewReader(createBody))
 	if err != nil {
 		return "", err
@@ -168,7 +182,8 @@ func (t *DiscordTransport) getOrCreateWebhook(ctx context.Context, channelID str
 	}
 	defer createResp.Body.Close()
 	if createResp.StatusCode < 200 || createResp.StatusCode >= 300 {
-		return "", fmt.Errorf("discord: create webhook returned %d", createResp.StatusCode)
+		body, _ := io.ReadAll(createResp.Body)
+		return "", fmt.Errorf("discord: create webhook returned %d: %s", createResp.StatusCode, body)
 	}
 
 	var created struct {
@@ -180,9 +195,38 @@ func (t *DiscordTransport) getOrCreateWebhook(ctx context.Context, channelID str
 	}
 	url := discordAPIBase + "/webhooks/" + created.ID + "/" + created.Token
 	t.webhooksMu.Lock()
-	t.webhooks[channelID] = url
+	t.webhooks[key] = url
 	t.webhooksMu.Unlock()
 	return url, nil
+}
+
+// UpdateWebhookAvatar updates a cached webhook's avatar. Called when a persona's avatar changes.
+func (t *DiscordTransport) UpdateWebhookAvatar(ctx context.Context, channelID, displayName, avatarData string) error {
+	key := webhookKey(channelID, displayName)
+	t.webhooksMu.Lock()
+	url, ok := t.webhooks[key]
+	t.webhooksMu.Unlock()
+	if !ok {
+		return nil // no webhook to update
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"avatar": avatarData})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bot "+t.token)
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("discord: update webhook avatar returned %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
 }
 
 // splitMessage splits text into chunks of at most maxLen runes,
@@ -200,7 +244,6 @@ func splitMessage(text string, maxLen int) []string {
 			break
 		}
 
-		// Try to find a whitespace boundary to split on.
 		cutAt := maxLen
 		for i := maxLen - 1; i > maxLen/2; i-- {
 			if runes[i] == ' ' || runes[i] == '\n' {

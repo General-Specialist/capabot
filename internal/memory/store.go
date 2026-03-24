@@ -669,20 +669,21 @@ func decodeEmbedding(b []byte) []float32 {
 
 // Persona is a named system prompt with optional display overrides and tags.
 type Persona struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	Prompt        string    `json:"prompt"`
-	Username      string    `json:"username"`
-	AvatarURL     string    `json:"avatar_url"`
-	Tags          []string  `json:"tags"`
-	DiscordRoleID string    `json:"discord_role_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Prompt         string    `json:"prompt"`
+	Username       string    `json:"username"`
+	AvatarURL      string    `json:"avatar_url"`
+	AvatarPosition string    `json:"avatar_position"`
+	Tags           []string  `json:"tags"`
+	DiscordRoleID  string    `json:"discord_role_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas ORDER BY name ASC`)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +692,7 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	for rows.Next() {
 		var p Persona
 		var tags pgStringArray
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Tags = []string(tags)
@@ -707,8 +708,8 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, err
 	var p Persona
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE name = $1`, name,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE name = $1`, name,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
 		p.Tags = []string{}
@@ -721,8 +722,8 @@ func (s *Store) GetPersonaByUsername(ctx context.Context, username string) (Pers
 	var p Persona
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE username = $1`, username,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE username = $1`, username,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
 		p.Tags = []string{}
@@ -733,7 +734,7 @@ func (s *Store) GetPersonaByUsername(ctx context.Context, username string) (Pers
 // GetPersonasByTag returns all personas that have the given tag.
 func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
 	if err != nil {
 		return nil, err
 	}
@@ -742,7 +743,7 @@ func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, er
 	for rows.Next() {
 		var p Persona
 		var tags pgStringArray
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Tags = []string(tags)
@@ -761,8 +762,10 @@ func (s *Store) CreatePersona(ctx context.Context, p Persona) (int64, error) {
 	}
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`INSERT INTO personas (name, prompt, username, avatar_url, tags) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			p.Name, p.Prompt, p.Username, p.AvatarURL, pgStringArray(p.Tags),
+			`INSERT INTO personas (name, prompt, username, avatar_url, avatar_position, tags, system_prompt)
+			 VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT system_prompt FROM personas LIMIT 1), ''))
+			 RETURNING id`,
+			p.Name, p.Prompt, p.Username, p.AvatarURL, p.AvatarPosition, pgStringArray(p.Tags),
 		).Scan(&id)
 	})
 	return id, err
@@ -774,8 +777,8 @@ func (s *Store) UpdatePersona(ctx context.Context, p Persona) error {
 	}
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE personas SET name=$1, prompt=$2, username=$3, avatar_url=$4, tags=$5, updated_at=NOW() WHERE id=$6`,
-			p.Name, p.Prompt, p.Username, p.AvatarURL, pgStringArray(p.Tags), p.ID)
+			`UPDATE personas SET name=$1, prompt=$2, username=$3, avatar_url=$4, avatar_position=$5, tags=$6, updated_at=NOW() WHERE id=$7`,
+			p.Name, p.Prompt, p.Username, p.AvatarURL, p.AvatarPosition, pgStringArray(p.Tags), p.ID)
 		return err
 	})
 }
@@ -793,8 +796,8 @@ func (s *Store) GetPersonaByDiscordRoleID(ctx context.Context, roleID string) (P
 	var p Persona
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE discord_role_id = $1`, roleID,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE discord_role_id = $1`, roleID,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
 		p.Tags = []string{}
@@ -805,6 +808,25 @@ func (s *Store) GetPersonaByDiscordRoleID(ctx context.Context, roleID string) (P
 func (s *Store) DeletePersona(ctx context.Context, id int64) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=$1`, id)
+		return err
+	})
+}
+
+// GetSystemPrompt returns the global system prompt (shared across all personas).
+// Returns empty string if no personas exist yet.
+func (s *Store) GetSystemPrompt(ctx context.Context) (string, error) {
+	var v string
+	err := s.pool.DB().QueryRowContext(ctx, `SELECT COALESCE(system_prompt, '') FROM personas LIMIT 1`).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSystemPrompt updates the global system prompt on all persona rows.
+func (s *Store) SetSystemPrompt(ctx context.Context, prompt string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE personas SET system_prompt = $1`, prompt)
 		return err
 	})
 }

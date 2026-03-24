@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -344,6 +345,43 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 // makeMessageHandler returns a factory that wires inbound messages to the agent runner.
 // Transports don't support streaming, so onEvent is passed as nil.
 // If the message starts with @PersonaName, the persona's prompt is used as the system prompt.
+// avatarToDataURI reads a local avatar file (e.g. /api/avatars/abc.png) and returns
+// a base64 data URI suitable for Discord's webhook avatar field.
+func avatarToDataURI(avatarURL string) string {
+	if avatarURL == "" {
+		return ""
+	}
+	// Already a full URL — Discord can fetch it directly, no data URI needed.
+	if strings.HasPrefix(avatarURL, "http://") || strings.HasPrefix(avatarURL, "https://") {
+		return ""
+	}
+	// Local path like /api/avatars/abc.png — read from disk.
+	filename := strings.TrimPrefix(avatarURL, "/api/avatars/")
+	if filename == avatarURL {
+		return "" // not an avatar path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".capabot", "avatars", filename))
+	if err != nil {
+		return ""
+	}
+	// Detect mime type from extension.
+	ext := strings.ToLower(filepath.Ext(filename))
+	mime := "image/png"
+	switch ext {
+	case ".jpg", ".jpeg":
+		mime = "image/jpeg"
+	case ".gif":
+		mime = "image/gif"
+	case ".webp":
+		mime = "image/webp"
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 func makeMessageHandler(
 	runAgent func(context.Context, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
 	runAgentWithPrompt func(context.Context, string, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
@@ -396,28 +434,40 @@ func makeMessageHandler(
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
 					return
 				}
-				_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response, DisplayName: displayName, AvatarURL: p.AvatarURL})
+				if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response, DisplayName: displayName, AvatarData: avatarToDataURI(p.AvatarURL)}); err != nil {
+					logger.Error().Err(err).Str("persona", p.Name).Msg("discord send failed")
+				}
 			} else {
-				// Multiple personas (tag match) — fan out in parallel, send as each finishes.
-				var wg sync.WaitGroup
+				// Multiple personas (tag match) — run agents in parallel, send results as they arrive.
+				type personaResult struct {
+					persona memory.Persona
+					result  *agent.RunResult
+					err     error
+				}
+				resultCh := make(chan personaResult, len(personas))
 				for _, p := range personas {
-					wg.Add(1)
 					go func(persona memory.Persona) {
-						defer wg.Done()
-						displayName := persona.Username
-						if displayName == "" {
-							displayName = persona.Name
-						}
 						res, err := runAgentWithPrompt(msgCtx, persona.Prompt, msg.ChannelID, messages, nil)
-						if err != nil {
-							logger.Error().Err(err).Str("persona", persona.Name).Msg("persona agent failed")
-							_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err), DisplayName: displayName, AvatarURL: persona.AvatarURL})
-							return
-						}
-						_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: res.Response, DisplayName: displayName, AvatarURL: persona.AvatarURL})
+						resultCh <- personaResult{persona: persona, result: res, err: err}
 					}(p)
 				}
-				wg.Wait()
+				for range personas {
+					r := <-resultCh
+					displayName := r.persona.Username
+					if displayName == "" {
+						displayName = r.persona.Name
+					}
+					if r.err != nil {
+						logger.Error().Err(r.err).Str("persona", r.persona.Name).Msg("persona agent failed")
+						if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", r.err), DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)}); err != nil {
+							logger.Error().Err(err).Str("persona", r.persona.Name).Msg("discord send failed")
+						}
+						continue
+					}
+					if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: r.result.Response, DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)}); err != nil {
+						logger.Error().Err(err).Str("persona", r.persona.Name).Msg("discord send failed")
+					}
+				}
 			}
 		}
 	}

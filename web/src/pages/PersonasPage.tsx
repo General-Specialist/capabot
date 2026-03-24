@@ -1,7 +1,58 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Check, X, Camera, Search } from 'lucide-react'
+import { Plus, Trash2, Check, X, Camera, Search, ScrollText } from 'lucide-react'
 import { api, type Persona } from '@/lib/api'
 import TagPicker from '@/components/TagPicker'
+
+function SystemPromptModal({ onClose }: { onClose: () => void }) {
+  const [value, setValue] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    api.systemPromptGet().then(d => setValue(d.system_prompt)).catch(() => {})
+    return () => clearTimeout(timerRef.current)
+  }, [])
+
+  const handleChange = (v: string) => {
+    setValue(v)
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(async () => {
+      setSaveStatus('saving')
+      try {
+        await api.systemPromptSet(v)
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus(s => s === 'saved' ? 'idle' : s), 1500)
+      } catch {
+        setSaveStatus('idle')
+      }
+    }, 800)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-5 w-[480px] flex flex-col gap-3 shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-hover-black">System Prompt</p>
+          <div className="flex items-center gap-2">
+            {saveStatus === 'saving' && <span className="text-[10px] text-normal-black animate-pulse">Saving…</span>}
+            {saveStatus === 'saved' && <span className="text-[10px] text-green-500">Saved</span>}
+            <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-normal-black">Prepended to every persona's prompt.</p>
+        <textarea
+          className="border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono resize-none"
+          placeholder="e.g. Always respond in formal English."
+          rows={6}
+          value={value}
+          onChange={e => handleChange(e.target.value)}
+        />
+      </div>
+    </div>
+  )
+}
 
 function PersonaForm({
   initial,
@@ -22,13 +73,14 @@ function PersonaForm({
   const [usernameTouched, setUsernameTouched] = useState(!!initial?.username)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [cropOpen, setCropOpen] = useState(false)
   const [error, setError] = useState('')
-  const fileRef = useRef<HTMLInputElement>(null)
 
-  const handleAvatarUpload = async (file: File) => {
+  const handleCropSave = async (cropped: File) => {
+    setCropOpen(false)
     setUploading(true)
     try {
-      const url = await api.avatarUpload(file)
+      const url = await api.avatarUpload(cropped)
       setAvatarUrl(url)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
@@ -50,11 +102,11 @@ function PersonaForm({
 
   return (
     <div className="flex gap-3">
+      {cropOpen && <AvatarCropModal initialSrc={avatarUrl || undefined} onSave={handleCropSave} onCancel={() => setCropOpen(false)} />}
       <div className="shrink-0">
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
         <button
           type="button"
-          onClick={() => fileRef.current?.click()}
+          onClick={() => setCropOpen(true)}
           disabled={uploading}
           className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white flex items-center justify-center overflow-hidden hover:opacity-80 transition-opacity disabled:opacity-50"
         >
@@ -118,6 +170,233 @@ function PersonaForm({
   )
 }
 
+function AvatarCropModal({ initialSrc, onSave, onCancel }: {
+  initialSrc?: string
+  onSave: (cropped: File) => void
+  onCancel: () => void
+}) {
+  const [imgSrc, setImgSrc] = useState(initialSrc ?? '')
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
+  const [scale, setScale] = useState(1)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 })
+  const [baseSize, setBaseSize] = useState({ w: 0, h: 0 })
+  const dragRef = useRef<{ startX: number; startY: number; startPos: { x: number; y: number } } | null>(null)
+  const posRef = useRef(pos)
+  posRef.current = pos
+  const scaleRef = useRef(scale)
+  scaleRef.current = scale
+
+  const BOX = 360
+  const CIRCLE_R = 120
+
+  useEffect(() => {
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl) }
+  }, [blobUrl])
+
+  const handleNewFile = (file: File) => {
+    if (blobUrl) URL.revokeObjectURL(blobUrl)
+    const url = URL.createObjectURL(file)
+    setBlobUrl(url)
+    setImgSrc(url)
+    // Reset zoom/position — will be set properly in handleImageLoad
+    setScale(1)
+    setBaseSize({ w: 0, h: 0 })
+  }
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    const nw = img.naturalWidth
+    const nh = img.naturalHeight
+    setNaturalSize({ w: nw, h: nh })
+    // Fit entire image inside the box
+    const fitScale = Math.min(BOX / nw, BOX / nh)
+    const w = nw * fitScale
+    const h = nh * fitScale
+    setBaseSize({ w, h })
+    // Start with image centered and covering the circle
+    const minS = Math.max((CIRCLE_R * 2) / w, (CIRCLE_R * 2) / h)
+    const initScale = Math.max(1, minS)
+    setScale(initScale)
+    setPos({ x: (BOX - w * initScale) / 2, y: (BOX - h * initScale) / 2 })
+  }
+
+  // Clamp so image always covers the circle
+  const clamp = (x: number, y: number, s: number) => {
+    const sw = baseSize.w * s
+    const sh = baseSize.h * s
+    const cLeft = BOX / 2 - CIRCLE_R
+    const cTop = BOX / 2 - CIRCLE_R
+    const cRight = BOX / 2 + CIRCLE_R
+    const cBottom = BOX / 2 + CIRCLE_R
+    return {
+      x: Math.min(cLeft, Math.max(cRight - sw, x)),
+      y: Math.min(cTop, Math.max(cBottom - sh, y)),
+    }
+  }
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startPos = { ...posRef.current }
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startPos }
+    const handleMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return
+      setPos(clamp(
+        dragRef.current.startPos.x + (ev.clientX - dragRef.current.startX),
+        dragRef.current.startPos.y + (ev.clientY - dragRef.current.startY),
+        scaleRef.current,
+      ))
+    }
+    const handleUp = () => {
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
+      dragRef.current = null
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
+  }
+
+  const minScale = baseSize.w > 0 ? Math.max((CIRCLE_R * 2) / baseSize.w, (CIRCLE_R * 2) / baseSize.h) : 1
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.stopPropagation()
+    const prev = scaleRef.current
+    const next = Math.max(minScale, Math.min(5, prev - e.deltaY * 0.003))
+    const cx = BOX / 2
+    const cy = BOX / 2
+    setScale(next)
+    setPos(clamp(
+      cx - (cx - posRef.current.x) * (next / prev),
+      cy - (cy - posRef.current.y) * (next / prev),
+      next,
+    ))
+  }
+
+  const handleSave = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 512
+    canvas.height = 512
+    const ctx = canvas.getContext('2d')!
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      // The circle center in box-space is (BOX/2, BOX/2), radius CIRCLE_R
+      // Map to image-space
+      const displayW = baseSize.w * scale
+      const displayH = baseSize.h * scale
+      const imgX = pos.x
+      const imgY = pos.y
+      // Circle top-left in box-space
+      const circleX = BOX / 2 - CIRCLE_R
+      const circleY = BOX / 2 - CIRCLE_R
+      const circleDiam = CIRCLE_R * 2
+      // Source rect in image pixels
+      const sx = ((circleX - imgX) / displayW) * img.naturalWidth
+      const sy = ((circleY - imgY) / displayH) * img.naturalHeight
+      const sw = (circleDiam / displayW) * img.naturalWidth
+      const sh = (circleDiam / displayH) * img.naturalHeight
+      ctx.beginPath()
+      ctx.arc(256, 256, 256, 0, Math.PI * 2)
+      ctx.clip()
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 512, 512)
+      canvas.toBlob(blob => {
+        if (blob) onSave(new File([blob], 'avatar.png', { type: 'image/png' }))
+      }, 'image/png')
+    }
+    img.src = imgSrc
+  }
+
+  // Circle overlay mask: dark outside, transparent inside
+  const maskStyle = {
+    background: `radial-gradient(circle ${CIRCLE_R}px at center, transparent ${CIRCLE_R - 1}px, rgba(0,0,0,0.5) ${CIRCLE_R}px)`,
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onCancel}>
+      <div className="bg-white rounded-2xl p-6 flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
+        <p className="text-sm font-medium text-hover-black">Adjust avatar</p>
+        <div
+          className="relative overflow-hidden cursor-grab active:cursor-grabbing rounded-xl"
+          style={{ width: BOX, height: BOX, background: '#f0f0f0' }}
+          onMouseDown={handleMouseDown}
+          onWheel={handleWheel}
+        >
+          {!imgSrc && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <button type="button" onClick={() => uploadRef.current?.click()} className="flex flex-col items-center gap-2 text-normal-black hover:text-hover-black transition-colors">
+                <Camera className="w-8 h-8" />
+                <span className="text-sm">Upload an image</span>
+              </button>
+            </div>
+          )}
+          {imgSrc && (
+            <img
+              src={imgSrc}
+              alt=""
+              draggable={false}
+              onLoad={handleImageLoad}
+              style={{
+                position: 'absolute',
+                left: pos.x,
+                top: pos.y,
+                width: baseSize.w * scale,
+                height: baseSize.h * scale,
+                maxWidth: 'none',
+              }}
+            />
+          )}
+          {/* Dark overlay with circle cutout */}
+          <div className="absolute inset-0 pointer-events-none" style={maskStyle} />
+          {/* Circle border */}
+          <div
+            className="absolute pointer-events-none border-2 border-white/80 rounded-full"
+            style={{
+              width: CIRCLE_R * 2,
+              height: CIRCLE_R * 2,
+              left: BOX / 2 - CIRCLE_R,
+              top: BOX / 2 - CIRCLE_R,
+            }}
+          />
+        </div>
+        <input
+          type="range"
+          min={minScale}
+          max={5}
+          step={0.01}
+          value={scale}
+          onChange={e => {
+            const prev = scaleRef.current
+            const next = Math.max(minScale, parseFloat(e.target.value))
+            const cx = BOX / 2
+            const cy = BOX / 2
+            setScale(next)
+            setPos(clamp(
+              cx - (cx - posRef.current.x) * (next / prev),
+              cy - (cy - posRef.current.y) * (next / prev),
+              next,
+            ))
+          }}
+          className="w-64 accent-[var(--color-brand-primary)]"
+        />
+        <div className="flex gap-2">
+          <input ref={uploadRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleNewFile(f); e.target.value = '' }} />
+          <button type="button" onClick={() => uploadRef.current?.click()} className="px-4 py-1.5 rounded-capsule text-sm text-normal-black hover:bg-sidebar-white border border-border-white transition-colors">
+            Upload new
+          </button>
+          <div className="flex-1" />
+          <button type="button" onClick={onCancel} className="px-4 py-1.5 rounded-capsule text-sm text-normal-black hover:bg-sidebar-white transition-colors">
+            Cancel
+          </button>
+          <button type="button" onClick={handleSave} disabled={!imgSrc} className="px-4 py-1.5 rounded-capsule text-sm bg-[var(--color-brand-primary)] text-white hover:opacity-80 disabled:opacity-50 transition-opacity">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
   persona: Persona
   allTags: string[]
@@ -130,14 +409,15 @@ function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
   const [avatarUrl, setAvatarUrl] = useState(p.avatar_url)
   const [tags, setTags] = useState<string[]>(p.tags ?? [])
   const [uploading, setUploading] = useState(false)
+  const [cropOpen, setCropOpen] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
-  const fileRef = useRef<HTMLInputElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
 
-  const handleAvatarUpload = async (file: File) => {
+  const handleCropSave = async (cropped: File) => {
+    setCropOpen(false)
     setUploading(true)
     try {
-      const url = await api.avatarUpload(file)
+      const url = await api.avatarUpload(cropped)
       setAvatarUrl(url)
       doSave({ name: p.name, prompt, username: username.trim(), avatar_url: url, tags })
     } catch { /* ignore */ } finally { setUploading(false) }
@@ -157,22 +437,26 @@ function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
     }, 800)
   }, [onSave])
 
+  const buildData = useCallback(() => ({
+    name: p.name, prompt, username: username.trim(), avatar_url: avatarUrl, tags,
+  }), [p.name, prompt, username, avatarUrl, tags])
+
   const updateField = useCallback(<K extends 'username' | 'prompt' | 'tags'>(field: K, value: K extends 'tags' ? string[] : string) => {
-    const next = { name: p.name, prompt, username: username.trim(), avatar_url: avatarUrl, tags }
+    const next = buildData()
     if (field === 'username') { setUsername(value as string); next.username = (value as string).trim() }
     else if (field === 'prompt') { setPrompt(value as string); next.prompt = value as string }
     else if (field === 'tags') { setTags(value as string[]); next.tags = value as string[] }
     doSave(next)
-  }, [p.name, prompt, username, avatarUrl, tags, doSave])
+  }, [buildData, doSave])
 
   useEffect(() => () => clearTimeout(timerRef.current), [])
 
   return (
     <div className="border border-border-white rounded-xl p-5">
+      {cropOpen && <AvatarCropModal initialSrc={avatarUrl || undefined} onSave={handleCropSave} onCancel={() => setCropOpen(false)} />}
       <div className="flex items-start gap-4 mb-2">
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
-        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="shrink-0 hover:opacity-80 transition-opacity disabled:opacity-50">
-          <div className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white shrink-0 overflow-hidden flex items-center justify-center">
+        <button type="button" onClick={() => setCropOpen(true)} disabled={uploading} className="shrink-0 hover:opacity-80 transition-opacity disabled:opacity-50">
+          <div className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white overflow-hidden flex items-center justify-center">
             {avatarUrl
               ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
               : <span className="text-sm font-medium text-normal-black">{p.name[0]?.toUpperCase()}</span>
@@ -221,6 +505,7 @@ export function PersonasPage() {
   const [filterTag, setFilterTag] = useState<string | null>(null)
   const [tagQuery, setTagQuery] = useState('')
   const [tagFocused, setTagFocused] = useState(false)
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false)
 
   const allTags = useMemo(() => [...new Set(personas.flatMap(p => p.tags || []))].sort(), [personas])
   const filtered = filterTag ? personas.filter(p => p.tags?.includes(filterTag)) : personas
@@ -253,6 +538,7 @@ export function PersonasPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-4xl mx-auto">
+        {showSystemPrompt && <SystemPromptModal onClose={() => setShowSystemPrompt(false)} />}
         <div className="flex items-center justify-between mb-6">
           {!creating && (
             <button
@@ -263,6 +549,7 @@ export function PersonasPage() {
               <Plus className="w-3.5 h-3.5" /> New
             </button>
           )}
+          <div className="flex items-center gap-2">
           {allTags.length > 0 && (
             <div className="relative">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule border border-border-white bg-sidebar-white min-w-[180px]">
@@ -306,6 +593,14 @@ export function PersonasPage() {
               )}
             </div>
           )}
+          <button
+            type="button"
+            onClick={() => setShowSystemPrompt(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule border border-border-white bg-sidebar-white text-sm text-normal-black hover:text-hover-black hover:bg-icon-hover-white transition-colors"
+          >
+            <ScrollText className="w-3.5 h-3.5" /> System Prompt
+          </button>
+          </div>
         </div>
 
         {creating && (

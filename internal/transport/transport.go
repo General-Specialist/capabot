@@ -22,7 +22,8 @@ type OutboundMessage struct {
 	Text        string
 	Markdown    bool
 	DisplayName string // optional: override sender name (Discord webhooks)
-	AvatarURL   string // optional: override sender avatar (Discord webhooks)
+	AvatarURL   string // optional: public URL for avatar (Discord webhooks)
+	AvatarData  string // optional: base64 data URI (e.g. "data:image/png;base64,...") — used when creating webhook
 }
 
 // Transport is the interface all platform adapters must implement.

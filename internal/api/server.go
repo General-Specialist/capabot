@@ -140,6 +140,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("PUT /api/config/keys", s.handleConfigKeysPut)
 	s.mux.HandleFunc("GET /api/personas", s.handlePersonasList)
 	s.mux.HandleFunc("POST /api/personas", s.handlePersonasCreate)
+	s.mux.HandleFunc("GET /api/personas/system-prompt", s.handleSystemPromptGet)
+	s.mux.HandleFunc("PUT /api/personas/system-prompt", s.handleSystemPromptPut)
 	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
 	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
 	s.mux.HandleFunc("POST /api/avatars", s.handleAvatarUpload)
@@ -480,12 +482,15 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
 	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
 
+	// Load global system prompt (prepended to every persona prompt).
+	globalSysPrompt, _ := s.store.GetSystemPrompt(r.Context())
+
 	// Check for @persona or @tag mention in the last user message.
 	strippedText, personas := s.resolvePersonas(r.Context(), lastUserText)
 
 	if len(personas) == 0 {
-		// No persona — run default agent.
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, req.Messages, "", "")
+		// No persona — run default agent with global system prompt if set.
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, req.Messages, globalSysPrompt, "")
 		return
 	}
 
@@ -500,11 +505,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		if displayName == "" {
 			displayName = p.Name
 		}
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, p.Prompt, displayName)
+		combinedPrompt := combinePrompts(globalSysPrompt, p.Prompt)
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, combinedPrompt, displayName)
 		return
 	}
 
-	// Multiple personas — fan out in parallel, all see full chat history.
+	// Multiple personas — fan out in parallel, prepend global system prompt to each.
+	if globalSysPrompt != "" {
+		enriched := make([]memory.Persona, len(personas))
+		for i, p := range personas {
+			enriched[i] = p
+			enriched[i].Prompt = combinePrompts(globalSysPrompt, p.Prompt)
+		}
+		personas = enriched
+	}
 	s.streamMultiAgent(r.Context(), w, flusher, sessionID, msgs, personas)
 }
 
@@ -591,7 +605,7 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 			onEvent := func(ev agent.AgentEvent) {
 				select {
 				case eventCh <- personaEvent{persona: persona, event: ev}:
-				default:
+				case <-ctx.Done():
 				}
 			}
 			var result *agent.RunResult
@@ -611,32 +625,27 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 		close(eventCh)
 	}()
 
-	// Drain events and forward as SSE with persona labels.
-	go func() {
-		for ev := range eventCh {
-			displayName := ev.persona.Username
-			if displayName == "" {
-				displayName = ev.persona.Name
-			}
-			sendSSE(w, flusher, map[string]any{
-				"event":      string(ev.event.Kind),
-				"tool_name":  ev.event.ToolName,
-				"tool_id":    ev.event.ToolID,
-				"tool_input": ev.event.ToolInput,
-				"content":    ev.event.Content,
-				"thinking":   ev.event.Thinking,
-				"is_error":   ev.event.IsError,
-				"iteration":  ev.event.Iteration,
-				"persona":    displayName,
-			})
+	// Drain events in the main goroutine (single writer to w — no race).
+	for ev := range eventCh {
+		displayName := ev.persona.Username
+		if displayName == "" {
+			displayName = ev.persona.Name
 		}
-	}()
+		sendSSE(w, flusher, map[string]any{
+			"event":      string(ev.event.Kind),
+			"tool_name":  ev.event.ToolName,
+			"tool_id":    ev.event.ToolID,
+			"tool_input": ev.event.ToolInput,
+			"content":    ev.event.Content,
+			"thinking":   ev.event.Thinking,
+			"is_error":   ev.event.IsError,
+			"iteration":  ev.event.Iteration,
+			"persona":    displayName,
+		})
+	}
 
-	// Collect all results.
-	wg.Wait()
+	// All agents finished and all events drained. Send errors and final done.
 	close(doneCh)
-
-	// Send completion for each persona, then final done.
 	for d := range doneCh {
 		displayName := d.persona.Username
 		if displayName == "" {
@@ -782,6 +791,19 @@ func (s *Server) handleSkillsUninstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // lastUserContent returns the content of the last user message in a slice.
+// combinePrompts prepends global to persona, separated by a blank line.
+func combinePrompts(global, persona string) string {
+	global = strings.TrimSpace(global)
+	persona = strings.TrimSpace(persona)
+	if global == "" {
+		return persona
+	}
+	if persona == "" {
+		return global
+	}
+	return global + "\n\n" + persona
+}
+
 func lastUserContent(messages []llm.ChatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
