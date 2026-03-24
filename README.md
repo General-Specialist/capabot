@@ -20,9 +20,27 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 
 ## Quick start
 
-```bash
-go install github.com/air-verse/air@latest   # Go hot-reload
+**Prerequisites:**
 
+1. **Go** — [go.dev/dl](https://go.dev/dl/). After installing, add Go's bin to your PATH:
+   ```bash
+   echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zshrc && source ~/.zshrc
+   ```
+   (Use `~/.bashrc` instead if you're on bash.)
+
+2. **Bun** — [bun.sh](https://bun.sh):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   ```
+
+3. **air** (Go hot-reload):
+   ```bash
+   go install github.com/air-verse/air@latest
+   ```
+
+Then:
+
+```bash
 cp config.example.yaml ~/.capabot/config.yaml
 # add your API key in config.yaml
 ```
