@@ -13,7 +13,7 @@ func Default() Config {
 		},
 		LogLevel: "info",
 		Database: DatabaseConfig{
-			URL: "postgres://localhost:5432/capabot?sslmode=disable",
+			URL: "postgres://capabot:capabot@localhost:5432/capabot?sslmode=disable",
 		},
 		Providers: ProvidersConfig{
 			Anthropic: AnthropicConfig{

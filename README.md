@@ -27,46 +27,32 @@ cd capabot
 
 capabot auto-updates in the background — on every run it checks for new commits and pulls them automatically. `air` then rebuilds. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
 
-**Prerequisites:**
-
-1. **Go** — [go.dev/dl](https://go.dev/dl/). After installing, add Go's bin to your PATH:
-   ```bash
-   echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zshrc && source ~/.zshrc
-   ```
-   (Use `~/.bashrc` instead if you're on bash.)
-
-2. **Bun** — [bun.sh](https://bun.sh):
-   ```bash
-   curl -fsSL https://bun.sh/install | bash
-   ```
-
-3. **air** (Go hot-reload):
-   ```bash
-   go install github.com/air-verse/air@latest
-   ```
-
-Then:
+**Prerequisites:** [Docker](https://www.docker.com/get-started/)
 
 ```bash
 cp config.example.yaml ~/.capabot/config.yaml
 # add your API key in config.yaml
+docker compose up --build
 ```
 
-Then two terminals:
+That's it. Postgres, backend, and frontend all start together.
+
+For development with hot-reload (auto-rebuilds on file changes):
 
 ```bash
-# terminal 1 — backend (http://localhost:9090)
-cd capabot && air
-
-# terminal 2 — frontend (http://localhost:5173)
-cd capabot/web && bun install && bun run dev
+docker compose watch
 ```
+
+Backend: http://localhost:9090 | Frontend: http://localhost:5173
 
 ## Configuration
 
 ```yaml
 server:
   addr: :9090
+
+database:
+  url: postgres://capabot:capabot@localhost:5432/capabot?sslmode=disable
 
 providers:
   anthropic:
@@ -89,7 +75,7 @@ skills:
     - ~/.capabot/skills
 ```
 
-All values can be overridden with environment variables: `CAPABOT_ANTHROPIC_API_KEY`, etc.
+All values can be overridden with environment variables: `CAPABOT_DATABASE_URL`, `CAPABOT_ANTHROPIC_API_KEY`, etc.
 
 ## Skills
 

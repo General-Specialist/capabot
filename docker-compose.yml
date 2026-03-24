@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: capabot
+      POSTGRES_USER: capabot
+      POSTGRES_PASSWORD: capabot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U capabot"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: .
+    ports:
+      - "9090:9090"
+    environment:
+      CAPABOT_DATABASE_URL: postgres://capabot:capabot@postgres:5432/capabot?sslmode=disable
+      CAPABOT_SERVER_ADDR: ":9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - web/
+            - tmp/
+            - "*.md"
+
+  frontend:
+    build: ./web
+    ports:
+      - "5173:5173"
+    develop:
+      watch:
+        - action: sync
+          path: ./web/src
+          target: /app/src
+        - action: rebuild
+          path: ./web/package.json
+
+volumes:
+  pgdata:

@@ -9,7 +9,7 @@ log_level: info        # debug | info | warn | error
 
 # Database (Postgres)
 database:
-  url: postgres://localhost:5432/capabot?sslmode=disable  # or set CAPABOT_DATABASE_URL
+  url: postgres://capabot:capabot@localhost:5432/capabot?sslmode=disable  # or set CAPABOT_DATABASE_URL
 
 # LLM Providers — configure at least one
 providers:
