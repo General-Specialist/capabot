@@ -52,6 +52,9 @@ type DiscordTransport struct {
 	logger     zerolog.Logger
 	// gatewayURLOverride allows tests to replace the gateway URL lookup.
 	gatewayURLOverride string
+	// webhooks caches channel ID → webhook URL for persona messages.
+	webhooks   map[string]string
+	webhooksMu sync.Mutex
 }
 
 // Internal Discord wire types.

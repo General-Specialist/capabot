@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"sync"
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
@@ -325,65 +326,106 @@ func makeMessageHandler(
 				})
 			}
 
-			// Detect @PersonaName mention at the start of the message.
-			text, personaPrompt := resolvePersona(msgCtx, store, msg.Text, logger)
+			// Detect @PersonaName or @tag mention at the start of the message.
+			text, personas := resolvePersonas(msgCtx, store, msg.Text, logger)
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
 
-			var result *agent.RunResult
-			var err error
-			if personaPrompt != "" {
-				result, err = runAgentWithPrompt(msgCtx, personaPrompt, msg.ChannelID, messages, nil)
+			if len(personas) == 0 {
+				// No persona — run default agent.
+				result, err := runAgent(msgCtx, msg.ChannelID, messages, nil)
+				if err != nil {
+					logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
+					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
+					return
+				}
+				_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response})
+			} else if len(personas) == 1 {
+				// Single persona.
+				p := personas[0]
+				displayName := p.Username
+				if displayName == "" {
+					displayName = p.Name
+				}
+				result, err := runAgentWithPrompt(msgCtx, p.Prompt, msg.ChannelID, messages, nil)
+				if err != nil {
+					logger.Error().Err(err).Str("session", msg.ChannelID).Str("persona", p.Name).Msg("agent run failed")
+					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
+					return
+				}
+				_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response, DisplayName: displayName, AvatarURL: p.AvatarURL})
 			} else {
-				result, err = runAgent(msgCtx, msg.ChannelID, messages, nil)
+				// Multiple personas (tag match) — fan out in parallel.
+				type personaResult struct {
+					persona memory.Persona
+					text    string
+				}
+				results := make([]personaResult, len(personas))
+				var wg sync.WaitGroup
+				for i, p := range personas {
+					wg.Add(1)
+					go func(idx int, persona memory.Persona) {
+						defer wg.Done()
+						sessionID := fmt.Sprintf("%s/%s", msg.ChannelID, persona.Name)
+						res, err := runAgentWithPrompt(msgCtx, persona.Prompt, sessionID, messages, nil)
+						if err != nil {
+							logger.Error().Err(err).Str("persona", persona.Name).Msg("persona agent failed")
+							results[idx] = personaResult{persona: persona, text: fmt.Sprintf("error: %v", err)}
+							return
+						}
+						results[idx] = personaResult{persona: persona, text: res.Response}
+					}(i, p)
+				}
+				wg.Wait()
+				for _, r := range results {
+					displayName := r.persona.Username
+					if displayName == "" {
+						displayName = r.persona.Name
+					}
+					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: r.text, DisplayName: displayName, AvatarURL: r.persona.AvatarURL})
+				}
 			}
-			if err != nil {
-				logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
-				_ = t.Send(msgCtx, transport.OutboundMessage{
-					ChannelID: msg.ChannelID,
-					Text:      fmt.Sprintf("error: %v", err),
-				})
-				return
-			}
-			_ = t.Send(msgCtx, transport.OutboundMessage{
-				ChannelID: msg.ChannelID,
-				Text:      result.Response,
-			})
 		}
 	}
 }
 
-// resolvePersona checks if text starts with @Name, looks up the persona, and returns
-// the stripped text and the persona's system prompt. Returns original text and "" if no match.
-func resolvePersona(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, string) {
+// resolvePersonas checks if text starts with @Name or @tag.
+// Returns the stripped text and matching personas (0 = no match, 1 = direct, N = tag fan-out).
+func resolvePersonas(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, []memory.Persona) {
 	if store == nil || len(text) < 2 || text[0] != '@' {
-		return text, ""
+		return text, nil
 	}
-	// Extract the name: everything from @ up to the first space (or end of string).
 	rest := text[1:]
 	name := rest
 	remainder := ""
-	if idx := len(rest); idx > 0 {
-		for i, c := range rest {
-			if c == ' ' || c == '\n' {
-				name = rest[:i]
-				remainder = rest[i+1:]
-				break
-			}
+	for i, c := range rest {
+		if c == ' ' || c == '\n' {
+			name = rest[:i]
+			remainder = rest[i+1:]
+			break
 		}
 	}
 	if name == "" {
-		return text, ""
-	}
-	persona, err := store.GetPersonaByName(ctx, name)
-	if err != nil {
-		// Not found — treat as normal message.
-		logger.Debug().Str("mention", name).Msg("persona not found, treating as plain text")
-		return text, ""
+		return text, nil
 	}
 	if remainder == "" {
-		remainder = text // edge case: "@Name" with nothing after — keep original
+		remainder = text
 	}
-	return remainder, persona.Prompt
+
+	// Try exact persona name first.
+	persona, err := store.GetPersonaByName(ctx, name)
+	if err == nil {
+		return remainder, []memory.Persona{persona}
+	}
+
+	// Try as a tag.
+	tagged, err := store.GetPersonasByTag(ctx, name)
+	if err == nil && len(tagged) > 0 {
+		logger.Info().Str("tag", name).Int("count", len(tagged)).Msg("tag matched personas")
+		return remainder, tagged
+	}
+
+	logger.Debug().Str("mention", name).Msg("no persona or tag match, treating as plain text")
+	return text, nil
 }
 
 // initStore opens the Postgres pool, runs migrations, and returns Store + Pool.

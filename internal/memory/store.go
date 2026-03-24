@@ -667,18 +667,21 @@ func decodeEmbedding(b []byte) []float32 {
 	return v
 }
 
-// Persona is a named system prompt.
+// Persona is a named system prompt with optional display overrides and tags.
 type Persona struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	Prompt    string    `json:"prompt"`
+	Username  string    `json:"username"`
+	AvatarURL string    `json:"avatar_url"`
+	Tags      []string  `json:"tags"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, created_at, updated_at FROM personas ORDER BY name ASC`)
+		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -686,8 +689,13 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	var out []Persona
 	for rows.Next() {
 		var p Persona
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var tags pgStringArray
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
+		}
+		p.Tags = []string(tags)
+		if p.Tags == nil {
+			p.Tags = []string{}
 		}
 		out = append(out, p)
 	}
@@ -696,28 +704,63 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 
 func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, error) {
 	var p Persona
+	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, created_at, updated_at FROM personas WHERE name = $1`, name,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas WHERE name = $1`, name,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt)
+	p.Tags = []string(tags)
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	return p, err
 }
 
-func (s *Store) CreatePersona(ctx context.Context, name, prompt string) (int64, error) {
+// GetPersonasByTag returns all personas that have the given tag.
+func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, error) {
+	rows, err := s.pool.DB().QueryContext(ctx,
+		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Persona
+	for rows.Next() {
+		var p Persona
+		var tags pgStringArray
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.Tags = []string(tags)
+		if p.Tags == nil {
+			p.Tags = []string{}
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreatePersona(ctx context.Context, p Persona) (int64, error) {
 	var id int64
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`INSERT INTO personas (name, prompt) VALUES ($1, $2) RETURNING id`,
-			name, prompt,
+			`INSERT INTO personas (name, prompt, username, avatar_url, tags) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			p.Name, p.Prompt, p.Username, p.AvatarURL, pgStringArray(p.Tags),
 		).Scan(&id)
 	})
 	return id, err
 }
 
-func (s *Store) UpdatePersona(ctx context.Context, id int64, name, prompt string) error {
+func (s *Store) UpdatePersona(ctx context.Context, p Persona) error {
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE personas SET name=$1, prompt=$2, updated_at=NOW() WHERE id=$3`,
-			name, prompt, id)
+			`UPDATE personas SET name=$1, prompt=$2, username=$3, avatar_url=$4, tags=$5, updated_at=NOW() WHERE id=$6`,
+			p.Name, p.Prompt, p.Username, p.AvatarURL, pgStringArray(p.Tags), p.ID)
 		return err
 	})
 }

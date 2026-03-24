@@ -162,6 +162,9 @@ export interface Persona {
   id: number
   name: string
   prompt: string
+  username: string
+  avatar_url: string
+  tags: string[]
   created_at: string
   updated_at: string
 }
@@ -246,12 +249,21 @@ export const api = {
   },
 
   personas: () => get<Persona[]>('/personas'),
-  personaCreate: (name: string, prompt: string) => post<{ id: number }>('/personas', { name, prompt }),
-  personaUpdate: (id: number, name: string, prompt: string) => {
+  avatarUpload: async (file: File): Promise<string> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(BASE + '/avatars', { method: 'POST', body: form })
+    if (!res.ok) throw new Error(`Upload failed ${res.status}: ${await res.text()}`)
+    const data = await res.json() as { url: string }
+    return data.url
+  },
+  personaCreate: (data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) =>
+    post<{ id: number }>('/personas', data),
+  personaUpdate: (id: number, data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) => {
     return fetch(BASE + `/personas/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, prompt }),
+      body: JSON.stringify(data),
     }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
   personaDelete: (id: number) => {

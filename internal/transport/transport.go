@@ -17,10 +17,12 @@ type InboundMessage struct {
 
 // OutboundMessage is a normalized outbound message to any platform.
 type OutboundMessage struct {
-	ChannelID string
-	ReplyToID string
-	Text      string
-	Markdown  bool
+	ChannelID   string
+	ReplyToID   string
+	Text        string
+	Markdown    bool
+	DisplayName string // optional: override sender name (Discord webhooks)
+	AvatarURL   string // optional: override sender avatar (Discord webhooks)
 }
 
 // Transport is the interface all platform adapters must implement.

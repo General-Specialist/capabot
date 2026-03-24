@@ -1,26 +1,46 @@
-import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, Check, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Pencil, Trash2, Check, X, Camera, Search } from 'lucide-react'
 import { api, type Persona } from '@/lib/api'
+import TagPicker from '@/components/TagPicker'
 
 function PersonaForm({
   initial,
+  allTags,
   onSave,
   onCancel,
 }: {
-  initial?: { name: string; prompt: string }
-  onSave: (name: string, prompt: string) => Promise<void>
+  initial?: Persona
+  allTags: string[]
+  onSave: (data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => Promise<void>
   onCancel: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
+  const [username, setUsername] = useState(initial?.username ?? '')
+  const [avatarUrl, setAvatarUrl] = useState(initial?.avatar_url ?? '')
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? [])
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleAvatarUpload = async (file: File) => {
+    setUploading(true)
+    try {
+      const url = await api.avatarUpload(file)
+      setAvatarUrl(url)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const handleSave = async () => {
     if (!name.trim()) { setError('Name is required'); return }
     setSaving(true)
     try {
-      await onSave(name.trim(), prompt)
+      await onSave({ name: name.trim(), prompt, username: username.trim(), avatar_url: avatarUrl.trim(), tags })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save')
       setSaving(false)
@@ -28,17 +48,41 @@ function PersonaForm({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <input
-        className="border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono"
-        placeholder="Name (e.g. ProductManager)"
-        value={name}
-        onChange={e => setName(e.target.value)}
-        disabled={!!initial}
-      />
+    <div className="flex gap-3">
+      <div className="shrink-0">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white flex items-center justify-center overflow-hidden hover:opacity-80 transition-opacity disabled:opacity-50"
+        >
+          {avatarUrl
+            ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+            : <Camera className="w-5 h-5 text-normal-black" />
+          }
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col gap-2">
+      <div className="flex gap-2">
+        <input
+          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono"
+          placeholder="Name (e.g. ProductManager)"
+          value={name}
+          onChange={e => setName(e.target.value.replace(/\s/g, ''))}
+          disabled={!!initial}
+        />
+        <input
+          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none"
+          placeholder="Username (optional)"
+          value={username}
+          onChange={e => setUsername(e.target.value)}
+        />
+      </div>
+      <TagPicker allTags={allTags} value={tags} onChange={setTags} />
       <textarea
         className="border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono resize-none"
-        placeholder="System prompt…"
+        placeholder="Personality prompt…"
         rows={5}
         value={prompt}
         onChange={e => setPrompt(e.target.value)}
@@ -61,6 +105,124 @@ function PersonaForm({
           <Check className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
+      </div>
+    </div>
+  )
+}
+
+function PersonaCard({ persona: p, allTags, isEditing, deleting, onEdit, onCancelEdit, onSave, onDelete }: {
+  persona: Persona
+  allTags: string[]
+  isEditing: boolean
+  deleting: boolean
+  onEdit: () => void
+  onCancelEdit: () => void
+  onSave: (data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => Promise<void>
+  onDelete: () => void
+}) {
+  const [username, setUsername] = useState(p.username)
+  const [prompt, setPrompt] = useState(p.prompt)
+  const [avatarUrl, setAvatarUrl] = useState(p.avatar_url)
+  const [tags, setTags] = useState<string[]>(p.tags ?? [])
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleAvatarUpload = async (file: File) => {
+    setUploading(true)
+    try { setAvatarUrl(await api.avatarUpload(file)) } catch { /* ignore */ } finally { setUploading(false) }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await onSave({ name: p.name, prompt, username: username.trim(), avatar_url: avatarUrl, tags })
+    } catch { setSaving(false) }
+  }
+
+  const avatar = (
+    <div className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white shrink-0 overflow-hidden flex items-center justify-center">
+      {avatarUrl
+        ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+        : <span className="text-sm font-medium text-normal-black">{p.name[0]?.toUpperCase()}</span>
+      }
+    </div>
+  )
+
+  return (
+    <div className="border border-border-white rounded-xl p-5">
+      <div className="flex items-start gap-4 mb-2">
+        {isEditing ? (
+          <>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="shrink-0 hover:opacity-80 transition-opacity disabled:opacity-50">
+              {avatar}
+            </button>
+          </>
+        ) : avatar}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="font-mono text-sm font-medium text-hover-black truncate">{p.name}</span>
+              {isEditing ? (
+                <input
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  placeholder="Username"
+                  className="text-xs text-normal-black bg-transparent outline-none border-b border-border-white flex-1 min-w-0"
+                />
+              ) : p.username ? (
+                <span className="text-xs text-normal-black truncate">{p.username}</span>
+              ) : null}
+            </div>
+            <div className="flex gap-0.5 shrink-0">
+              {isEditing ? (
+                <>
+                  <button type="button" onClick={onCancelEdit} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors">
+                    <X className="w-3 h-3" />
+                  </button>
+                  <button type="button" onClick={handleSave} disabled={saving} className="p-1 rounded-lg hover:bg-sidebar-white text-brand-primary disabled:opacity-50 transition-colors">
+                    <Check className="w-3 h-3" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={onEdit} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors">
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button type="button" onClick={onDelete} disabled={deleting} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          {isEditing ? (
+            <div className="mt-2">
+              <TagPicker allTags={allTags} value={tags} onChange={setTags} />
+            </div>
+          ) : p.tags?.length > 0 ? (
+            <div className="flex gap-1.5 mt-2 flex-wrap">
+              {p.tags.map(tag => (
+                <span key={tag} className="text-xs bg-icon-hover-white text-brand-primary px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {isEditing ? (
+        <textarea
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          placeholder="Personality prompt…"
+          rows={3}
+          className="w-full text-xs text-normal-black font-mono bg-transparent outline-none resize-none border border-border-white rounded-lg px-2 py-1.5"
+        />
+      ) : (
+        <p className="text-xs text-normal-black whitespace-pre-wrap line-clamp-2 font-mono">
+          {p.prompt || <span className="italic">No prompt set</span>}
+        </p>
+      )}
     </div>
   )
 }
@@ -70,19 +232,26 @@ export function PersonasPage() {
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
+  const [filterTag, setFilterTag] = useState<string | null>(null)
+  const [tagQuery, setTagQuery] = useState('')
+  const [tagFocused, setTagFocused] = useState(false)
+
+  const allTags = useMemo(() => [...new Set(personas.flatMap(p => p.tags || []))].sort(), [personas])
+  const filtered = filterTag ? personas.filter(p => p.tags?.includes(filterTag)) : personas
+  const tagOptions = allTags.filter(t => t !== filterTag && (!tagQuery || t.toLowerCase().includes(tagQuery.toLowerCase())))
 
   const load = () => api.personas().then(setPersonas).catch(() => {})
 
   useEffect(() => { load() }, [])
 
-  const handleCreate = async (name: string, prompt: string) => {
-    await api.personaCreate(name, prompt)
+  const handleCreate = async (data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => {
+    await api.personaCreate(data)
     setCreating(false)
     load()
   }
 
-  const handleUpdate = async (id: number, name: string, prompt: string) => {
-    await api.personaUpdate(id, name, prompt)
+  const handleUpdate = async (id: number, data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => {
+    await api.personaUpdate(id, data)
     setEditing(null)
     load()
   }
@@ -99,7 +268,7 @@ export function PersonasPage() {
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           {!creating && (
             <button
@@ -110,54 +279,73 @@ export function PersonasPage() {
               <Plus className="w-3.5 h-3.5" /> New
             </button>
           )}
+          {allTags.length > 0 && (
+            <div className="relative">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule border border-border-white bg-sidebar-white min-w-[180px]">
+                <Search className="w-3.5 h-3.5 text-normal-black shrink-0" />
+                {filterTag && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-icon-hover-white text-xs text-hover-black font-medium">
+                    {filterTag}
+                    <button type="button" onClick={() => { setFilterTag(null); setTagQuery('') }} className="text-normal-black hover:text-hover-black">
+                      <X size={10} strokeWidth={2.5} />
+                    </button>
+                  </span>
+                )}
+                <input
+                  value={tagQuery}
+                  onChange={e => setTagQuery(e.target.value)}
+                  onFocus={() => setTagFocused(true)}
+                  onBlur={() => setTimeout(() => setTagFocused(false), 150)}
+                  placeholder={filterTag ? '' : 'Filter by tag…'}
+                  className="flex-1 text-sm bg-transparent text-hover-black outline-none placeholder:text-normal-black min-w-[60px]"
+                />
+              </div>
+              {tagFocused && (tagQuery || tagOptions.length > 0) && (
+                <div className="absolute z-10 mt-1 w-full rounded-xl border border-border-white bg-white shadow-sm overflow-hidden">
+                  <div className="max-h-48 overflow-y-auto">
+                    {tagOptions.length === 0 ? (
+                      <p className="px-3 py-3 text-xs text-normal-black">No tags found.</p>
+                    ) : (
+                      tagOptions.map(tag => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onMouseDown={() => { setFilterTag(tag); setTagQuery('') }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-white transition-colors"
+                        >
+                          <span className="text-sm text-hover-black">{tag}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {creating && (
           <div className="border border-border-white rounded-xl p-4 mb-4">
-            <PersonaForm onSave={handleCreate} onCancel={() => setCreating(false)} />
+            <PersonaForm allTags={allTags} onSave={handleCreate} onCancel={() => setCreating(false)} />
           </div>
         )}
 
-        {personas.length === 0 && !creating ? (
-          <p className="text-sm text-normal-black">No personas yet. Create one and tag them with @PersonaName to get started.</p>
+        {filtered.length === 0 && !creating ? (
+          <p className="text-sm text-normal-black">{filterTag ? `No personas with tag "${filterTag}".` : 'No personas yet. Create one and tag them with @PersonaName to get started.'}</p>
         ) : (
-          <div className="flex flex-col gap-3">
-            {personas.map(p => (
-              <div key={p.id} className="border border-border-white rounded-xl p-4">
-                {editing === p.id ? (
-                  <PersonaForm
-                    initial={{ name: p.name, prompt: p.prompt }}
-                    onSave={(name, prompt) => handleUpdate(p.id, name, prompt)}
-                    onCancel={() => setEditing(null)}
-                  />
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono text-sm font-medium text-hover-black">{p.name}</span>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setEditing(p.id)}
-                          className="p-1.5 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(p.id)}
-                          disabled={deleting === p.id}
-                          className="p-1.5 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-normal-black whitespace-pre-wrap line-clamp-3 font-mono">
-                      {p.prompt || <span className="italic">No prompt set</span>}
-                    </p>
-                  </>
-                )}
-              </div>
+          <div className="grid grid-cols-2 gap-4">
+            {filtered.map(p => (
+              <PersonaCard
+                key={p.id}
+                persona={p}
+                allTags={allTags}
+                isEditing={editing === p.id}
+                deleting={deleting === p.id}
+                onEdit={() => setEditing(p.id)}
+                onCancelEdit={() => setEditing(null)}
+                onSave={(data) => handleUpdate(p.id, data)}
+                onDelete={() => handleDelete(p.id)}
+              />
             ))}
           </div>
         )}

@@ -133,6 +133,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("POST /api/personas", s.handlePersonasCreate)
 	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
 	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
+	s.mux.HandleFunc("POST /api/avatars", s.handleAvatarUpload)
+	s.mux.Handle("GET /api/avatars/", http.StripPrefix("/api/avatars/", http.FileServer(http.Dir(s.avatarsDir()))))
 
 	// SPA static files
 	if cfg.StaticFS != nil {
