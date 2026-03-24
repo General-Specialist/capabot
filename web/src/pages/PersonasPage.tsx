@@ -101,12 +101,6 @@ export function PersonasPage() {
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-sm font-medium text-hover-black">Personas</h1>
-            <p className="text-xs text-normal-black mt-0.5">
-              Named system prompts. Tag with <code className="bg-icon-hover-white px-1 rounded text-xs font-mono">@Name</code> in any message to use.
-            </p>
-          </div>
           {!creating && (
             <button
               type="button"
@@ -125,7 +119,7 @@ export function PersonasPage() {
         )}
 
         {personas.length === 0 && !creating ? (
-          <p className="text-sm text-normal-black">No personas yet. Create one to get started.</p>
+          <p className="text-sm text-normal-black">No personas yet. Create one and tag them with @PersonaName to get started.</p>
         ) : (
           <div className="flex flex-col gap-3">
             {personas.map(p => (

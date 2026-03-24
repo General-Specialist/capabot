@@ -263,7 +263,7 @@ export function AutomationsPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-end mb-6">
+        <div className="flex items-center mb-6">
           <button
             onClick={startNew}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
