@@ -207,7 +207,6 @@ export function DashboardPage() {
   const [allRuns, setAllRuns] = useState<AutomationRun[]>([])
   const [automations, setAutomations] = useState<Automation[]>([])
   const [showAll, setShowAll] = useState(false)
-  const [loading, setLoading] = useState(true)
 
   const nameMap = new Map(automations.map(a => [a.id, a.name]))
 
@@ -218,7 +217,7 @@ export function DashboardPage() {
     ]).then(([runs, autos]) => {
       setTodayRuns(runs)
       setAutomations(autos)
-    }).catch(() => {}).finally(() => setLoading(false))
+    }).catch(() => {})
   }, [])
 
   const loadAll = () => {
@@ -231,13 +230,7 @@ export function DashboardPage() {
       <div className="max-w-3xl mx-auto">
         <h2 className="text-sm font-medium text-normal-black mb-3">Today</h2>
 
-        {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-14 rounded-xl animate-pulse bg-icon-hover-white" />
-            ))}
-          </div>
-        ) : todayRuns.length === 0 ? (
+        {todayRuns.length === 0 ? (
           <p className="text-sm text-normal-black">No runs today.</p>
         ) : (
           <div className="space-y-2">
@@ -247,7 +240,7 @@ export function DashboardPage() {
           </div>
         )}
 
-        {!showAll && !loading && (
+        {!showAll && (
           <button
             type="button"
             onClick={loadAll}

@@ -151,12 +151,11 @@ export function AutomationsPage() {
   const [triggering, setTriggering] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
 
   const load = () => api.automations().then(setAutomations).catch(() => {})
 
   useEffect(() => {
-    load().finally(() => setLoading(false))
+    load()
     api.skills().then(setSkills).catch(() => {})
   }, [])
 
@@ -263,7 +262,7 @@ export function AutomationsPage() {
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-end mb-6">
           <button
             onClick={startNew}
@@ -279,13 +278,7 @@ export function AutomationsPage() {
           {isNew && <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={false} deleting={false} selected={null} onSave={() => void save()} onTrigger={() => {}} onDelete={() => {}} onScheduleChange={handleScheduleChange} skills={skills} />}
 
           {/* List */}
-          {loading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-14 rounded-xl animate-pulse bg-icon-hover-white" />
-              ))}
-            </div>
-          ) : automations.length === 0 && !isNew ? (
+          {automations.length === 0 && !isNew ? (
             <p className="text-sm text-normal-black">No automations yet. Click <strong>New</strong> to create one.</p>
           ) : (
             <div className="space-y-0">

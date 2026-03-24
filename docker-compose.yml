@@ -25,26 +25,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    develop:
-      watch:
-        - action: rebuild
-          path: .
-          ignore:
-            - web/
-            - tmp/
-            - "*.md"
 
   frontend:
     build: ./web
     ports:
       - "5173:5173"
-    develop:
-      watch:
-        - action: sync
-          path: ./web/src
-          target: /app/src
-        - action: rebuild
-          path: ./web/package.json
+    environment:
+      API_URL: http://backend:9090
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

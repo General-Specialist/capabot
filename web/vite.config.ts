@@ -10,8 +10,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:9090',
-      '/v1': 'http://localhost:9090',
+      '/api': process.env.API_URL || 'http://localhost:9090',
+      '/v1': process.env.API_URL || 'http://localhost:9090',
     },
   },
   build: {

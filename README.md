@@ -20,16 +20,11 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 
 ## Quick start
 
-```bash
-git clone https://github.com/General-Specialist/capabot.git
-cd capabot
-```
-
-capabot auto-updates in the background — on every run it checks for new commits and pulls them automatically. `air` then rebuilds. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
-
 **Prerequisites:** [Docker](https://www.docker.com/get-started/)
 
 ```bash
+git clone https://github.com/General-Specialist/capabot.git
+cd capabot
 cp config.example.yaml ~/.capabot/config.yaml
 # add your API key in config.yaml
 docker compose up --build
@@ -37,13 +32,23 @@ docker compose up --build
 
 That's it. Postgres, backend, and frontend all start together.
 
-For development with hot-reload (auto-rebuilds on file changes):
+Backend: http://localhost:9090 | Frontend: http://localhost:5173
+
+## Development
+
+**Prerequisites:** [Docker](https://www.docker.com/get-started/), [Go](https://go.dev/dl/), [Bun](https://bun.sh/), [Air](https://github.com/air-verse/air) (`go install github.com/air-verse/air@latest`)
+
+Run just Postgres in Docker, then use `air` + `bun` for hot-reload:
 
 ```bash
-docker compose watch
+docker compose up postgres -d  # starts Postgres on :5432
+air                            # in capabot/ — backend hot-reload on :9090
+cd web && bun install && bun run dev  # frontend HMR on :5173
 ```
 
-Backend: http://localhost:9090 | Frontend: http://localhost:5173
+> If you have a local Postgres running (e.g. via Homebrew), stop it first: `brew services stop postgresql@17`
+
+capabot auto-updates in the background — on every run it checks for new commits and pulls them automatically. Set `CAPABOT_NO_AUTOUPDATE=1` to disable.
 
 ## Configuration
 
@@ -127,10 +132,6 @@ capabot skill      Manage skills (install, search, create, lint)
 capabot agent      List configured agents
 capabot migrate    Run database migrations
 ```
-
-## Development
-
-See Quick start above. `air` watches for Go changes and rebuilds automatically; Vite handles frontend HMR.
 
 ## Architecture
 

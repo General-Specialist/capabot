@@ -65,7 +65,7 @@
     --color-dark-text-hover: #ffffff;
 
     /* Accent colors */
-    --color-brand-primary: #f57c00;
+    --color-brand-primary: #32302c;
     --color-brand-secondary: #ffb74d;
     --color-red: #ef4444;
     --color-bronze: #cd7f32;
@@ -209,7 +209,7 @@ body::-webkit-scrollbar {
     }
 
     .icon-hover:hover {
-        color: var(--color-brand-primary);
+        color: var(--color-text-hover-black);
     }
 
     /* ============================================================================

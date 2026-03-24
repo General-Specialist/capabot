@@ -18,10 +18,8 @@ interface InstalledSkill extends Skill {
 export function SkillsPage() {
   const [tab, setTab] = useState<'browse' | 'installed'>('installed')
   const [installed, setInstalled] = useState<InstalledSkill[]>([])
-  const [installedLoading, setInstalledLoading] = useState(true)
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
   const [query, setQuery] = useState('')
-  const [loading, setLoading] = useState(true)
   const [searching, setSearching] = useState(false)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [installing, setInstalling] = useState<Record<string, boolean>>({})
@@ -36,9 +34,7 @@ export function SkillsPage() {
   // Load installed skills immediately
   useEffect(() => {
     let cancelled = false
-    api.skills()
-      .then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
-      .finally(() => { if (!cancelled) setInstalledLoading(false) })
+    api.skills().then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
     return () => { cancelled = true }
   }, [])
 
@@ -48,7 +44,6 @@ export function SkillsPage() {
     api.skillsCatalog(undefined, 200)
       .then(cat => { if (!cancelled) setCatalog(cat) })
       .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Failed to load') })
-      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
 
@@ -68,9 +63,9 @@ export function SkillsPage() {
 
   // Restore top skills when query is cleared
   useEffect(() => {
-    if (query.trim() || loading) return
-    api.skillsCatalog(undefined, 200).then(res => setCatalog(res)).catch(() => {/* keep existing */})
-  }, [query, loading])
+    if (query.trim()) return
+    api.skillsCatalog(undefined, 200).then(res => setCatalog(res)).catch(() => {})
+  }, [query])
 
   const install = async (skill: CatalogSkill) => {
     setInstalling(prev => ({ ...prev, [skill.name]: true }))
@@ -137,13 +132,7 @@ export function SkillsPage() {
 
             {catalogError && <p className="text-sm text-red mb-4">{catalogError}</p>}
 
-            {loading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-xl animate-pulse bg-sidebar-hover-white" />
-                ))}
-              </div>
-            ) : catalog.length === 0 ? (
+            {catalog.length === 0 ? (
               <p className="text-sm text-normal-black">No skills found.</p>
             ) : (
               <div className="space-y-1">
@@ -206,13 +195,7 @@ export function SkillsPage() {
 
         {tab === 'installed' && (
           <>
-            {installedLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 rounded-xl animate-pulse bg-sidebar-hover-white" />
-                ))}
-              </div>
-            ) : installed.length === 0 ? (
+            {installed.length === 0 ? (
               <p className="text-sm text-normal-black">No skills installed yet. Browse and install some.</p>
             ) : (
               <div className="space-y-2">

@@ -30,25 +30,25 @@ function PersonaForm({
   return (
     <div className="flex flex-col gap-2">
       <input
-        className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gray-400 font-mono"
+        className="border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono"
         placeholder="Name (e.g. ProductManager)"
         value={name}
         onChange={e => setName(e.target.value)}
         disabled={!!initial}
       />
       <textarea
-        className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gray-400 font-mono resize-none"
+        className="border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono resize-none"
         placeholder="System prompt…"
         rows={5}
         value={prompt}
         onChange={e => setPrompt(e.target.value)}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-red">{error}</p>}
       <div className="flex gap-2 justify-end">
         <button
           type="button"
           onClick={onCancel}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-100 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule text-sm text-normal-black hover:bg-sidebar-white transition-colors"
         >
           <X className="w-3.5 h-3.5" /> Cancel
         </button>
@@ -56,7 +56,7 @@ function PersonaForm({
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-black text-white hover:bg-gray-800 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule text-sm bg-[var(--color-brand-primary)] text-white hover:opacity-80 disabled:opacity-50 transition-opacity"
         >
           <Check className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
         </button>
@@ -67,13 +67,11 @@ function PersonaForm({
 
 export function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([])
-  const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
 
-  const load = () =>
-    api.personas().then(setPersonas).catch(() => {}).finally(() => setLoading(false))
+  const load = () => api.personas().then(setPersonas).catch(() => {})
 
   useEffect(() => { load() }, [])
 
@@ -100,76 +98,76 @@ export function PersonasPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-900">Personas</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Named system prompts. Tag with <code className="bg-gray-100 px-1 rounded text-xs">@Name</code> in any message to use.
-          </p>
+    <div className="w-full min-h-screen bg-white px-6 py-6">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-sm font-medium text-hover-black">Personas</h1>
+            <p className="text-xs text-normal-black mt-0.5">
+              Named system prompts. Tag with <code className="bg-icon-hover-white px-1 rounded text-xs font-mono">@Name</code> in any message to use.
+            </p>
+          </div>
+          {!creating && (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
+            >
+              <Plus className="w-3.5 h-3.5" /> New
+            </button>
+          )}
         </div>
-        {!creating && (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-black text-white hover:bg-gray-800 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" /> New
-          </button>
+
+        {creating && (
+          <div className="border border-border-white rounded-xl p-4 mb-4">
+            <PersonaForm onSave={handleCreate} onCancel={() => setCreating(false)} />
+          </div>
+        )}
+
+        {personas.length === 0 && !creating ? (
+          <p className="text-sm text-normal-black">No personas yet. Create one to get started.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {personas.map(p => (
+              <div key={p.id} className="border border-border-white rounded-xl p-4">
+                {editing === p.id ? (
+                  <PersonaForm
+                    initial={{ name: p.name, prompt: p.prompt }}
+                    onSave={(name, prompt) => handleUpdate(p.id, name, prompt)}
+                    onCancel={() => setEditing(null)}
+                  />
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-sm font-medium text-hover-black">@{p.name}</span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditing(p.id)}
+                          className="p-1.5 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(p.id)}
+                          disabled={deleting === p.id}
+                          className="p-1.5 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-sm text-normal-black whitespace-pre-wrap line-clamp-3 font-mono">
+                      {p.prompt || <span className="italic">No prompt set</span>}
+                    </p>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
-
-      {creating && (
-        <div className="border border-gray-200 rounded-xl p-4 mb-4">
-          <PersonaForm onSave={handleCreate} onCancel={() => setCreating(false)} />
-        </div>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
-      ) : personas.length === 0 && !creating ? (
-        <p className="text-sm text-gray-400">No personas yet. Create one to get started.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {personas.map(p => (
-            <div key={p.id} className="border border-gray-200 rounded-xl p-4">
-              {editing === p.id ? (
-                <PersonaForm
-                  initial={{ name: p.name, prompt: p.prompt }}
-                  onSave={(name, prompt) => handleUpdate(p.id, name, prompt)}
-                  onCancel={() => setEditing(null)}
-                />
-              ) : (
-                <>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-sm font-medium text-gray-900">@{p.name}</span>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setEditing(p.id)}
-                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(p.id)}
-                        disabled={deleting === p.id}
-                        className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 disabled:opacity-50 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-500 whitespace-pre-wrap line-clamp-3 font-mono">
-                    {p.prompt || <span className="italic text-gray-300">No prompt set</span>}
-                  </p>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

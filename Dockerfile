@@ -9,6 +9,5 @@ RUN CGO_ENABLED=0 go build -o capabot ./cmd/capabot
 FROM alpine:3.21
 RUN apk add --no-cache git ca-certificates
 COPY --from=build /app/capabot /usr/local/bin/capabot
-COPY --from=build /app/.air.toml /app/.air.toml
 WORKDIR /app
 CMD ["capabot", "serve"]

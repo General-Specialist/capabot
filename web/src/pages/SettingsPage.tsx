@@ -49,7 +49,7 @@ export function SettingsPage() {
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-md mx-auto space-y-5">
+      <div className="max-w-3xl mx-auto space-y-5">
 
         <div className="flex items-center justify-between">
           <span className="text-sm text-normal-black">Dark mode</span>
