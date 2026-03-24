@@ -8,14 +8,10 @@ import (
 	"github.com/polymath/capabot/internal/updater"
 )
 
-// Set via -ldflags at build time.
-var version = "dev"
-
 const defaultConfigPath = "~/.capabot/config.yaml"
 
 func main() {
-	au := updater.Prepare(version)
-	defer au.Apply()
+	go updater.CheckAndUpdate()
 
 	if len(os.Args) < 2 {
 		printUsage()

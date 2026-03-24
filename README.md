@@ -20,6 +20,13 @@ OpenClaw, but a single binary. 20x faster start, 9x lower idle memory, 67x less 
 
 ## Quick start
 
+```bash
+git clone https://github.com/General-Specialist/capabot.git
+cd capabot
+```
+
+To update later, just `git pull`.
+
 **Prerequisites:**
 
 1. **Go** — [go.dev/dl](https://go.dev/dl/). After installing, add Go's bin to your PATH:
