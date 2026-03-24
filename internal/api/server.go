@@ -123,6 +123,10 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("DELETE /api/automations/{id}", s.handleAutomationsDelete)
 	s.mux.HandleFunc("POST /api/automations/{id}/trigger", s.handleAutomationsTrigger)
 	s.mux.HandleFunc("GET /api/automations/{id}/runs", s.handleAutomationsRuns)
+	s.mux.HandleFunc("GET /api/runs/{automationID}/{runID}/trace", s.handleRunTrace)
+	s.mux.HandleFunc("POST /api/runs/{runID}/stop", s.handleRunStop)
+	s.mux.HandleFunc("GET /api/runs/{runID}/stream", s.handleRunStream)
+	s.mux.HandleFunc("GET /api/runs", s.handleAllRuns)
 	s.mux.HandleFunc("GET /api/config/keys", s.handleConfigKeysGet)
 	s.mux.HandleFunc("PUT /api/config/keys", s.handleConfigKeysPut)
 

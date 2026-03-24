@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
@@ -23,6 +24,10 @@ type Scheduler struct {
 	runAgent RunAgentFunc
 	logger   zerolog.Logger
 	triggerC chan int64 // manual trigger by automation ID
+
+	mu      sync.Mutex
+	running map[int64]context.CancelFunc // runID → cancel
+	subs    map[int64][]chan agent.AgentEvent // runID → subscribers
 }
 
 // NewScheduler creates a Scheduler.
@@ -33,7 +38,68 @@ func NewScheduler(store *memory.Store, skillReg *skill.Registry, runAgent RunAge
 		runAgent: runAgent,
 		logger:   logger.With().Str("component", "cron").Logger(),
 		triggerC: make(chan int64, 16),
+		running:  make(map[int64]context.CancelFunc),
+		subs:     make(map[int64][]chan agent.AgentEvent),
 	}
+}
+
+// StopRun cancels a running automation run. Returns true if the run was found and cancelled.
+func (s *Scheduler) StopRun(runID int64) bool {
+	s.mu.Lock()
+	cancel, ok := s.running[runID]
+	if ok {
+		delete(s.running, runID)
+	}
+	s.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
+}
+
+// Subscribe returns a channel that receives agent events for a running run.
+// The channel is closed when the run finishes.
+func (s *Scheduler) Subscribe(runID int64) <-chan agent.AgentEvent {
+	ch := make(chan agent.AgentEvent, 64)
+	s.mu.Lock()
+	s.subs[runID] = append(s.subs[runID], ch)
+	s.mu.Unlock()
+	return ch
+}
+
+// broadcast sends an event to all subscribers for a run.
+func (s *Scheduler) broadcast(runID int64, ev agent.AgentEvent) {
+	s.mu.Lock()
+	subs := s.subs[runID]
+	s.mu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- ev:
+		default: // drop if subscriber is slow
+		}
+	}
+}
+
+// closeSubs closes and removes all subscriber channels for a run.
+func (s *Scheduler) closeSubs(runID int64) {
+	s.mu.Lock()
+	subs := s.subs[runID]
+	delete(s.subs, runID)
+	s.mu.Unlock()
+	for _, ch := range subs {
+		close(ch)
+	}
+}
+
+// RunningRuns returns the IDs of currently running automation runs.
+func (s *Scheduler) RunningRuns() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]int64, 0, len(s.running))
+	for id := range s.running {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // Start runs the scheduler loop until ctx is cancelled.
@@ -77,15 +143,27 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) fire(ctx context.Context, auto memory.Automation, manual bool) {
+func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manual bool) {
 	log := s.logger.With().Int64("automation_id", auto.ID).Str("name", auto.Name).Logger()
 	log.Info().Bool("manual", manual).Msg("firing automation")
 
-	runID, err := s.store.StartAutomationRun(ctx, auto.ID)
+	runID, err := s.store.StartAutomationRun(parentCtx, auto.ID)
 	if err != nil {
 		log.Error().Err(err).Msg("starting run record")
 		return
 	}
+
+	ctx, cancel := context.WithCancel(parentCtx)
+	s.mu.Lock()
+	s.running[runID] = cancel
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.running, runID)
+		s.mu.Unlock()
+		s.closeSubs(runID)
+	}()
 
 	// Advance schedule before running so the next tick won't re-fire.
 	if !manual && auto.RRule != "" {
@@ -105,12 +183,27 @@ func (s *Scheduler) fire(ctx context.Context, auto memory.Automation, manual boo
 	}
 
 	sessionID := fmt.Sprintf("auto-%d-%d", auto.ID, runID)
+
+	_ = s.store.UpsertSession(ctx, memory.Session{
+		ID:       sessionID,
+		TenantID: "default",
+		Channel:  "automation",
+		Title:    auto.Name,
+		Metadata: "{}",
+	})
+
 	messages := []llm.ChatMessage{{Role: "user", Content: auto.Prompt}}
 
-	result, err := s.runAgent(ctx, sessionID, messages, nil)
+	result, err := s.runAgent(ctx, sessionID, messages, func(ev agent.AgentEvent) {
+		s.broadcast(runID, ev)
+	})
 	if err != nil {
 		log.Error().Err(err).Msg("agent run failed")
-		_ = s.store.FinishAutomationRun(ctx, runID, "error", "", err.Error())
+		if ctx.Err() == context.Canceled {
+			_ = s.store.FinishAutomationRun(parentCtx, runID, "stopped", "", "stopped by user")
+		} else {
+			_ = s.store.FinishAutomationRun(parentCtx, runID, "error", "", err.Error())
+		}
 		return
 	}
 

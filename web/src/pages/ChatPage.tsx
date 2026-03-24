@@ -2,10 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Send, Square, Plus, Terminal, Globe, FileText, Search, FolderSearch, Pencil, Brain, CalendarClock, ListChecks, Image, FileCode, Wrench, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react'
 import { api, type StreamChunk, type LLMMessage } from '@/lib/api'
-import ReactMarkdown from 'react-markdown'
-import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
-import 'katex/dist/katex.min.css'
+import { Markdown } from '@/components/Markdown'
 
 interface ToolCall {
   name: string
@@ -364,12 +361,7 @@ export function ChatPage() {
                     {(msg.content || msg.streaming) && (
                       <div className="text-sm leading-relaxed text-hover-black max-w-[85%] prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
                         {msg.content ? (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkMath]}
-                            rehypePlugins={[rehypeKatex]}
-                          >
-                            {msg.content}
-                          </ReactMarkdown>
+                          <Markdown>{msg.content}</Markdown>
                         ) : thinking && !msg.thinking ? (
                           <span className="flex items-center gap-1.5 text-normal-black opacity-70">
                             <Lightbulb size={13} className="animate-pulse" />

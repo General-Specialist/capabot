@@ -134,9 +134,26 @@ export interface AutomationRun {
   automation_id: number
   started_at: string
   finished_at: string | null
-  status: 'running' | 'success' | 'error'
+  status: 'running' | 'success' | 'error' | 'stopped'
   response: string
   error: string
+}
+
+export interface ToolExecution {
+  id: number
+  tool_name: string
+  input: string
+  output: string
+  duration_ms: number
+  success: boolean
+}
+
+export interface TraceMessage {
+  id: number
+  role: 'user' | 'assistant' | 'tool'
+  content: string
+  tool_name?: string
+  tool_input?: string
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -194,6 +211,15 @@ export const api = {
   automationDelete: (id: number) => del<{ success: boolean }>(`/automations/${id}`),
   automationTrigger: (id: number) => post<{ triggered: boolean }>(`/automations/${id}/trigger`, {}),
   automationRuns: (id: number) => get<AutomationRun[]>(`/automations/${id}/runs`),
+  runTrace: (automationID: number, runID: number) => get<TraceMessage[]>(`/runs/${automationID}/${runID}/trace`),
+  runStop: (runID: number) => post<{ stopped: boolean }>(`/runs/${runID}/stop`, {}),
+  allRuns: (since?: string, limit?: number) => {
+    const params = new URLSearchParams()
+    if (since) params.set('since', since)
+    if (limit) params.set('limit', String(limit))
+    const q = params.toString()
+    return get<AutomationRun[]>(`/runs${q ? '?' + q : ''}`)
+  },
   skillCreate: (data: { name: string; description: string; parameters?: Record<string, unknown>; code: string }) =>
     post<{ name: string; success: boolean; tier: number }>('/skills/create', data),
   skillGet: (name: string) => get<{ name: string; description: string; code: string; tier: number }>(`/skills/${name}`),

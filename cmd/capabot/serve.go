@@ -69,6 +69,11 @@ func runServe(configPath string) error {
 	}
 	defer pool.Close()
 
+	// Clean up any runs left in "running" state from a previous crash/restart.
+	if store != nil {
+		_ = store.MarkStaleRunsAsFailed(ctx)
+	}
+
 	// 5. Initialize LLM providers and router
 	router, err := initRouter(ctx, cfg)
 	if err != nil {

@@ -228,3 +228,104 @@ func (s *Server) handleAutomationsRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, runs)
 }
+
+func (s *Server) handleAllRuns(w http.ResponseWriter, r *http.Request) {
+	sinceStr := r.URL.Query().Get("since")
+	limitStr := r.URL.Query().Get("limit")
+
+	var since time.Time
+	if sinceStr != "" {
+		since, _ = time.Parse(time.RFC3339, sinceStr)
+	}
+	limit := 50
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+
+	runs, err := s.store.ListAllAutomationRuns(r.Context(), since, limit)
+	if err != nil {
+		writeError(w, fmt.Sprintf("listing runs: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if runs == nil {
+		runs = []memory.AutomationRun{}
+	}
+	writeJSON(w, runs)
+}
+
+func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid run ID", http.StatusBadRequest)
+		return
+	}
+	if s.scheduler == nil {
+		http.Error(w, "scheduler not available", http.StatusInternalServerError)
+		return
+	}
+	if s.scheduler.StopRun(runID) {
+		writeJSON(w, map[string]bool{"stopped": true})
+	} else {
+		writeJSON(w, map[string]bool{"stopped": false})
+	}
+}
+
+func (s *Server) handleRunStream(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid run ID", http.StatusBadRequest)
+		return
+	}
+	if s.scheduler == nil {
+		http.Error(w, "scheduler not available", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ch := s.scheduler.Subscribe(runID)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				sendSSE(w, flusher, map[string]any{"done": true})
+				return
+			}
+			sendSSE(w, flusher, map[string]any{
+				"event":      string(ev.Kind),
+				"tool_name":  ev.ToolName,
+				"tool_input": ev.ToolInput,
+				"content":    ev.Content,
+				"is_error":   ev.IsError,
+			})
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Server) handleRunTrace(w http.ResponseWriter, r *http.Request) {
+	automationID := r.PathValue("automationID")
+	runID := r.PathValue("runID")
+	sessionID := fmt.Sprintf("auto-%s-%s", automationID, runID)
+
+	msgs, err := s.store.GetMessages(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if msgs == nil {
+		msgs = []memory.Message{}
+	}
+	writeJSON(w, msgs)
+}

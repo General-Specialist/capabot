@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Blocks, Settings, Clock, Plus, type LucideIcon } from 'lucide-react'
+import { Blocks, Settings, Clock, LayoutDashboard, Plus, type LucideIcon } from 'lucide-react'
 import { api, type Conversation } from '@/lib/api'
 
 type NavItem = { Icon: LucideIcon; label: string; route: string }
 
 const TOP_NAV: NavItem[] = [
+  { Icon: LayoutDashboard, label: 'Dashboard', route: '/dashboard' },
   { Icon: Blocks, label: 'Skills', route: '/skills' },
   { Icon: Clock, label: 'Automations', route: '/automations' },
 ]

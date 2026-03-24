@@ -198,7 +198,7 @@ func (t *BrowserTool) start(headless bool, browserType string) error {
 	//nolint:gosec // controlled path
 	t.proc = exec.Command("node", serverJS)
 	t.proc.Dir = t.dataDir
-	t.proc.Env = append(os.Environ(),
+	t.proc.Env = append(cleanEnv(),
 		"BROWSER_DATA_DIR="+profileDir,
 		"BROWSER_HEADLESS="+fmt.Sprintf("%t", headless),
 		"BROWSER_TYPE="+browserType,
@@ -324,9 +324,11 @@ func (t *BrowserTool) ensureHelper() error {
 	// Install if node_modules missing
 	nmPath := filepath.Join(t.dataDir, "node_modules")
 	if _, err := os.Stat(nmPath); os.IsNotExist(err) {
+		env := cleanEnv()
+
 		install := exec.Command("npm", "install")
 		install.Dir = t.dataDir
-		install.Env = os.Environ()
+		install.Env = env
 		out, err := install.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("npm install failed: %w\n%s", err, out)
@@ -335,7 +337,7 @@ func (t *BrowserTool) ensureHelper() error {
 		// Install browser binaries
 		npx := exec.Command("npx", "playwright", "install")
 		npx.Dir = t.dataDir
-		npx.Env = os.Environ()
+		npx.Env = env
 		out, err = npx.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("playwright install failed: %w\n%s", err, out)
@@ -430,9 +432,7 @@ async function handle(cmd) {
 (async () => {
   try {
     await launch();
-    const msg = usingUserProfile
-      ? 'launched with user profile (signed in)'
-      : 'launched with fallback profile (copied cookies from your browser)';
+    const msg = 'browser launched';
     process.stdout.write(JSON.stringify({ ok: true, text: msg }) + '\n');
   } catch (err) {
     process.stdout.write(JSON.stringify({ ok: false, error: err.message }) + '\n');
@@ -456,3 +456,32 @@ async function handle(cmd) {
   });
 })();
 `
+
+// cleanEnv returns os.Environ() with conda-related variables stripped out.
+// npm/npx lifecycle scripts spawn a shell that sources .zshrc which calls
+// conda init — with parallel automation runs this creates many redundant
+// conda processes. Stripping the vars prevents conda from activating.
+func cleanEnv() []string {
+	skip := map[string]bool{
+		"CONDA_DEFAULT_ENV": true,
+		"CONDA_EXE":        true,
+		"CONDA_PREFIX":     true,
+		"CONDA_PROMPT_MODIFIER": true,
+		"CONDA_PYTHON_EXE": true,
+		"CONDA_SHLVL":      true,
+		"_CE_CONDA":        true,
+		"_CE_M":            true,
+	}
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key := kv
+		if i := strings.Index(kv, "="); i >= 0 {
+			key = kv[:i]
+		}
+		if !skip[key] {
+			out = append(out, kv)
+		}
+	}
+	return out
+}

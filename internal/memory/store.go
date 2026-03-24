@@ -333,6 +333,28 @@ func (s *Store) SaveToolExecution(ctx context.Context, exec ToolExecution) error
 	})
 }
 
+// GetToolExecutions returns all tool executions for a session.
+func (s *Store) GetToolExecutions(ctx context.Context, sessionID string) ([]ToolExecution, error) {
+	rows, err := s.pool.ReadDB().QueryContext(ctx,
+		`SELECT id, session_id, tool_name, input, output, duration_ms, success, created_at
+		 FROM tool_executions WHERE session_id = ? ORDER BY id ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ToolExecution
+	for rows.Next() {
+		var e ToolExecution
+		var successInt int
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.ToolName, &e.Input, &e.Output, &e.DurationMs, &successInt, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Success = successInt == 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListMemory returns all memory entries for a tenant.
 func (s *Store) ListMemory(ctx context.Context, tenantID string) ([]MemoryEntry, error) {
 	rows, err := s.pool.ReadDB().QueryContext(ctx,
@@ -531,6 +553,18 @@ func (s *Store) FinishAutomationRun(ctx context.Context, runID int64, status, re
 	})
 }
 
+// MarkStaleRunsAsFailed sets any runs still in "running" state to "failed".
+// Called on startup to clean up runs that were interrupted by a crash or restart.
+func (s *Store) MarkStaleRunsAsFailed(ctx context.Context) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE automation_runs SET finished_at=datetime('now'), status='error', error='interrupted by restart'
+			 WHERE status='running'`,
+		)
+		return err
+	})
+}
+
 // UpdateAutomationSchedule records last/next run times after a successful trigger.
 func (s *Store) UpdateAutomationSchedule(ctx context.Context, id int64, lastRunAt, nextRunAt time.Time) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
@@ -556,6 +590,48 @@ func (s *Store) ListAutomationRuns(ctx context.Context, automationID int64, limi
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing automation runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []AutomationRun
+	for rows.Next() {
+		var r AutomationRun
+		var startedAt, finishedAt string
+		var finishedAtPtr *string
+		if err := rows.Scan(&r.ID, &r.AutomationID, &startedAt, &finishedAtPtr, &r.Status, &r.Response, &r.Error); err != nil {
+			return nil, fmt.Errorf("scanning automation run: %w", err)
+		}
+		r.StartedAt, _ = time.Parse("2006-01-02 15:04:05", startedAt)
+		if finishedAtPtr != nil {
+			t, _ := time.Parse("2006-01-02 15:04:05", *finishedAtPtr)
+			r.FinishedAt = &t
+		}
+		_ = finishedAt
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+// ListAllAutomationRuns returns runs across all automations, newest first.
+// If since is non-zero, only runs started at or after that time are returned.
+func (s *Store) ListAllAutomationRuns(ctx context.Context, since time.Time, limit int) ([]AutomationRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows *sql.Rows
+	var err error
+	if since.IsZero() {
+		rows, err = s.pool.ReadDB().QueryContext(ctx,
+			`SELECT id, automation_id, started_at, finished_at, status, response, error
+			 FROM automation_runs ORDER BY id DESC LIMIT ?`, limit)
+	} else {
+		rows, err = s.pool.ReadDB().QueryContext(ctx,
+			`SELECT id, automation_id, started_at, finished_at, status, response, error
+			 FROM automation_runs WHERE started_at >= ? ORDER BY id DESC LIMIT ?`,
+			since.Format("2006-01-02 15:04:05"), limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing all automation runs: %w", err)
 	}
 	defer rows.Close()
 

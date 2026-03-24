@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Plus, Play, Trash2, ChevronRight, ChevronDown } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Plus, Play, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
+import { Markdown } from '@/components/Markdown'
 import { api, type Automation, type AutomationRun, type Skill } from '@/lib/api'
 import DatePicker from '@/components/DatePicker'
 import SkillPicker from '@/components/SkillPicker'
@@ -32,10 +32,10 @@ function RunRow({ run }: { run: AutomationRun }) {
   const isError = run.status === 'error'
 
   return (
-    <div className="text-xs">
-      <button
-        onClick={() => body && setExpanded(e => !e)}
-        className={`w-full flex items-center gap-3 py-1.5 text-left ${body ? 'cursor-pointer' : 'cursor-default'}`}
+    <div className="text-xs py-1.5">
+      <div
+        className={`flex items-center gap-3 ${body ? 'cursor-pointer' : ''}`}
+        onClick={() => { if (body) setExpanded(e => !e) }}
       >
         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
           run.status === 'success' ? 'bg-green-500' :
@@ -45,17 +45,13 @@ function RunRow({ run }: { run: AutomationRun }) {
           {run.status}
         </span>
         <span className="text-normal-black">{formatRelative(run.started_at)}</span>
-        {body && (
-          <span className="ml-auto text-normal-black shrink-0">
-            <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
-          </span>
-        )}
-      </button>
+        {body && <ChevronRight size={12} className={`ml-auto text-normal-black shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />}
+      </div>
       {expanded && body && (
-        <div className={`pl-4 pb-2 ${isError ? 'text-red-400' : 'text-hover-black'}`}>
+        <div className={`pl-4 pt-1 pb-2 ${isError ? 'text-red-400' : 'text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0'}`}>
           {isError
-            ? <p className="font-mono text-xs">{body}</p>
-            : <ReactMarkdown className="prose prose-sm prose-invert max-w-none text-xs [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{body}</ReactMarkdown>
+            ? <p className="font-mono text-xs whitespace-pre-wrap">{body}</p>
+            : <Markdown>{body}</Markdown>
           }
         </div>
       )}
