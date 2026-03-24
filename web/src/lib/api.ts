@@ -252,6 +252,12 @@ export const api = {
   },
 
   personas: () => get<Persona[]>('/personas'),
+  defaultModelGet: () => get<{ default_model: string }>('/settings/default-model'),
+  defaultModelSet: (model: string) => fetch(BASE + '/settings/default-model', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ default_model: model }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   systemPromptGet: () => get<{ system_prompt: string }>('/personas/system-prompt'),
   systemPromptSet: (prompt: string) => fetch(BASE + '/personas/system-prompt', {
     method: 'PUT',

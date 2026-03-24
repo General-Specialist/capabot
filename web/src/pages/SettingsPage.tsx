@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type ProviderKeys } from '@/lib/api'
+import { api, type ProviderKeys, type ProviderInfo } from '@/lib/api'
 
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
@@ -29,12 +29,17 @@ const EMPTY: ProviderKeys = { anthropic: '', openai: '', gemini: '', openrouter:
 export function SettingsPage() {
   const [keys, setKeys] = useState<ProviderKeys>(EMPTY)
   const [error, setError] = useState<string | null>(null)
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [defaultModel, setDefaultModel] = useState('')
   const { dark, toggle } = useDarkMode()
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const initialLoad = useRef(true)
+  const modelInitial = useRef(true)
 
   useEffect(() => {
     api.configKeys().then(setKeys).catch(() => {})
+    api.providers().then(setProviders).catch(() => {})
+    api.defaultModelGet().then(r => setDefaultModel(r.default_model)).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -46,6 +51,13 @@ export function SettingsPage() {
     }, 600)
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
   }, [keys])
+
+  useEffect(() => {
+    if (modelInitial.current) { modelInitial.current = false; return }
+    api.defaultModelSet(defaultModel).catch(() => {})
+  }, [defaultModel])
+
+  const allModels = providers.flatMap(p => p.models.map(m => ({ ...m, provider: p.name })))
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
@@ -60,6 +72,25 @@ export function SettingsPage() {
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${dark ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
+
+        {allModels.length > 0 && (
+          <div>
+            <label className="block text-xs text-normal-black mb-1">Default model</label>
+            <select
+              value={defaultModel}
+              onChange={e => setDefaultModel(e.target.value)}
+              className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+            >
+              <option value="">Auto (provider default)</option>
+              {allModels.map(m => (
+                <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
+              ))}
+            </select>
+            <p className="text-xs text-normal-black mt-1 opacity-60">
+              Override per-message with @model-id in chat
+            </p>
+          </div>
+        )}
 
         <div className="space-y-3">
           {PROVIDERS.map(({ key, label, placeholder }) => (

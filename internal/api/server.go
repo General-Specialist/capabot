@@ -36,7 +36,7 @@ type Server struct {
 	providers      map[string]llm.Provider
 	toolReg        *agent.Registry
 	defaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
-	agentWithPrompt func(ctx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	agentWithPrompt func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	logBroadcaster *applog.Broadcaster
 	scheduler      *cron.Scheduler
 	mux            *http.ServeMux
@@ -57,7 +57,7 @@ type Config struct {
 	Providers      map[string]llm.Provider
 	ToolReg        *agent.Registry
 	DefaultAgent    func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
-	AgentWithPrompt func(ctx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	AgentWithPrompt func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	LogBroadcaster  *applog.Broadcaster
 	Logger         zerolog.Logger
 	// StaticFS is the embedded web/dist for SPA serving (nil = skip static serving).
@@ -142,6 +142,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("POST /api/personas", s.handlePersonasCreate)
 	s.mux.HandleFunc("GET /api/personas/system-prompt", s.handleSystemPromptGet)
 	s.mux.HandleFunc("PUT /api/personas/system-prompt", s.handleSystemPromptPut)
+	s.mux.HandleFunc("GET /api/settings/default-model", s.handleDefaultModelGet)
+	s.mux.HandleFunc("PUT /api/settings/default-model", s.handleDefaultModelPut)
 	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
 	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
 	s.mux.HandleFunc("POST /api/avatars", s.handleAvatarUpload)
@@ -485,12 +487,29 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// Load global system prompt (prepended to every persona prompt).
 	globalSysPrompt, _ := s.store.GetSystemPrompt(r.Context())
 
+	// Extract @model-id tag from the message (if any).
+	modelID := s.extractModelTag(lastUserText)
+	if modelID == "" {
+		// No explicit model tag — use default model from settings.
+		modelID, _ = s.store.GetSetting(r.Context(), "default_model")
+	} else {
+		// Strip the @model tag from the user text.
+		lastUserText = strings.Replace(lastUserText, "@"+modelID, "", 1)
+		lastUserText = strings.TrimSpace(lastUserText)
+	}
+
 	// Check for @persona or @tag mention in the last user message.
 	strippedText, personas := s.resolvePersonas(r.Context(), lastUserText)
 
 	if len(personas) == 0 {
 		// No persona — run default agent with global system prompt if set.
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, req.Messages, globalSysPrompt, "")
+		msgs := req.Messages
+		if strippedText != lastUserContent(req.Messages) {
+			msgs = make([]llm.ChatMessage, len(req.Messages))
+			copy(msgs, req.Messages)
+			msgs[len(msgs)-1] = llm.ChatMessage{Role: "user", Content: strippedText}
+		}
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, globalSysPrompt, modelID, "")
 		return
 	}
 
@@ -506,7 +525,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			displayName = p.Name
 		}
 		combinedPrompt := combinePrompts(globalSysPrompt, p.Prompt)
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, combinedPrompt, displayName)
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, combinedPrompt, modelID, displayName)
 		return
 	}
 
@@ -523,8 +542,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamSingleAgent runs one agent and streams its events.
-// If sysPrompt is empty, uses the default agent.
-func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, sysPrompt, personaName string) {
+// If sysPrompt is empty, uses the default agent. model overrides the LLM model if set.
+func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, sysPrompt, model, personaName string) {
 	eventCh := make(chan agent.AgentEvent, 64)
 	doneCh := make(chan struct{})
 
@@ -557,8 +576,8 @@ func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, f
 
 	var result *agent.RunResult
 	var err error
-	if sysPrompt != "" && s.agentWithPrompt != nil {
-		result, err = s.agentWithPrompt(ctx, sysPrompt, sessionID, messages, onEvent)
+	if (sysPrompt != "" || model != "") && s.agentWithPrompt != nil {
+		result, err = s.agentWithPrompt(ctx, sysPrompt, model, sessionID, messages, onEvent)
 	} else {
 		result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
 	}
@@ -611,7 +630,7 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 			var result *agent.RunResult
 			var err error
 			if s.agentWithPrompt != nil {
-				result, err = s.agentWithPrompt(ctx, persona.Prompt, sessionID, messages, onEvent)
+				result, err = s.agentWithPrompt(ctx, persona.Prompt, "", sessionID, messages, onEvent)
 			} else {
 				result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
 			}
@@ -802,6 +821,22 @@ func combinePrompts(global, persona string) string {
 		return global
 	}
 	return global + "\n\n" + persona
+}
+
+// extractModelTag scans the text for @model-id where model-id matches a known model.
+// Returns the model ID if found, or empty string.
+func (s *Server) extractModelTag(text string) string {
+	if s.router == nil {
+		return ""
+	}
+	models := s.router.Models()
+	for _, m := range models {
+		tag := "@" + m.ID
+		if strings.Contains(text, tag) {
+			return m.ID
+		}
+	}
+	return ""
 }
 
 func lastUserContent(messages []llm.ChatMessage) string {

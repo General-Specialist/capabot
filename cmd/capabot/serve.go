@@ -147,10 +147,15 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		return a.Run(runCtx, sessionID, messages)
 	}
 
-	// runAgentWithPrompt is like runAgent but with a custom system prompt (used for personas).
-	runAgentWithPrompt := func(runCtx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
+	// runAgentWithPrompt is like runAgent but with a custom system prompt and optional model override.
+	runAgentWithPrompt := func(runCtx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
 		customCfg := agentCfg
-		customCfg.SystemPrompt = sysPrompt
+		if sysPrompt != "" {
+			customCfg.SystemPrompt = sysPrompt
+		}
+		if model != "" {
+			customCfg.Model = model
+		}
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
 		a := agent.New(customCfg, router, toolRegistry, ctxMgr, logger)
 		if onEvent != nil {
@@ -159,6 +164,20 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		if store != nil {
 			a.SetStore(&storeAdapter{store: store})
 		}
+		return a.Run(runCtx, sessionID, messages)
+	}
+
+	// runAgentEphemeral is like runAgentWithPrompt but doesn't persist messages (for transports).
+	runAgentEphemeral := func(runCtx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage) (*agent.RunResult, error) {
+		customCfg := agentCfg
+		if sysPrompt != "" {
+			customCfg.SystemPrompt = sysPrompt
+		}
+		if model != "" {
+			customCfg.Model = model
+		}
+		ctxMgr := agent.NewContextManager(ctxMgrCfg)
+		a := agent.New(customCfg, router, toolRegistry, ctxMgr, logger)
 		return a.Run(runCtx, sessionID, messages)
 	}
 
@@ -278,7 +297,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	}
 
 	// 10. Start bot transports
-	messageHandler := makeMessageHandler(runAgent, runAgentWithPrompt, store, contentFilter, logger)
+	messageHandler := makeMessageHandler(runAgentEphemeral, store, router, contentFilter, logger)
 
 	// HTTP bot transport (always started)
 	httpTransport := transport.NewHTTPTransport(transport.HTTPConfig{
@@ -383,9 +402,9 @@ func avatarToDataURI(avatarURL string) string {
 }
 
 func makeMessageHandler(
-	runAgent func(context.Context, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
-	runAgentWithPrompt func(context.Context, string, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
+	runAgent func(context.Context, string, string, string, []llm.ChatMessage) (*agent.RunResult, error),
 	store *memory.Store,
+	router *llm.Router,
 	filter *agent.ContentFilter,
 	logger zerolog.Logger,
 ) func(t transport.Transport) func(context.Context, transport.InboundMessage) {
@@ -399,46 +418,61 @@ func makeMessageHandler(
 				})
 				return
 			}
-			if store != nil {
-				_ = store.UpsertSession(msgCtx, memory.Session{
-					ID:       msg.ChannelID,
-					TenantID: "default",
-					Channel:  t.Name(),
-					Metadata: "{}",
-				})
+
+			// Extract @model-id tag from the message.
+			modelID := extractModelTag(msg.Text, router)
+			if modelID != "" {
+				msg.Text = strings.Replace(msg.Text, "@"+modelID, "", 1)
+				msg.Text = strings.TrimSpace(msg.Text)
+			} else {
+				modelID, _ = store.GetSetting(msgCtx, "default_model")
 			}
 
 			// Detect @PersonaName or @tag mention at the start of the message.
 			text, personas := resolvePersonas(msgCtx, store, msg.Text, logger)
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
 
+			// Load global system prompt (prepended to every persona prompt).
+			globalSysPrompt, _ := store.GetSystemPrompt(msgCtx)
+
+			sendResponse := func(result *agent.RunResult, displayName, avatarData string) {
+				text := strings.TrimSpace(result.Response)
+				if text == "" {
+					text = "(empty response)"
+					logger.Warn().Str("display_name", displayName).Msg("agent returned empty response")
+				}
+				if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: text, DisplayName: displayName, AvatarData: avatarData}); err != nil {
+					logger.Error().Err(err).Str("display_name", displayName).Msg("transport send failed")
+				}
+			}
+
 			if len(personas) == 0 {
-				// No persona — run default agent.
-				result, err := runAgent(msgCtx, msg.ChannelID, messages, nil)
+				result, err := runAgent(msgCtx, globalSysPrompt, modelID, msg.ChannelID, messages)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
 					return
 				}
-				_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response})
+				sendResponse(result, "", "")
 			} else if len(personas) == 1 {
-				// Single persona.
 				p := personas[0]
 				displayName := p.Username
 				if displayName == "" {
 					displayName = p.Name
 				}
-				result, err := runAgentWithPrompt(msgCtx, p.Prompt, msg.ChannelID, messages, nil)
+				prompt := p.Prompt
+				if globalSysPrompt != "" {
+					prompt = globalSysPrompt + "\n\n" + prompt
+				}
+				result, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("persona", p.Name).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
 					return
 				}
-				if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response, DisplayName: displayName, AvatarData: avatarToDataURI(p.AvatarURL)}); err != nil {
-					logger.Error().Err(err).Str("persona", p.Name).Msg("discord send failed")
-				}
+				sendResponse(result, displayName, avatarToDataURI(p.AvatarURL))
 			} else {
-				// Multiple personas (tag match) — run agents in parallel, send results as they arrive.
+				// Multiple personas — run in parallel, send as each finishes.
 				type personaResult struct {
 					persona memory.Persona
 					result  *agent.RunResult
@@ -447,7 +481,11 @@ func makeMessageHandler(
 				resultCh := make(chan personaResult, len(personas))
 				for _, p := range personas {
 					go func(persona memory.Persona) {
-						res, err := runAgentWithPrompt(msgCtx, persona.Prompt, msg.ChannelID, messages, nil)
+						prompt := persona.Prompt
+						if globalSysPrompt != "" {
+							prompt = globalSysPrompt + "\n\n" + prompt
+						}
+						res, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
 						resultCh <- personaResult{persona: persona, result: res, err: err}
 					}(p)
 				}
@@ -459,18 +497,27 @@ func makeMessageHandler(
 					}
 					if r.err != nil {
 						logger.Error().Err(r.err).Str("persona", r.persona.Name).Msg("persona agent failed")
-						if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", r.err), DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)}); err != nil {
-							logger.Error().Err(err).Str("persona", r.persona.Name).Msg("discord send failed")
-						}
+						_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", r.err), DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)})
 						continue
 					}
-					if err := t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: r.result.Response, DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)}); err != nil {
-						logger.Error().Err(err).Str("persona", r.persona.Name).Msg("discord send failed")
-					}
+					sendResponse(r.result, displayName, avatarToDataURI(r.persona.AvatarURL))
 				}
 			}
 		}
 	}
+}
+
+// extractModelTag checks if text contains @model-id matching a known model.
+func extractModelTag(text string, router *llm.Router) string {
+	if router == nil {
+		return ""
+	}
+	for _, m := range router.Models() {
+		if strings.Contains(text, "@"+m.ID) {
+			return m.ID
+		}
+	}
+	return ""
 }
 
 // resolvePersonas checks if text starts with @username, @tag, or a Discord role mention <@&ID>.

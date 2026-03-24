@@ -762,8 +762,8 @@ func (s *Store) CreatePersona(ctx context.Context, p Persona) (int64, error) {
 	}
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`INSERT INTO personas (name, prompt, username, avatar_url, avatar_position, tags, system_prompt)
-			 VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT system_prompt FROM personas LIMIT 1), ''))
+			`INSERT INTO personas (name, prompt, username, avatar_url, avatar_position, tags)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING id`,
 			p.Name, p.Prompt, p.Username, p.AvatarURL, p.AvatarPosition, pgStringArray(p.Tags),
 		).Scan(&id)
@@ -812,24 +812,29 @@ func (s *Store) DeletePersona(ctx context.Context, id int64) error {
 	})
 }
 
-// GetSystemPrompt returns the global system prompt (shared across all personas).
-// Returns empty string if no personas exist yet.
-func (s *Store) GetSystemPrompt(ctx context.Context) (string, error) {
+// GetSetting returns a value from the settings table. Returns empty string if not found.
+func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
-	err := s.pool.DB().QueryRowContext(ctx, `SELECT COALESCE(system_prompt, '') FROM personas LIMIT 1`).Scan(&v)
+	err := s.pool.DB().QueryRowContext(ctx, `SELECT value FROM settings WHERE key = $1`, key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return v, err
 }
 
-// SetSystemPrompt updates the global system prompt on all persona rows.
-func (s *Store) SetSystemPrompt(ctx context.Context, prompt string) error {
+// SetSetting upserts a key-value pair in the settings table.
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE personas SET system_prompt = $1`, prompt)
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+			key, value)
 		return err
 	})
 }
+
+// Convenience wrappers for backward compat.
+func (s *Store) GetSystemPrompt(ctx context.Context) (string, error) { return s.GetSetting(ctx, "system_prompt") }
+func (s *Store) SetSystemPrompt(ctx context.Context, prompt string) error { return s.SetSetting(ctx, "system_prompt", prompt) }
 
 // UpsertDiscordTagRole stores a tag → Discord role ID mapping.
 func (s *Store) UpsertDiscordTagRole(ctx context.Context, tag, roleID string) error {

@@ -73,7 +73,16 @@ func (r *Router) Models() []ModelInfo {
 }
 
 // Chat delegates to the primary provider, falling back on retryable errors.
+// If req.Model is set, routes directly to the provider that owns that model.
 func (r *Router) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	// Model-based routing: if a specific model is requested, find its provider.
+	if req.Model != "" {
+		if resp, err := r.ChatWithModel(ctx, req.Model, req); err == nil || !isRetryable(err) {
+			return resp, err
+		}
+		// Fall through to default routing if model-based routing fails with retryable error.
+	}
+
 	names := r.orderedProviders()
 	var lastErr error
 	for _, name := range names {
@@ -117,6 +126,25 @@ func (r *Router) Stream(ctx context.Context, req ChatRequest) (<-chan StreamChun
 		}
 	}
 	return nil, fmt.Errorf("router stream: all providers failed: %w", lastErr)
+}
+
+// ChatWithModel routes to the provider that owns the given model ID.
+// If modelID is empty, falls back to normal Chat behavior.
+func (r *Router) ChatWithModel(ctx context.Context, modelID string, req ChatRequest) (*ChatResponse, error) {
+	if modelID == "" {
+		return r.Chat(ctx, req)
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.providers {
+		for _, m := range p.Models() {
+			if m.ID == modelID {
+				req.Model = modelID
+				return p.Chat(ctx, req)
+			}
+		}
+	}
+	return nil, fmt.Errorf("router: no provider found for model %q", modelID)
 }
 
 // orderedProviders returns [primary, fallbacks...].
