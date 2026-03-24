@@ -17,6 +17,7 @@ interface Message {
   streaming?: boolean
   toolCalls?: ToolCall[]
   usage?: { input_tokens: number; output_tokens: number }
+  persona?: string
 }
 
 function toolLabel(name: string, input?: Record<string, unknown>): string {
@@ -172,6 +173,21 @@ export function ChatPage() {
       return updated
     }), [])
 
+  // updatePersonaMessage updates or inserts an assistant message for a specific persona.
+  const updatePersonaMessage = useCallback((persona: string, patch: Partial<Message>) =>
+    setMessages(prev => {
+      const updated = [...prev]
+      // Find the existing assistant message for this persona.
+      const idx = updated.findLastIndex(m => m.role === 'assistant' && m.persona === persona)
+      if (idx >= 0) {
+        updated[idx] = { ...updated[idx], ...patch }
+      } else {
+        // Insert a new assistant message for this persona.
+        updated.push({ role: 'assistant', content: '', streaming: true, toolCalls: [], persona, ...patch })
+      }
+      return updated
+    }), [])
+
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
@@ -192,68 +208,144 @@ export function ChatPage() {
     setMessages(prev => [
       ...prev,
       { role: 'user', content: trimmed },
-      { role: 'assistant', content: '', streaming: true, toolCalls: [] },
     ])
+
+    // Per-persona accumulators for multi-agent streams.
+    const personaState: Record<string, {
+      content: string
+      thinking: string
+      toolCalls: ToolCall[]
+      pendingToolCalls: { id: string; name: string; input: unknown }[]
+      pendingToolResults: { tool_use_id: string; content: string; is_error?: boolean }[]
+    }> = {}
+    const getState = (p: string) => {
+      if (!personaState[p]) {
+        personaState[p] = { content: '', thinking: '', toolCalls: [], pendingToolCalls: [], pendingToolResults: [] }
+      }
+      return personaState[p]
+    }
+
+    // Track whether this is a single-agent (no persona field) or multi-agent stream.
+    let isMulti = false
     let accumulated = ''
     let accumulatedThinking = ''
+    // For single-agent, add the placeholder immediately.
+    let placeholderAdded = false
+
     try {
       await api.chatStream(historyToSend, sessionId.current, (chunk: StreamChunk) => {
         if (chunk.session_id) sessionId.current = chunk.session_id
-        if (chunk.event === 'thinking') {
-          setThinking(true)
-          if (chunk.thinking) {
-            accumulatedThinking += chunk.thinking
-            updateLast({ thinking: accumulatedThinking })
+
+        // Detect multi-persona mode.
+        if (chunk.persona && !isMulti) {
+          isMulti = true
+          // Remove single-agent placeholder if we added one.
+          if (placeholderAdded) {
+            setMessages(prev => prev.filter((m, i) => !(i === prev.length - 1 && m.role === 'assistant' && !m.persona)))
           }
         }
-        if (chunk.event === 'tool_start' && chunk.tool_name) {
-          setThinking(false)
-          const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
-          toolCallsRef.current = [...toolCallsRef.current, tc]
-          updateLast({ toolCalls: [...toolCallsRef.current] })
-          pendingToolCallsRef.current = [
-            ...pendingToolCallsRef.current,
-            { id: chunk.tool_id ?? chunk.tool_name, name: chunk.tool_name, input: chunk.tool_input ?? {} },
-          ]
-        }
-        if (chunk.event === 'tool_end' && chunk.tool_id) {
-          pendingToolResultsRef.current = [
-            ...pendingToolResultsRef.current,
-            { tool_use_id: chunk.tool_id, content: chunk.content ?? '', is_error: chunk.is_error },
-          ]
-          // Nth tool_end matches Nth tool_start
-          const idx = pendingToolResultsRef.current.length - 1
-          if (idx < toolCallsRef.current.length) {
-            const updated = [...toolCallsRef.current]
-            updated[idx] = { ...updated[idx], result: chunk.content ?? '' }
-            toolCallsRef.current = updated
+
+        if (isMulti && chunk.persona) {
+          const ps = getState(chunk.persona)
+          if (chunk.event === 'thinking' && chunk.thinking) {
+            ps.thinking += chunk.thinking
+            updatePersonaMessage(chunk.persona, { thinking: ps.thinking, streaming: true })
+          }
+          if (chunk.event === 'tool_start' && chunk.tool_name) {
+            const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
+            ps.toolCalls = [...ps.toolCalls, tc]
+            ps.pendingToolCalls = [...ps.pendingToolCalls, { id: chunk.tool_id ?? chunk.tool_name, name: chunk.tool_name, input: chunk.tool_input ?? {} }]
+            updatePersonaMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
+          }
+          if (chunk.event === 'tool_end' && chunk.tool_id) {
+            ps.pendingToolResults = [...ps.pendingToolResults, { tool_use_id: chunk.tool_id, content: chunk.content ?? '', is_error: chunk.is_error }]
+            const idx = ps.pendingToolResults.length - 1
+            if (idx < ps.toolCalls.length) {
+              ps.toolCalls = [...ps.toolCalls]
+              ps.toolCalls[idx] = { ...ps.toolCalls[idx], result: chunk.content ?? '' }
+              updatePersonaMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
+            }
+          }
+          if (chunk.event === 'response' && chunk.content) {
+            ps.content = chunk.content
+            updatePersonaMessage(chunk.persona, { content: ps.content, streaming: true })
+          }
+        } else if (!isMulti) {
+          // Single-agent path (no persona).
+          if (!placeholderAdded) {
+            setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true, toolCalls: [] }])
+            placeholderAdded = true
+          }
+          if (chunk.event === 'thinking') {
+            setThinking(true)
+            if (chunk.thinking) {
+              accumulatedThinking += chunk.thinking
+              updateLast({ thinking: accumulatedThinking })
+            }
+          }
+          if (chunk.event === 'tool_start' && chunk.tool_name) {
+            setThinking(false)
+            const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
+            toolCallsRef.current = [...toolCallsRef.current, tc]
             updateLast({ toolCalls: [...toolCallsRef.current] })
+            pendingToolCallsRef.current = [
+              ...pendingToolCallsRef.current,
+              { id: chunk.tool_id ?? chunk.tool_name, name: chunk.tool_name, input: chunk.tool_input ?? {} },
+            ]
+          }
+          if (chunk.event === 'tool_end' && chunk.tool_id) {
+            pendingToolResultsRef.current = [
+              ...pendingToolResultsRef.current,
+              { tool_use_id: chunk.tool_id, content: chunk.content ?? '', is_error: chunk.is_error },
+            ]
+            const idx = pendingToolResultsRef.current.length - 1
+            if (idx < toolCallsRef.current.length) {
+              const updated = [...toolCallsRef.current]
+              updated[idx] = { ...updated[idx], result: chunk.content ?? '' }
+              toolCallsRef.current = updated
+              updateLast({ toolCalls: [...toolCallsRef.current] })
+            }
+          }
+          if (chunk.event === 'response' && chunk.content) {
+            setThinking(false)
+            accumulated = chunk.content
+            updateLast({ content: accumulated, streaming: true })
           }
         }
-        if (chunk.event === 'response' && chunk.content) {
-          setThinking(false)
-          accumulated = chunk.content
-          updateLast({ content: accumulated, streaming: true })
-        }
+
         if (chunk.done) {
-          // Append assistant message (with any tool calls) + tool results to LLM history
-          const assistantMsg: LLMMessage = { role: 'assistant', content: accumulated }
-          if (pendingToolCallsRef.current.length > 0) {
-            assistantMsg.tool_calls = pendingToolCallsRef.current
+          if (isMulti) {
+            // Finalize all persona messages.
+            for (const [pName, ps] of Object.entries(personaState)) {
+              updatePersonaMessage(pName, { content: ps.content, streaming: false })
+            }
+            // Add combined responses to LLM history.
+            for (const ps of Object.values(personaState)) {
+              llmHistoryRef.current = [...llmHistoryRef.current, { role: 'assistant', content: ps.content }]
+            }
+          } else {
+            const assistantMsg: LLMMessage = { role: 'assistant', content: accumulated }
+            if (pendingToolCallsRef.current.length > 0) {
+              assistantMsg.tool_calls = pendingToolCallsRef.current
+            }
+            const toolMsgs: LLMMessage[] = pendingToolResultsRef.current.map(r => ({
+              role: 'tool' as const,
+              tool_result: r,
+            }))
+            llmHistoryRef.current = [...llmHistoryRef.current, assistantMsg, ...toolMsgs]
+            pendingToolCallsRef.current = []
+            pendingToolResultsRef.current = []
+            updateLast({ content: accumulated, streaming: false, usage: chunk.usage })
           }
-          const toolMsgs: LLMMessage[] = pendingToolResultsRef.current.map(r => ({
-            role: 'tool' as const,
-            tool_result: r,
-          }))
-          llmHistoryRef.current = [...llmHistoryRef.current, assistantMsg, ...toolMsgs]
-          pendingToolCallsRef.current = []
-          pendingToolResultsRef.current = []
           setThinking(false)
-          updateLast({ content: accumulated, streaming: false, usage: chunk.usage })
           setLoading(false)
         }
         if (chunk.error) {
-          updateLast({ content: accumulated || chunk.error, streaming: false })
+          if (isMulti && chunk.persona) {
+            updatePersonaMessage(chunk.persona, { content: chunk.error, streaming: false })
+          } else {
+            updateLast({ content: accumulated || chunk.error, streaming: false })
+          }
           setError(chunk.error)
           setLoading(false)
         }
@@ -261,11 +353,15 @@ export function ChatPage() {
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') { setLoading(false); return }
       const msg = err instanceof Error ? err.message : 'Failed to connect'
-      updateLast({ content: accumulated || msg, streaming: false })
-      setError(msg)
+      if (isMulti) {
+        setError(msg)
+      } else {
+        updateLast({ content: accumulated || msg, streaming: false })
+        setError(msg)
+      }
       setLoading(false)
     }
-  }, [loading, updateLast])
+  }, [loading, updateLast, updatePersonaMessage])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -348,6 +444,9 @@ export function ChatPage() {
                   </div>
                 ) : (
                   <div key={i} className="flex flex-col items-start gap-1">
+                    {msg.persona && (
+                      <span className="text-xs font-medium text-brand-primary px-1">{msg.persona}</span>
+                    )}
                     {msg.thinking && (
                       <ThinkingChip text={msg.thinking} streaming={msg.streaming && thinking} />
                     )}

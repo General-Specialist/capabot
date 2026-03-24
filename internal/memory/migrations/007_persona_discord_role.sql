@@ -1,0 +1,1 @@
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS discord_role_id TEXT NOT NULL DEFAULT '';

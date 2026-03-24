@@ -669,19 +669,20 @@ func decodeEmbedding(b []byte) []float32 {
 
 // Persona is a named system prompt with optional display overrides and tags.
 type Persona struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Prompt    string    `json:"prompt"`
-	Username  string    `json:"username"`
-	AvatarURL string    `json:"avatar_url"`
-	Tags      []string  `json:"tags"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	Prompt        string    `json:"prompt"`
+	Username      string    `json:"username"`
+	AvatarURL     string    `json:"avatar_url"`
+	Tags          []string  `json:"tags"`
+	DiscordRoleID string    `json:"discord_role_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas ORDER BY name ASC`)
+		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +691,7 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	for rows.Next() {
 		var p Persona
 		var tags pgStringArray
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Tags = []string(tags)
@@ -706,8 +707,22 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, err
 	var p Persona
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas WHERE name = $1`, name,
-	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE name = $1`, name,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+	p.Tags = []string(tags)
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+	return p, err
+}
+
+// GetPersonaByUsername returns a persona by its username (the @mention handle).
+func (s *Store) GetPersonaByUsername(ctx context.Context, username string) (Persona, error) {
+	var p Persona
+	var tags pgStringArray
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE username = $1`, username,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
 		p.Tags = []string{}
@@ -718,7 +733,7 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, err
 // GetPersonasByTag returns all personas that have the given tag.
 func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, tags, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
+		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +742,7 @@ func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, er
 	for rows.Next() {
 		var p Persona
 		var tags pgStringArray
-		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Tags = []string(tags)
@@ -765,9 +780,77 @@ func (s *Store) UpdatePersona(ctx context.Context, p Persona) error {
 	})
 }
 
+// SetPersonaDiscordRoleID stores the Discord role ID for a persona.
+func (s *Store) SetPersonaDiscordRoleID(ctx context.Context, id int64, roleID string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE personas SET discord_role_id=$1, updated_at=NOW() WHERE id=$2`, roleID, id)
+		return err
+	})
+}
+
+// GetPersonaByDiscordRoleID returns a persona by its Discord role ID.
+func (s *Store) GetPersonaByDiscordRoleID(ctx context.Context, roleID string) (Persona, error) {
+	var p Persona
+	var tags pgStringArray
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT id, name, prompt, username, avatar_url, tags, discord_role_id, created_at, updated_at FROM personas WHERE discord_role_id = $1`, roleID,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+	p.Tags = []string(tags)
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+	return p, err
+}
+
 func (s *Store) DeletePersona(ctx context.Context, id int64) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=$1`, id)
 		return err
 	})
+}
+
+// UpsertDiscordTagRole stores a tag → Discord role ID mapping.
+func (s *Store) UpsertDiscordTagRole(ctx context.Context, tag, roleID string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO discord_tag_roles (tag, role_id) VALUES ($1, $2) ON CONFLICT (tag) DO UPDATE SET role_id = $2`,
+			tag, roleID)
+		return err
+	})
+}
+
+// GetTagByDiscordRoleID returns the tag name for a Discord role ID.
+func (s *Store) GetTagByDiscordRoleID(ctx context.Context, roleID string) (string, error) {
+	var tag string
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT tag FROM discord_tag_roles WHERE role_id = $1`, roleID,
+	).Scan(&tag)
+	return tag, err
+}
+
+// DeleteDiscordTagRole removes a tag → role mapping.
+func (s *Store) DeleteDiscordTagRole(ctx context.Context, tag string) (string, error) {
+	var roleID string
+	err := s.pool.DB().QueryRowContext(ctx,
+		`DELETE FROM discord_tag_roles WHERE tag = $1 RETURNING role_id`, tag,
+	).Scan(&roleID)
+	return roleID, err
+}
+
+// ListDiscordTagRoles returns all tag → role ID mappings.
+func (s *Store) ListDiscordTagRoles(ctx context.Context) (map[string]string, error) {
+	rows, err := s.pool.DB().QueryContext(ctx, `SELECT tag, role_id FROM discord_tag_roles`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var tag, roleID string
+		if err := rows.Scan(&tag, &roleID); err != nil {
+			return nil, err
+		}
+		out[tag] = roleID
+	}
+	return out, rows.Err()
 }

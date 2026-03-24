@@ -98,6 +98,8 @@ export interface StreamChunk {
   tool_input?: Record<string, unknown>
   is_error?: boolean
   iteration?: number
+  // persona (set when @persona or @tag activated an agent)
+  persona?: string
   // completion fields
   session_id?: string
   done?: boolean

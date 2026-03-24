@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Pencil, Trash2, Check, X, Camera, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Trash2, Check, X, Camera, Search } from 'lucide-react'
 import { api, type Persona } from '@/lib/api'
 import TagPicker from '@/components/TagPicker'
 
@@ -19,6 +19,7 @@ function PersonaForm({
   const [username, setUsername] = useState(initial?.username ?? '')
   const [avatarUrl, setAvatarUrl] = useState(initial?.avatar_url ?? '')
   const [tags, setTags] = useState<string[]>(initial?.tags ?? [])
+  const [usernameTouched, setUsernameTouched] = useState(!!initial?.username)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
@@ -66,17 +67,24 @@ function PersonaForm({
       <div className="flex-1 flex flex-col gap-2">
       <div className="flex gap-2">
         <input
-          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono"
-          placeholder="Name (e.g. ProductManager)"
+          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none"
+          placeholder="Name (e.g. Product Manager)"
           value={name}
-          onChange={e => setName(e.target.value.replace(/\s/g, ''))}
+          onChange={e => {
+            const v = e.target.value
+            setName(v)
+            if (!usernameTouched) setUsername(v.replace(/\s/g, ''))
+          }}
           disabled={!!initial}
         />
         <input
-          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none"
-          placeholder="Username (optional)"
+          className="flex-1 border border-border-white rounded-xl px-3 py-2 text-sm bg-sidebar-white text-hover-black outline-none font-mono"
+          placeholder="@username"
           value={username}
-          onChange={e => setUsername(e.target.value)}
+          onChange={e => {
+            setUsernameTouched(true)
+            setUsername(e.target.value.replace(/\s/g, ''))
+          }}
         />
       </div>
       <TagPicker allTags={allTags} value={tags} onChange={setTags} />
@@ -110,13 +118,10 @@ function PersonaForm({
   )
 }
 
-function PersonaCard({ persona: p, allTags, isEditing, deleting, onEdit, onCancelEdit, onSave, onDelete }: {
+function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
   persona: Persona
   allTags: string[]
-  isEditing: boolean
   deleting: boolean
-  onEdit: () => void
-  onCancelEdit: () => void
   onSave: (data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => Promise<void>
   onDelete: () => void
 }) {
@@ -124,105 +129,87 @@ function PersonaCard({ persona: p, allTags, isEditing, deleting, onEdit, onCance
   const [prompt, setPrompt] = useState(p.prompt)
   const [avatarUrl, setAvatarUrl] = useState(p.avatar_url)
   const [tags, setTags] = useState<string[]>(p.tags ?? [])
-  const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const fileRef = useRef<HTMLInputElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout>>()
 
   const handleAvatarUpload = async (file: File) => {
     setUploading(true)
-    try { setAvatarUrl(await api.avatarUpload(file)) } catch { /* ignore */ } finally { setUploading(false) }
-  }
-
-  const handleSave = async () => {
-    setSaving(true)
     try {
-      await onSave({ name: p.name, prompt, username: username.trim(), avatar_url: avatarUrl, tags })
-    } catch { setSaving(false) }
+      const url = await api.avatarUpload(file)
+      setAvatarUrl(url)
+      doSave({ name: p.name, prompt, username: username.trim(), avatar_url: url, tags })
+    } catch { /* ignore */ } finally { setUploading(false) }
   }
 
-  const avatar = (
-    <div className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white shrink-0 overflow-hidden flex items-center justify-center">
-      {avatarUrl
-        ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-        : <span className="text-sm font-medium text-normal-black">{p.name[0]?.toUpperCase()}</span>
+  const doSave = useCallback((data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => {
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(async () => {
+      setSaveStatus('saving')
+      try {
+        await onSave(data)
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus(s => s === 'saved' ? 'idle' : s), 1500)
+      } catch {
+        setSaveStatus('idle')
       }
-    </div>
-  )
+    }, 800)
+  }, [onSave])
+
+  const updateField = useCallback(<K extends 'username' | 'prompt' | 'tags'>(field: K, value: K extends 'tags' ? string[] : string) => {
+    const next = { name: p.name, prompt, username: username.trim(), avatar_url: avatarUrl, tags }
+    if (field === 'username') { setUsername(value as string); next.username = (value as string).trim() }
+    else if (field === 'prompt') { setPrompt(value as string); next.prompt = value as string }
+    else if (field === 'tags') { setTags(value as string[]); next.tags = value as string[] }
+    doSave(next)
+  }, [p.name, prompt, username, avatarUrl, tags, doSave])
+
+  useEffect(() => () => clearTimeout(timerRef.current), [])
 
   return (
     <div className="border border-border-white rounded-xl p-5">
       <div className="flex items-start gap-4 mb-2">
-        {isEditing ? (
-          <>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
-            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="shrink-0 hover:opacity-80 transition-opacity disabled:opacity-50">
-              {avatar}
-            </button>
-          </>
-        ) : avatar}
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f) }} />
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="shrink-0 hover:opacity-80 transition-opacity disabled:opacity-50">
+          <div className="w-14 h-14 rounded-full bg-sidebar-white border border-border-white shrink-0 overflow-hidden flex items-center justify-center">
+            {avatarUrl
+              ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+              : <span className="text-sm font-medium text-normal-black">{p.name[0]?.toUpperCase()}</span>
+            }
+          </div>
+        </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="font-mono text-sm font-medium text-hover-black truncate">{p.name}</span>
-              {isEditing ? (
-                <input
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  placeholder="Username"
-                  className="text-xs text-normal-black bg-transparent outline-none border-b border-border-white flex-1 min-w-0"
-                />
-              ) : p.username ? (
-                <span className="text-xs text-normal-black truncate">{p.username}</span>
-              ) : null}
+              <span className="text-sm font-medium text-hover-black truncate">{p.name}</span>
+              <input
+                value={username}
+                onChange={e => updateField('username', e.target.value.replace(/\s/g, ''))}
+                placeholder="@username"
+                className="text-xs text-normal-black bg-transparent outline-none border-b border-transparent focus:border-border-white flex-1 min-w-0 font-mono"
+              />
             </div>
-            <div className="flex gap-0.5 shrink-0">
-              {isEditing ? (
-                <>
-                  <button type="button" onClick={onCancelEdit} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors">
-                    <X className="w-3 h-3" />
-                  </button>
-                  <button type="button" onClick={handleSave} disabled={saving} className="p-1 rounded-lg hover:bg-sidebar-white text-brand-primary disabled:opacity-50 transition-colors">
-                    <Check className="w-3 h-3" />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button type="button" onClick={onEdit} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-hover-black transition-colors">
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  <button type="button" onClick={onDelete} disabled={deleting} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors">
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </>
-              )}
+            <div className="flex items-center gap-1 shrink-0">
+              {saveStatus === 'saving' && <span className="text-[10px] text-normal-black animate-pulse">Saving…</span>}
+              {saveStatus === 'saved' && <span className="text-[10px] text-green-500">Saved</span>}
+              <button type="button" onClick={onDelete} disabled={deleting} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors">
+                <Trash2 className="w-3 h-3" />
+              </button>
             </div>
           </div>
-          {isEditing ? (
-            <div className="mt-2">
-              <TagPicker allTags={allTags} value={tags} onChange={setTags} />
-            </div>
-          ) : p.tags?.length > 0 ? (
-            <div className="flex gap-1.5 mt-2 flex-wrap">
-              {p.tags.map(tag => (
-                <span key={tag} className="text-xs bg-icon-hover-white text-brand-primary px-3 py-1 rounded-full font-medium">{tag}</span>
-              ))}
-            </div>
-          ) : null}
+          <div className="mt-2">
+            <TagPicker allTags={allTags} value={tags} onChange={v => updateField('tags', v)} />
+          </div>
         </div>
       </div>
-      {isEditing ? (
-        <textarea
-          value={prompt}
-          onChange={e => setPrompt(e.target.value)}
-          placeholder="Personality prompt…"
-          rows={3}
-          className="w-full text-xs text-normal-black font-mono bg-transparent outline-none resize-none border border-border-white rounded-lg px-2 py-1.5"
-        />
-      ) : (
-        <p className="text-xs text-normal-black whitespace-pre-wrap line-clamp-2 font-mono">
-          {p.prompt || <span className="italic">No prompt set</span>}
-        </p>
-      )}
+      <textarea
+        value={prompt}
+        onChange={e => updateField('prompt', e.target.value)}
+        placeholder="Personality prompt…"
+        rows={3}
+        className="w-full text-xs text-normal-black font-mono bg-transparent outline-none resize-none border border-transparent focus:border-border-white rounded-lg px-2 py-1.5 transition-colors"
+      />
     </div>
   )
 }
@@ -230,7 +217,6 @@ function PersonaCard({ persona: p, allTags, isEditing, deleting, onEdit, onCance
 export function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([])
   const [creating, setCreating] = useState(false)
-  const [editing, setEditing] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
   const [filterTag, setFilterTag] = useState<string | null>(null)
   const [tagQuery, setTagQuery] = useState('')
@@ -252,8 +238,6 @@ export function PersonasPage() {
 
   const handleUpdate = async (id: number, data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => {
     await api.personaUpdate(id, data)
-    setEditing(null)
-    load()
   }
 
   const handleDelete = async (id: number) => {
@@ -339,10 +323,7 @@ export function PersonasPage() {
                 key={p.id}
                 persona={p}
                 allTags={allTags}
-                isEditing={editing === p.id}
                 deleting={deleting === p.id}
-                onEdit={() => setEditing(p.id)}
-                onCancelEdit={() => setEditing(null)}
                 onSave={(data) => handleUpdate(p.id, data)}
                 onDelete={() => handleDelete(p.id)}
               />

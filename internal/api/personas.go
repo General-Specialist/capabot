@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -43,8 +44,8 @@ func (s *Server) handlePersonasCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if strings.ContainsAny(body.Name, " \t\n") {
-		writeError(w, "name cannot contain spaces", http.StatusBadRequest)
+	if body.Username != "" && strings.ContainsAny(body.Username, " \t\n") {
+		writeError(w, "username cannot contain spaces", http.StatusBadRequest)
 		return
 	}
 	id, err := s.store.CreatePersona(r.Context(), memory.Persona{
@@ -62,6 +63,19 @@ func (s *Server) handlePersonasCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Sync Discord roles if configured.
+	if s.discordRoles != nil {
+		if body.Username != "" {
+			roleID, err := s.discordRoles.CreateRole(r.Context(), body.Username)
+			if err != nil {
+				s.logger.Warn().Err(err).Str("persona", body.Username).Msg("failed to create Discord role")
+			} else {
+				_ = s.store.SetPersonaDiscordRoleID(r.Context(), id, roleID)
+			}
+		}
+		s.syncTagRoles(r.Context(), body.Tags)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]any{"id": id})
 }
@@ -94,6 +108,23 @@ func (s *Server) handlePersonasUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Sync Discord roles on update.
+	if s.discordRoles != nil {
+		if body.Username != "" {
+			existing, err := s.store.GetPersonaByName(r.Context(), body.Name)
+			if err == nil && existing.DiscordRoleID != "" {
+				_ = s.discordRoles.UpdateRole(r.Context(), existing.DiscordRoleID, body.Username)
+			} else if err == nil && existing.DiscordRoleID == "" {
+				roleID, err := s.discordRoles.CreateRole(r.Context(), body.Username)
+				if err == nil {
+					_ = s.store.SetPersonaDiscordRoleID(r.Context(), id, roleID)
+				}
+			}
+		}
+		s.syncTagRoles(r.Context(), body.Tags)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -103,11 +134,39 @@ func (s *Server) handlePersonasDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
+	// Delete Discord role before removing from DB.
+	if s.discordRoles != nil {
+		personas, _ := s.store.ListPersonas(r.Context())
+		for _, p := range personas {
+			if p.ID == id && p.DiscordRoleID != "" {
+				_ = s.discordRoles.DeleteRole(r.Context(), p.DiscordRoleID)
+				break
+			}
+		}
+	}
 	if err := s.store.DeletePersona(r.Context(), id); err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// syncTagRoles creates Discord roles for any new tags that don't have one yet.
+func (s *Server) syncTagRoles(ctx context.Context, tags []string) {
+	if s.discordRoles == nil || s.store == nil {
+		return
+	}
+	existing, _ := s.store.ListDiscordTagRoles(ctx)
+	for _, tag := range tags {
+		if _, ok := existing[tag]; !ok {
+			roleID, err := s.discordRoles.CreateRole(ctx, tag)
+			if err != nil {
+				s.logger.Warn().Err(err).Str("tag", tag).Msg("failed to create Discord tag role")
+			} else {
+				_ = s.store.UpsertDiscordTagRole(ctx, tag, roleID)
+			}
+		}
+	}
 }
 
 func (s *Server) avatarsDir() string {

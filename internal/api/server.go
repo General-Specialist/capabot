@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
@@ -21,6 +22,7 @@ import (
 	"github.com/polymath/capabot/internal/memory"
 	"github.com/polymath/capabot/internal/orchestrator"
 	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/capabot/internal/transport"
 	"github.com/rs/zerolog"
 )
 
@@ -34,6 +36,7 @@ type Server struct {
 	providers      map[string]llm.Provider
 	toolReg        *agent.Registry
 	defaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	agentWithPrompt func(ctx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	logBroadcaster *applog.Broadcaster
 	scheduler      *cron.Scheduler
 	mux            *http.ServeMux
@@ -43,6 +46,7 @@ type Server struct {
 	clawHubToken   string // optional GitHub PAT for ClawHub requests
 	configPath     string // path to config.yaml for key management
 	router         *llm.Router
+	discordRoles   *transport.DiscordRoleClient
 }
 
 // Config holds dependencies for the API server.
@@ -52,8 +56,9 @@ type Config struct {
 	AgentReg       *orchestrator.Registry
 	Providers      map[string]llm.Provider
 	ToolReg        *agent.Registry
-	DefaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
-	LogBroadcaster *applog.Broadcaster
+	DefaultAgent    func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	AgentWithPrompt func(ctx context.Context, sysPrompt, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	LogBroadcaster  *applog.Broadcaster
 	Logger         zerolog.Logger
 	// StaticFS is the embedded web/dist for SPA serving (nil = skip static serving).
 	StaticFS fs.FS
@@ -72,6 +77,8 @@ type Config struct {
 	ConfigPath string
 	// Router is the LLM router, used to hot-reload provider keys.
 	Router *llm.Router
+	// DiscordRoles syncs persona roles to Discord (nil if Discord not configured).
+	DiscordRoles *transport.DiscordRoleClient
 }
 
 // New creates a new API server and registers all routes.
@@ -84,13 +91,14 @@ func New(cfg Config) *Server {
 	}
 
 	s := &Server{
-		store:          cfg.Store,
-		skillReg:       cfg.SkillReg,
-		agentReg:       cfg.AgentReg,
-		providers:      cfg.Providers,
-		toolReg:        cfg.ToolReg,
-		defaultAgent:   cfg.DefaultAgent,
-		logBroadcaster: cfg.LogBroadcaster,
+		store:           cfg.Store,
+		skillReg:        cfg.SkillReg,
+		agentReg:        cfg.AgentReg,
+		providers:       cfg.Providers,
+		toolReg:         cfg.ToolReg,
+		defaultAgent:    cfg.DefaultAgent,
+		agentWithPrompt: cfg.AgentWithPrompt,
+		logBroadcaster:  cfg.LogBroadcaster,
 		scheduler:      cfg.Scheduler,
 		mux:            http.NewServeMux(),
 		logger:         cfg.Logger,
@@ -98,6 +106,7 @@ func New(cfg Config) *Server {
 		clawHubToken:   cfg.ClawHubToken,
 		configPath:     cfg.ConfigPath,
 		router:         cfg.Router,
+		discordRoles:   cfg.DiscordRoles,
 	}
 
 	// REST endpoints
@@ -370,6 +379,73 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resolvePersonas checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
+// Returns the stripped text and matching personas.
+func (s *Server) resolvePersonas(ctx context.Context, text string) (string, []memory.Persona) {
+	if s.store == nil || len(text) < 2 {
+		return text, nil
+	}
+
+	// Check for Discord role mention: <@&ROLE_ID>
+	if strings.HasPrefix(text, "<@&") {
+		end := strings.Index(text, ">")
+		if end > 3 {
+			roleID := text[3:end]
+			remainder := strings.TrimLeft(text[end+1:], " ")
+			if remainder == "" {
+				remainder = text
+			}
+			// Try persona role.
+			persona, err := s.store.GetPersonaByDiscordRoleID(ctx, roleID)
+			if err == nil {
+				return remainder, []memory.Persona{persona}
+			}
+			// Try tag role.
+			tag, err := s.store.GetTagByDiscordRoleID(ctx, roleID)
+			if err == nil {
+				tagged, err := s.store.GetPersonasByTag(ctx, tag)
+				if err == nil && len(tagged) > 0 {
+					return remainder, tagged
+				}
+			}
+		}
+	}
+
+	if text[0] != '@' {
+		return text, nil
+	}
+	rest := text[1:]
+	name := rest
+	remainder := ""
+	for i, c := range rest {
+		if c == ' ' || c == '\n' {
+			name = rest[:i]
+			remainder = rest[i+1:]
+			break
+		}
+	}
+	if name == "" {
+		return text, nil
+	}
+	if remainder == "" {
+		remainder = text
+	}
+
+	// Try exact username first (the @mention handle).
+	persona, err := s.store.GetPersonaByUsername(ctx, name)
+	if err == nil {
+		return remainder, []memory.Persona{persona}
+	}
+
+	// Try as a tag.
+	tagged, err := s.store.GetPersonasByTag(ctx, name)
+	if err == nil && len(tagged) > 0 {
+		return remainder, tagged
+	}
+
+	return text, nil
+}
+
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Messages  []llm.ChatMessage `json:"messages"`
@@ -399,16 +475,49 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// eventCh carries agent events to the SSE writer goroutine.
-	// Buffer 64 so the agent never blocks emitting events.
+	lastUserText := lastUserContent(req.Messages)
+	tenantID := TenantIDFromContext(r.Context())
+	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
+	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
+
+	// Check for @persona or @tag mention in the last user message.
+	strippedText, personas := s.resolvePersonas(r.Context(), lastUserText)
+
+	if len(personas) == 0 {
+		// No persona — run default agent.
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, req.Messages, "", "")
+		return
+	}
+
+	// Build messages with the @mention stripped from the last user message.
+	msgs := make([]llm.ChatMessage, len(req.Messages))
+	copy(msgs, req.Messages)
+	msgs[len(msgs)-1] = llm.ChatMessage{Role: "user", Content: strippedText}
+
+	if len(personas) == 1 {
+		p := personas[0]
+		displayName := p.Username
+		if displayName == "" {
+			displayName = p.Name
+		}
+		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, p.Prompt, displayName)
+		return
+	}
+
+	// Multiple personas — fan out in parallel, all see full chat history.
+	s.streamMultiAgent(r.Context(), w, flusher, sessionID, msgs, personas)
+}
+
+// streamSingleAgent runs one agent and streams its events.
+// If sysPrompt is empty, uses the default agent.
+func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, sysPrompt, personaName string) {
 	eventCh := make(chan agent.AgentEvent, 64)
 	doneCh := make(chan struct{})
 
-	// Writer goroutine: drains eventCh and sends SSE frames.
 	go func() {
 		defer close(doneCh)
 		for ev := range eventCh {
-			sendSSE(w, flusher, map[string]any{
+			payload := map[string]any{
 				"event":      string(ev.Kind),
 				"tool_name":  ev.ToolName,
 				"tool_id":    ev.ToolID,
@@ -417,23 +526,30 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				"thinking":   ev.Thinking,
 				"is_error":   ev.IsError,
 				"iteration":  ev.Iteration,
-			})
+			}
+			if personaName != "" {
+				payload["persona"] = personaName
+			}
+			sendSSE(w, flusher, payload)
 		}
 	}()
 
-	lastUserText := lastUserContent(req.Messages)
-	tenantID := TenantIDFromContext(r.Context())
-	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
-
-	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
-	result, err := s.defaultAgent(r.Context(), sessionID, req.Messages, func(ev agent.AgentEvent) {
+	onEvent := func(ev agent.AgentEvent) {
 		select {
 		case eventCh <- ev:
-		default: // drop if buffer full rather than blocking agent
+		default:
 		}
-	})
+	}
+
+	var result *agent.RunResult
+	var err error
+	if sysPrompt != "" && s.agentWithPrompt != nil {
+		result, err = s.agentWithPrompt(ctx, sysPrompt, sessionID, messages, onEvent)
+	} else {
+		result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
+	}
 	close(eventCh)
-	<-doneCh // wait for writer to flush
+	<-doneCh
 
 	if err != nil {
 		sendSSE(w, flusher, map[string]any{"error": err.Error(), "done": true})
@@ -445,6 +561,92 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		"iterations": result.Iterations,
 		"usage":      result.Usage,
 	})
+}
+
+// personaEvent is a tagged agent event for multiplexing parallel persona streams.
+type personaEvent struct {
+	persona memory.Persona
+	event   agent.AgentEvent
+}
+
+// personaDone signals that a persona's agent run has completed.
+type personaDone struct {
+	persona memory.Persona
+	result  *agent.RunResult
+	err     error
+}
+
+// streamMultiAgent runs multiple personas in parallel, all seeing the full chat history.
+// Events are multiplexed onto the single SSE connection with a "persona" field.
+func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, personas []memory.Persona) {
+	eventCh := make(chan personaEvent, 64*len(personas))
+	doneCh := make(chan personaDone, len(personas))
+
+	// Launch all personas in parallel.
+	var wg sync.WaitGroup
+	for _, p := range personas {
+		wg.Add(1)
+		go func(persona memory.Persona) {
+			defer wg.Done()
+			onEvent := func(ev agent.AgentEvent) {
+				select {
+				case eventCh <- personaEvent{persona: persona, event: ev}:
+				default:
+				}
+			}
+			var result *agent.RunResult
+			var err error
+			if s.agentWithPrompt != nil {
+				result, err = s.agentWithPrompt(ctx, persona.Prompt, sessionID, messages, onEvent)
+			} else {
+				result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
+			}
+			doneCh <- personaDone{persona: persona, result: result, err: err}
+		}(p)
+	}
+
+	// Close eventCh once all agents finish.
+	go func() {
+		wg.Wait()
+		close(eventCh)
+	}()
+
+	// Drain events and forward as SSE with persona labels.
+	go func() {
+		for ev := range eventCh {
+			displayName := ev.persona.Username
+			if displayName == "" {
+				displayName = ev.persona.Name
+			}
+			sendSSE(w, flusher, map[string]any{
+				"event":      string(ev.event.Kind),
+				"tool_name":  ev.event.ToolName,
+				"tool_id":    ev.event.ToolID,
+				"tool_input": ev.event.ToolInput,
+				"content":    ev.event.Content,
+				"thinking":   ev.event.Thinking,
+				"is_error":   ev.event.IsError,
+				"iteration":  ev.event.Iteration,
+				"persona":    displayName,
+			})
+		}
+	}()
+
+	// Collect all results.
+	wg.Wait()
+	close(doneCh)
+
+	// Send completion for each persona, then final done.
+	for d := range doneCh {
+		displayName := d.persona.Username
+		if displayName == "" {
+			displayName = d.persona.Name
+		}
+		if d.err != nil {
+			sendSSE(w, flusher, map[string]any{"persona": displayName, "error": d.err.Error()})
+		}
+	}
+	sendSSE(w, flusher, map[string]any{"done": true})
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {

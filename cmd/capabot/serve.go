@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"syscall"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/polymath/capabot/internal/agent"
@@ -169,22 +170,65 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	if apiAddr == "" {
 		apiAddr = ":8080"
 	}
+	discordRoles := transport.NewDiscordRoleClient(cfg.Transports.Discord.Token, cfg.Transports.Discord.GuildID)
+
+	// Sync Discord roles for personas and tags.
+	if discordRoles != nil && store != nil {
+		personas, err := store.ListPersonas(ctx)
+		if err == nil {
+			// Sync persona roles.
+			for _, p := range personas {
+				if p.DiscordRoleID == "" && p.Username != "" {
+					roleID, err := discordRoles.CreateRole(ctx, p.Username)
+					if err != nil {
+						logger.Warn().Err(err).Str("persona", p.Username).Msg("failed to sync Discord role")
+					} else {
+						_ = store.SetPersonaDiscordRoleID(ctx, p.ID, roleID)
+						logger.Info().Str("persona", p.Username).Str("role_id", roleID).Msg("synced Discord persona role")
+					}
+				}
+			}
+
+			// Sync tag roles.
+			allTags := make(map[string]bool)
+			for _, p := range personas {
+				for _, t := range p.Tags {
+					allTags[t] = true
+				}
+			}
+			existingTagRoles, _ := store.ListDiscordTagRoles(ctx)
+			for tag := range allTags {
+				if _, exists := existingTagRoles[tag]; !exists {
+					roleID, err := discordRoles.CreateRole(ctx, tag)
+					if err != nil {
+						logger.Warn().Err(err).Str("tag", tag).Msg("failed to sync Discord tag role")
+					} else {
+						_ = store.UpsertDiscordTagRole(ctx, tag, roleID)
+						logger.Info().Str("tag", tag).Str("role_id", roleID).Msg("synced Discord tag role")
+					}
+				}
+			}
+		}
+	}
+
 	apiServer := api.New(api.Config{
-		Store:          store,
-		SkillReg:       skillRegistry,
-		Providers:      router.ProviderMap(),
-		ToolReg:        toolRegistry,
-		DefaultAgent:   runAgent,
-		LogBroadcaster: broadcaster,
-		Logger:         logger,
-		APIKey:         cfg.Security.APIKey,
-		RateLimitRPM:   cfg.Security.RateLimitRPM,
-		SkillsDir:      defaultSkillsDir(),
-		ClawHubToken:   os.Getenv("CAPABOT_GITHUB_TOKEN"),
-		StaticFS:       nil,
-		Scheduler:      scheduler,
-		ConfigPath:     configPath,
-		Router:         router,
+		Store:           store,
+		SkillReg:        skillRegistry,
+		Providers:       router.ProviderMap(),
+		ToolReg:         toolRegistry,
+		DefaultAgent:    runAgent,
+		AgentWithPrompt: runAgentWithPrompt,
+		LogBroadcaster:  broadcaster,
+		Logger:          logger,
+		APIKey:          cfg.Security.APIKey,
+		RateLimitRPM:    cfg.Security.RateLimitRPM,
+		SkillsDir:       defaultSkillsDir(),
+		ClawHubToken:    os.Getenv("CAPABOT_GITHUB_TOKEN"),
+		StaticFS:        nil,
+		Scheduler:       scheduler,
+		ConfigPath:      configPath,
+		Router:          router,
+		DiscordRoles:    discordRoles,
 	})
 	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
 	go func() {
@@ -354,44 +398,66 @@ func makeMessageHandler(
 				}
 				_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: result.Response, DisplayName: displayName, AvatarURL: p.AvatarURL})
 			} else {
-				// Multiple personas (tag match) — fan out in parallel.
-				type personaResult struct {
-					persona memory.Persona
-					text    string
-				}
-				results := make([]personaResult, len(personas))
+				// Multiple personas (tag match) — fan out in parallel, send as each finishes.
 				var wg sync.WaitGroup
-				for i, p := range personas {
+				for _, p := range personas {
 					wg.Add(1)
-					go func(idx int, persona memory.Persona) {
+					go func(persona memory.Persona) {
 						defer wg.Done()
-						sessionID := fmt.Sprintf("%s/%s", msg.ChannelID, persona.Name)
-						res, err := runAgentWithPrompt(msgCtx, persona.Prompt, sessionID, messages, nil)
+						displayName := persona.Username
+						if displayName == "" {
+							displayName = persona.Name
+						}
+						res, err := runAgentWithPrompt(msgCtx, persona.Prompt, msg.ChannelID, messages, nil)
 						if err != nil {
 							logger.Error().Err(err).Str("persona", persona.Name).Msg("persona agent failed")
-							results[idx] = personaResult{persona: persona, text: fmt.Sprintf("error: %v", err)}
+							_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err), DisplayName: displayName, AvatarURL: persona.AvatarURL})
 							return
 						}
-						results[idx] = personaResult{persona: persona, text: res.Response}
-					}(i, p)
+						_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: res.Response, DisplayName: displayName, AvatarURL: persona.AvatarURL})
+					}(p)
 				}
 				wg.Wait()
-				for _, r := range results {
-					displayName := r.persona.Username
-					if displayName == "" {
-						displayName = r.persona.Name
-					}
-					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: r.text, DisplayName: displayName, AvatarURL: r.persona.AvatarURL})
-				}
 			}
 		}
 	}
 }
 
-// resolvePersonas checks if text starts with @Name or @tag.
+// resolvePersonas checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
 // Returns the stripped text and matching personas (0 = no match, 1 = direct, N = tag fan-out).
 func resolvePersonas(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, []memory.Persona) {
-	if store == nil || len(text) < 2 || text[0] != '@' {
+	if store == nil || len(text) < 2 {
+		return text, nil
+	}
+
+	// Check for Discord role mention: <@&ROLE_ID>
+	if strings.HasPrefix(text, "<@&") {
+		end := strings.Index(text, ">")
+		if end > 3 {
+			roleID := text[3:end]
+			remainder := strings.TrimLeft(text[end+1:], " ")
+			if remainder == "" {
+				remainder = text
+			}
+			// Try persona role.
+			persona, err := store.GetPersonaByDiscordRoleID(ctx, roleID)
+			if err == nil {
+				logger.Info().Str("role_id", roleID).Str("persona", persona.Username).Msg("Discord role mention resolved")
+				return remainder, []memory.Persona{persona}
+			}
+			// Try tag role.
+			tag, err := store.GetTagByDiscordRoleID(ctx, roleID)
+			if err == nil {
+				tagged, err := store.GetPersonasByTag(ctx, tag)
+				if err == nil && len(tagged) > 0 {
+					logger.Info().Str("role_id", roleID).Str("tag", tag).Int("count", len(tagged)).Msg("Discord tag role mention resolved")
+					return remainder, tagged
+				}
+			}
+		}
+	}
+
+	if text[0] != '@' {
 		return text, nil
 	}
 	rest := text[1:]
@@ -411,8 +477,8 @@ func resolvePersonas(ctx context.Context, store *memory.Store, text string, logg
 		remainder = text
 	}
 
-	// Try exact persona name first.
-	persona, err := store.GetPersonaByName(ctx, name)
+	// Try exact username first (the @mention handle).
+	persona, err := store.GetPersonaByUsername(ctx, name)
 	if err == nil {
 		return remainder, []memory.Persona{persona}
 	}
