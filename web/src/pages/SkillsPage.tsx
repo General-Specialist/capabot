@@ -1,5 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
 import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
 
 function formatCount(n: number): string {
@@ -233,13 +237,13 @@ export function SkillsPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {skill.instructions && (
+                          {skill.instructions?.trim() && (
                             <button
                               onClick={() => setExpanded(prev => ({ ...prev, [skill.name]: !isExpanded }))}
-                              className="flex items-center gap-1 text-xs text-normal-black hover:text-hover-black transition-colors"
+                              className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
+                              title="Instructions"
                             >
-                              Instructions
-                              {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                             </button>
                           )}
                           {skill.removable && (
@@ -256,11 +260,13 @@ export function SkillsPage() {
                           )}
                         </div>
                       </div>
-                      {isExpanded && skill.instructions && (
-                        <div className="border-t border-border-white px-4 py-3 bg-sidebar-white">
-                          <pre className="text-xs text-normal-black whitespace-pre-wrap font-mono leading-relaxed max-h-64 overflow-y-auto">
-                            {skill.instructions}
-                          </pre>
+                      {isExpanded && skill.instructions?.trim() && (
+                        <div className="border-t border-border-white px-4 py-3 bg-sidebar-white max-h-64 overflow-y-auto">
+                          <div className="text-xs text-normal-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {skill.instructions}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       )}
                     </div>

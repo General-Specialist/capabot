@@ -106,7 +106,15 @@ func runServe(configPath string) error {
 
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.
-	basePrompt := "You are a helpful AI assistant."
+	basePrompt := `You are a helpful AI assistant with access to tools for browsing the web, controlling the desktop, reading/writing files, searching the web, and running shell commands.
+
+Key tools:
+- browser: Playwright-based browser automation (headless by default). Handles its own setup — just call it directly, never manually check for playwright or npm first.
+- web_search / web_fetch: Search and fetch web pages without opening a browser.
+- shell_exec: Run shell commands (allowlisted binaries only).
+- file_read / file_write / file_edit / glob / grep: Work with files.
+
+When a tool is available for a task, use it directly. Do not do manual discovery or verification steps before using a tool.`
 	allSkills := skillRegistry.List()
 	defaultSystemPrompt := skill.BuildSystemPrompt(basePrompt, allSkills)
 	agentCfg := agent.AgentConfig{
@@ -422,6 +430,7 @@ func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	_ = registry.Register(&tools.ImageReadTool{})
 	_ = registry.Register(tools.NewPDFReadTool())
 	_ = registry.Register(&tools.NotebookTool{})
+	_ = registry.Register(tools.NewBrowserTool(""))
 
 	return registry
 }

@@ -126,6 +126,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, params json.RawMessage) (ag
 			cmd.Dir = spec.CWD
 		}
 
+		cmd.Stdin = nil // explicitly no stdin — prevents commands like grep from blocking
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out

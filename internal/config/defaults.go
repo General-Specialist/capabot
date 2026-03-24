@@ -35,7 +35,7 @@ func Default() Config {
 			Dirs: []string{defaultSkillsDir()},
 		},
 		Security: SecurityConfig{
-			ShellAllowlist: []string{"ls", "cat", "head", "tail", "grep", "wc", "date", "echo", "pwd"},
+			ShellAllowlist: []string{"ls", "cat", "head", "tail", "grep", "wc", "date", "echo", "pwd", "open", "node", "npx"},
 			DrainTimeout:   30,
 		},
 	}

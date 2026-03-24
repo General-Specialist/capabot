@@ -293,7 +293,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			Name:         name,
 			Description:  sk.Manifest.Description,
 			Version:      sk.Manifest.Version,
-			Instructions: sk.Instructions,
+			Instructions: strings.TrimSpace(sk.Instructions),
 			Removable:    removable,
 			Tier:         tier,
 		}
