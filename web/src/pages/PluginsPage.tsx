@@ -226,7 +226,7 @@ function PluginList({ plugins, loading, removing, onRemove, empty }: {
   return (
     <div className="space-y-2">
       {plugins.map(plugin => (
-        <div key={plugin.name} className="flex items-center gap-3 px-4 py-3 rounded-2xl border border-border-white">
+        <div key={plugin.name} className="flex items-center gap-4 px-4 py-3 rounded-2xl border border-border-white">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className="text-sm font-medium text-hover-black truncate">{plugin.name}</p>

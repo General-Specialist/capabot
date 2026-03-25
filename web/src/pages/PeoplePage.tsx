@@ -30,7 +30,7 @@ function SystemPromptModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-light" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-5 w-[480px] flex flex-col gap-3 shadow-lg" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-5 w-[480px] flex flex-col gap-4 shadow-lg" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-hover-black">Universal Prompt</p>
           <div className="flex items-center gap-2">
@@ -101,7 +101,7 @@ function PersonForm({
   }
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-4">
       {cropOpen && <AvatarCropModal initialSrc={avatarUrl || undefined} onSave={handleCropSave} onCancel={() => setCropOpen(false)} />}
       <div className="shrink-0">
         <button
@@ -152,9 +152,9 @@ function PersonForm({
         <button
           type="button"
           onClick={onCancel}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-capsule text-sm text-normal-black hover:bg-sidebar-white transition-colors"
+          className="p-1 rounded-lg text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
         >
-          <X className="w-3.5 h-3.5" /> Cancel
+          <X size={14} />
         </button>
         <button
           type="button"
@@ -388,8 +388,8 @@ function AvatarCropModal({ initialSrc, onSave, onCancel }: {
             Upload new
           </button>
           <div className="flex-1" />
-          <button type="button" onClick={onCancel} className="px-4 py-1.5 rounded-capsule text-sm text-normal-black hover:bg-sidebar-white transition-colors">
-            Cancel
+          <button type="button" onClick={onCancel} className="p-1 rounded-lg text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors">
+            <X size={14} />
           </button>
           <button type="button" onClick={handleSave} disabled={!imgSrc} className="px-4 py-1.5 rounded-capsule text-sm bg-[var(--color-brand-primary)] text-white hover:opacity-80 disabled:opacity-50 transition-opacity">
             Save

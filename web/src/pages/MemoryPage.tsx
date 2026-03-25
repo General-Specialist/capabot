@@ -99,9 +99,9 @@ export function MemoryPage() {
             </button>
             <button
               onClick={() => { setAdding(false); setNewKey(''); setNewValue('') }}
-              className="flex items-center gap-1 text-xs text-normal-black hover:text-hover-black cursor-pointer"
+              className="p-1 rounded-lg text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
             >
-              <X size={13} /> Cancel
+              <X size={14} />
             </button>
           </div>
         </div>
@@ -127,8 +127,8 @@ export function MemoryPage() {
                     <button onClick={saveEdit} className="flex items-center gap-1 text-xs text-terminal-green cursor-pointer">
                       <Check size={13} /> Save
                     </button>
-                    <button onClick={() => setEditing(null)} className="flex items-center gap-1 text-xs text-normal-black hover:text-hover-black cursor-pointer">
-                      <X size={13} /> Cancel
+                    <button onClick={() => setEditing(null)} className="p-1 rounded-lg text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors">
+                      <X size={14} />
                     </button>
                   </div>
                 </div>
@@ -138,7 +138,7 @@ export function MemoryPage() {
                     <div className="text-xs font-mono text-brand-primary mb-0.5">{entry.key}</div>
                     <div className="text-sm text-hover-black font-mono whitespace-pre-wrap break-all line-clamp-3">{entry.value || <span className="text-normal-black italic">empty</span>}</div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0 pt-0.5">
+                  <div className="flex items-center gap-4 shrink-0 pt-0.5">
                     <span className="text-xs text-normal-black opacity-0 group-hover:opacity-100 transition-opacity">{formatRelative(entry.updated_at)}</span>
                     <button
                       onClick={() => deleteEntry(entry.key)}

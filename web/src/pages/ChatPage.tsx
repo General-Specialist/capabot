@@ -523,7 +523,7 @@ const InputBar = ({
 }) => (
   <form
     onSubmit={onSubmit}
-    className={`flex items-center gap-3 rounded-capsule border border-border-white bg-sidebar-white px-4 py-2.5 ${className ?? ''}`}
+    className={`flex items-center gap-4 rounded-capsule border border-border-white bg-sidebar-white px-4 py-2.5 ${className ?? ''}`}
   >
     <textarea
       ref={ref}

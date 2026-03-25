@@ -34,7 +34,7 @@ function RunRow({ run }: { run: AutomationRun }) {
   return (
     <div className="text-xs py-1.5">
       <div
-        className={`flex items-center gap-3 ${body ? 'cursor-pointer' : ''}`}
+        className={`flex items-center gap-4 ${body ? 'cursor-pointer' : ''}`}
         onClick={() => { if (body) setExpanded(e => !e) }}
       >
         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
@@ -85,33 +85,33 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
 }) {
   return (
     <div className="rounded-2xl border border-border-white p-5 mt-1">
-      <div className="flex gap-3">
-        <div className="flex-1 space-y-3">
-        <div className="flex items-center gap-2">
+      <div className="flex gap-2">
+        <div className="flex-1 flex flex-col gap-2">
+        <div className="flex items-center gap-4">
           <input
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Name"
-            className="flex-1 text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+            className="flex-1 min-w-0 text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
           />
-          <div>
-          <DatePicker
-            rrule={form.rrule || null}
-            start_at={form.start_at}
-            start_offset={form.start_offset}
-            end_at={form.end_at}
-            end_offset={form.end_offset}
-            showRepeat={true}
-            onChange={onScheduleChange}
-          />
+          <div className="shrink-0">
+            <DatePicker
+              rrule={form.rrule || null}
+              start_at={form.start_at}
+              start_offset={form.start_offset}
+              end_at={form.end_at}
+              end_offset={form.end_offset}
+              showRepeat={true}
+              onChange={onScheduleChange}
+            />
           </div>
         </div>
         <SkillPicker skills={skills} value={form.skill_names} onChange={names => setForm(f => ({ ...f, skill_names: names }))} />
         <textarea
           value={form.prompt}
           onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-          placeholder={form.skill_names.length > 0 ? 'Optional: add a prompt to let the agent decide when/how to use these skills' : 'Prompt — what should the agent do?'}
-          rows={form.skill_names.length > 0 ? 2 : 4}
+          placeholder={form.skill_names.length > 0 && form.skill_names.every(n => (skills.find(s => s.name === n)?.tier ?? 1) >= 2) ? 'Optional: what should the agent do?' : 'Prompt — what should the agent do?'}
+          rows={4}
           className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none resize-none"
         />
         {form.skill_names.length === 1 && !form.prompt && (skills.find(s => s.name === form.skill_names[0])?.tier ?? 0) >= 2 && (
@@ -146,7 +146,7 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
 
       {selected && (
         <>
-          <div className="text-xs text-normal-black flex gap-4 pt-1">
+          <div className="text-xs text-normal-black flex gap-2 pt-1">
             <span>Last run: {formatRelative(selected.last_run_at)}</span>
             <span>Next: {formatFuture(selected.next_run_at)}</span>
           </div>
@@ -310,7 +310,7 @@ export function AutomationsPage() {
                 <div key={a.id}>
                   <button
                     onClick={() => selected?.id === a.id ? setSelected(null) : selectAutomation(a)}
-                    className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
+                    className={`w-full text-left flex items-center gap-4 px-3 py-2.5 rounded-xl transition-colors ${
                       selected?.id === a.id ? 'bg-icon-hover-white' : 'hover:bg-sidebar-white'
                     }`}
                   >

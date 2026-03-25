@@ -152,7 +152,7 @@ function RunCard({ run, automationName }: { run: AutomationRun; automationName: 
       <button
         type="button"
         onClick={toggle}
-        className={`w-full text-left flex items-center gap-3 px-4 py-3 ${hasContent ? 'cursor-pointer' : ''}`}
+        className={`w-full text-left flex items-center gap-4 px-4 py-3 ${hasContent ? 'cursor-pointer' : ''}`}
       >
         <span className={`shrink-0 w-2 h-2 rounded-full ${
           status === 'success' ? 'bg-terminal-green' :

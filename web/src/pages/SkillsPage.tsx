@@ -226,7 +226,7 @@ export function SkillsPage() {
                   const isInstalling = installing[skill.name]
                   const result = installResults[skill.name]
                   return (
-                    <div key={skill.name} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-sidebar-white transition-colors">
+                    <div key={skill.name} className="flex items-center gap-4 px-4 py-3 rounded-xl hover:bg-sidebar-white transition-colors">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
                         {skill.description && (
@@ -238,7 +238,7 @@ export function SkillsPage() {
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 shrink-0 text-xs text-normal-black">
+                      <div className="flex items-center gap-4 shrink-0 text-xs text-normal-black">
                         {skill.downloads > 0 && (
                           <span className="flex items-center gap-1">
                             <ArrowDownToLine size={11} />
@@ -302,7 +302,7 @@ function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove,
         const isRemoving = removing[skill.name]
         return (
           <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
-            <div className="flex items-center gap-3 px-4 py-3">
+            <div className="flex items-center gap-4 px-4 py-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
