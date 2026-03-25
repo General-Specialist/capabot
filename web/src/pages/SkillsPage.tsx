@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
 
@@ -9,14 +9,27 @@ function formatCount(n: number): string {
   return String(n)
 }
 
-// Extended Skill type with new fields from backend
 interface InstalledSkill extends Skill {
   instructions: string
   removable: boolean
 }
 
+const GO_PLACEHOLDER = `package main
+
+import (
+\t"encoding/json"
+\t"fmt"
+\t"os"
+)
+
+func main() {
+\tvar params map[string]any
+\tjson.NewDecoder(os.Stdin).Decode(&params)
+\tfmt.Print(\`{"content":"hello","is_error":false}\`)
+}`
+
 export function SkillsPage() {
-  const [tab, setTab] = useState<'browse' | 'installed'>('installed')
+  const [tab, setTab] = useState<'installed' | 'browse' | 'create'>('installed')
   const [installed, setInstalled] = useState<InstalledSkill[]>([])
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
   const [query, setQuery] = useState('')
@@ -29,10 +42,17 @@ export function SkillsPage() {
   const [loading, setLoading] = useState(true)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Create form state
+  const [createName, setCreateName] = useState('')
+  const [createDesc, setCreateDesc] = useState('')
+  const [createCode, setCreateCode] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null)
+
   const loadInstalled = () =>
     api.skills().then(res => setInstalled(res as InstalledSkill[]))
 
-  // Load installed skills immediately
   useEffect(() => {
     let cancelled = false
     api.skills()
@@ -42,7 +62,6 @@ export function SkillsPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Load catalog in background
   useEffect(() => {
     let cancelled = false
     api.skillsCatalog(undefined, 200)
@@ -51,7 +70,6 @@ export function SkillsPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Server-side search with debounce
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current)
     if (!query.trim()) return
@@ -65,7 +83,6 @@ export function SkillsPage() {
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
   }, [query])
 
-  // Restore top skills when query is cleared
   useEffect(() => {
     if (query.trim()) return
     api.skillsCatalog(undefined, 200).then(res => setCatalog(res)).catch(() => {})
@@ -91,9 +108,35 @@ export function SkillsPage() {
       await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
       await loadInstalled()
     } catch {
-      // silently fail — installed list stays as-is
+      // silently fail
     } finally {
       setRemoving(prev => ({ ...prev, [name]: false }))
+    }
+  }
+
+  const createSkill = async () => {
+    setCreateError(null)
+    setCreateSuccess(null)
+    if (!createName.trim()) { setCreateError('Name is required'); return }
+    if (!createCode.trim()) { setCreateError('Code is required'); return }
+    setCreating(true)
+    try {
+      const res = await api.skillCreate({
+        name: createName.trim(),
+        description: createDesc.trim() || undefined,
+        code: createCode,
+      })
+      if (res.success) {
+        setCreateSuccess(`Created "${res.name}"`)
+        setCreateName('')
+        setCreateDesc('')
+        setCreateCode('')
+        await loadInstalled()
+      }
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Creation failed')
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -104,20 +147,53 @@ export function SkillsPage() {
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-6 mb-6">
           <div className="flex gap-1 text-sm">
-            <button
-              onClick={() => setTab('installed')}
-              className={`px-3 py-1 rounded-md transition-colors ${tab === 'installed' ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
-            >
-              Installed {installed.length > 0 && <span className="ml-1 text-xs text-normal-black">({installed.length})</span>}
-            </button>
-            <button
-              onClick={() => setTab('browse')}
-              className={`px-3 py-1 rounded-md transition-colors ${tab === 'browse' ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
-            >
-              Browse
-            </button>
+            {(['installed', 'browse', 'create'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-3 py-1 rounded-md transition-colors ${tab === t ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
+              >
+                {t === 'installed' && <>Installed {installed.length > 0 && <span className="ml-1 text-xs text-normal-black">({installed.length})</span>}</>}
+                {t === 'browse' && 'Browse'}
+                {t === 'create' && <span className="flex items-center gap-1"><Plus size={13} />Create</span>}
+              </button>
+            ))}
           </div>
         </div>
+
+        {tab === 'create' && (
+          <div className="space-y-4">
+            <input
+              value={createName}
+              onChange={e => setCreateName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+              placeholder="skill-name"
+              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none font-mono"
+            />
+            <input
+              value={createDesc}
+              onChange={e => setCreateDesc(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+            />
+            <textarea
+              value={createCode}
+              onChange={e => setCreateCode(e.target.value)}
+              placeholder={GO_PLACEHOLDER}
+              rows={16}
+              className="w-full px-4 py-3 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none font-mono resize-y leading-relaxed"
+              spellCheck={false}
+            />
+            {createError && <p className="text-sm text-red">{createError}</p>}
+            {createSuccess && <p className="text-sm text-terminal-green">{createSuccess}</p>}
+            <button
+              onClick={() => void createSkill()}
+              disabled={creating}
+              className="px-4 py-2 text-sm rounded-xl bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity"
+            >
+              {creating ? 'Creating…' : 'Create Skill'}
+            </button>
+          </div>
+        )}
 
         {tab === 'browse' && (
           <>

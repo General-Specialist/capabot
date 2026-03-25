@@ -21,6 +21,7 @@ import (
 	applog "github.com/polymath/gostaff/internal/log"
 	"github.com/polymath/gostaff/internal/llm"
 	"github.com/polymath/gostaff/internal/memory"
+	gosdk "github.com/polymath/gostaff/internal/sdk"
 	"github.com/polymath/gostaff/internal/skill"
 	"github.com/polymath/gostaff/internal/tools"
 	"github.com/polymath/gostaff/internal/transport"
@@ -100,8 +101,8 @@ func runServe(configPath string) error {
 	skillRegistry := initSkillRegistry(cfg)
 	logger.Info().Int("skills", skillRegistry.Len()).Msg("skills loaded")
 
-	// 7b. Register Tier 3 plugin skills (TS/JS/Python) as callable tools
-	pluginRegs := registerPluginSkills(ctx, skillRegistry, toolRegistry, router, logger)
+	// 7b. Register Tier 3 plugins via Go SDK (in-process Go + OpenClaw adapters)
+	sdkRegs := registerSDKPlugins(skillRegistry, toolRegistry, router, logger)
 
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
@@ -122,35 +123,6 @@ func runServe(configPath string) error {
 					continue
 				}
 				logger.Info().Strs("skills", newSkills).Msg("hot-reload: new skills detected")
-
-				// Register any new plugin skills
-				for _, name := range newSkills {
-					pluginDir, ok := skillRegistry.PluginPath(name)
-					if !ok {
-						continue
-					}
-					proc, err := skill.NewPluginProcess(ctx, pluginDir)
-					if err != nil {
-						logger.Error().Err(err).Str("skill", name).Msg("hot-reload: failed to start plugin")
-						continue
-					}
-					for _, rt := range proc.Tools() {
-						pluginTool := skill.NewPluginTool(rt, proc)
-						if err := toolRegistry.Register(&pluginAgentTool{inner: pluginTool}); err != nil {
-							logger.Error().Err(err).Str("skill", name).Str("tool", rt.Name).Msg("hot-reload: failed to register tool")
-							continue
-						}
-						logger.Info().Str("skill", name).Str("tool", rt.Name).Msg("hot-reload: plugin tool registered")
-					}
-					for _, rh := range proc.Hooks() {
-						pluginRegs.hooks = append(pluginRegs.hooks, &pluginHook{proc: proc, event: rh.Event})
-						logger.Info().Str("skill", name).Str("event", rh.Event).Msg("hot-reload: plugin hook registered")
-					}
-					for _, rp := range proc.Providers() {
-						router.SetProvider(rp.Name, &pluginProvider{proc: proc, name: rp.Name, models: rp.Models})
-						logger.Info().Str("skill", name).Str("provider", rp.Name).Msg("hot-reload: plugin provider registered")
-					}
-				}
 			case <-ctx.Done():
 				return
 			}
@@ -237,9 +209,9 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		return cfg
 	}
 
-	// addPluginHooks attaches any registered plugin hooks to an agent.
+	// addPluginHooks attaches any registered SDK plugin hooks to an agent.
 	addPluginHooks := func(a *agent.Agent) {
-		for _, h := range pluginRegs.hooks {
+		for _, h := range sdkRegs.Hooks {
 			a.AddHook(h)
 		}
 	}
@@ -334,39 +306,14 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		Router:          router,
 		DiscordRoles:    discordRoles,
 	})
-	// Wire plugin HTTP routes onto a wrapper mux that falls through to the API server.
+	// Wire SDK plugin HTTP routes onto a wrapper mux that falls through to the API server.
 	apiHandler := apiServer.Handler()
-	if len(pluginRegs.routes) > 0 {
+	if len(sdkRegs.Routes) > 0 {
 		pluginMux := http.NewServeMux()
-		for _, pr := range pluginRegs.routes {
-			proc := pr.proc
-			pluginMux.HandleFunc(pr.method+" "+pr.path, func(w http.ResponseWriter, r *http.Request) {
-				headers := make(map[string]string)
-				for k := range r.Header {
-					headers[k] = r.Header.Get(k)
-				}
-				query := make(map[string]string)
-				for k := range r.URL.Query() {
-					query[k] = r.URL.Query().Get(k)
-				}
-				body, _ := io.ReadAll(r.Body)
-				resp, err := proc.InvokeHTTP(r.Context(), skill.HTTPRequest{
-					Method:  r.Method,
-					Path:    r.URL.Path,
-					Headers: headers,
-					Query:   query,
-					Body:    string(body),
-				})
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadGateway)
-					return
-				}
-				w.WriteHeader(resp.Status)
-				fmt.Fprint(w, resp.Body)
-			})
-			logger.Info().Str("method", pr.method).Str("path", pr.path).Msg("plugin HTTP route wired")
+		for _, rt := range sdkRegs.Routes {
+			pluginMux.HandleFunc(rt.Method+" "+rt.Path, rt.Handler)
+			logger.Info().Str("method", rt.Method).Str("path", rt.Path).Msg("SDK plugin route wired")
 		}
-		// Fall through to API server for non-plugin routes
 		pluginMux.Handle("/", apiHandler)
 		apiHandler = pluginMux
 	}
@@ -1041,106 +988,6 @@ func initSkillRegistry(cfg config.Config) *skill.Registry {
 	return registry
 }
 
-// pluginAgentTool adapts a skill.PluginTool to the agent.Tool interface.
-// It lives in the main package to avoid an import cycle between internal/skill
-// and internal/agent.
-type pluginAgentTool struct {
-	inner *skill.PluginTool
-}
-
-func (p *pluginAgentTool) Name() string                { return p.inner.Name() }
-func (p *pluginAgentTool) Description() string         { return p.inner.Description() }
-func (p *pluginAgentTool) Parameters() json.RawMessage { return p.inner.Parameters() }
-func (p *pluginAgentTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
-	res, err := p.inner.Run(ctx, params)
-	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
-}
-
-// pluginHook adapts a skill.PluginProcess hook to the agent.ToolHook interface.
-type pluginHook struct {
-	proc  *skill.PluginProcess
-	event string // "pre_tool_use" or "post_tool_use"
-}
-
-func (h *pluginHook) BeforeToolUse(ctx context.Context, toolName string, params json.RawMessage) (bool, json.RawMessage, error) {
-	if h.event != "pre_tool_use" {
-		return true, nil, nil
-	}
-	result, err := h.proc.InvokeHook(ctx, "pre_tool_use", toolName, params, nil)
-	if err != nil {
-		return true, nil, err
-	}
-	if !result.Allow {
-		return false, nil, nil
-	}
-	return true, result.Params, nil
-}
-
-func (h *pluginHook) AfterToolUse(ctx context.Context, toolName string, params json.RawMessage, result json.RawMessage) (json.RawMessage, error) {
-	if h.event != "post_tool_use" {
-		return nil, nil
-	}
-	hookResult, err := h.proc.InvokeHook(ctx, "post_tool_use", toolName, params, result)
-	if err != nil {
-		return nil, err
-	}
-	return hookResult.Result, nil
-}
-
-// pluginProvider adapts a skill.PluginProcess LLM provider to the llm.Provider interface.
-type pluginProvider struct {
-	proc   *skill.PluginProcess
-	name   string
-	models json.RawMessage
-}
-
-func (p *pluginProvider) Name() string { return p.name }
-
-func (p *pluginProvider) Models() []llm.ModelInfo {
-	var ids []string
-	_ = json.Unmarshal(p.models, &ids)
-	out := make([]llm.ModelInfo, len(ids))
-	for i, id := range ids {
-		out[i] = llm.ModelInfo{ID: id, Name: id}
-	}
-	return out
-}
-
-func (p *pluginProvider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-	msgsJSON, _ := json.Marshal(req.Messages)
-	toolsJSON, _ := json.Marshal(req.Tools)
-	resp, err := p.proc.InvokeChat(ctx, skill.ChatRequest{
-		Provider: p.name,
-		Model:    req.Model,
-		Messages: msgsJSON,
-		System:   req.System,
-		Tools:    toolsJSON,
-		MaxTok:   req.MaxTokens,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp.Error != "" {
-		return nil, fmt.Errorf("plugin provider %s: %s", p.name, resp.Error)
-	}
-	return &llm.ChatResponse{
-		Content:  resp.Content,
-		Model:    resp.Model,
-		Provider: p.name,
-	}, nil
-}
-
-func (p *pluginProvider) Stream(_ context.Context, _ llm.ChatRequest) (<-chan llm.StreamChunk, error) {
-	return nil, fmt.Errorf("plugin provider %q does not support streaming", p.name)
-}
-
-// pluginHTTPRoute holds a plugin route handler for deferred registration on the API mux.
-type pluginHTTPRoute struct {
-	method string
-	path   string
-	proc   *skill.PluginProcess
-}
-
 // nativeAgentTool adapts a skill.NativeTool to the agent.Tool interface.
 type nativeAgentTool struct {
 	inner *skill.NativeTool
@@ -1183,63 +1030,55 @@ func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg
 	}
 }
 
-// pluginRegistrations holds everything plugins registered during init.
-type pluginRegistrations struct {
-	hooks  []agent.ToolHook
-	routes []pluginHTTPRoute
-}
+// registerSDKPlugins initializes all Go SDK plugins (compiled-in + OpenClaw
+// adapters for installed TS/JS/Python plugins) and registers their tools,
+// hooks, routes, and providers.
+func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, logger zerolog.Logger) *gosdk.Registration {
+	combined := &gosdk.Registration{}
 
-// registerPluginSkills spawns plugin processes and registers all tools, hooks,
-// HTTP routes, and LLM providers they provide. A single plugin can register
-// multiple of each. Runtime errors are logged but don't prevent other plugins.
-func registerPluginSkills(ctx context.Context, skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, logger zerolog.Logger) pluginRegistrations {
-	var reg pluginRegistrations
-
+	// Collect all plugins: compiled-in Go plugins + OpenClaw adapters
+	plugins := sdkPlugins()
 	for _, name := range skillReg.PluginSkillNames() {
-		pluginDir, ok := skillReg.PluginPath(name)
+		dir, ok := skillReg.PluginPath(name)
 		if !ok {
 			continue
 		}
+		plugins = append(plugins, gosdk.NewOpenClawPlugin(dir))
+		logger.Info().Str("skill", name).Str("dir", dir).Msg("wrapping OpenClaw plugin via SDK adapter")
+	}
 
-		proc, err := skill.NewPluginProcess(ctx, pluginDir)
+	for _, p := range plugins {
+		reg, err := gosdk.InitPlugin(p)
 		if err != nil {
-			logger.Error().Err(err).Str("skill", name).Str("dir", pluginDir).Msg("failed to start plugin")
+			logger.Error().Err(err).Msg("failed to init SDK plugin")
 			continue
 		}
 
-		// Register tools
-		for _, rt := range proc.Tools() {
-			pluginTool := skill.NewPluginTool(rt, proc)
-			if err := toolReg.Register(&pluginAgentTool{inner: pluginTool}); err != nil {
-				logger.Error().Err(err).Str("skill", name).Str("tool", rt.Name).Msg("failed to register plugin tool")
+		for _, t := range reg.Tools {
+			if err := toolReg.Register(t); err != nil {
+				logger.Error().Err(err).Str("tool", t.Name()).Msg("failed to register SDK tool")
 				continue
 			}
-			logger.Info().Str("skill", name).Str("tool", rt.Name).Str("runtime", proc.Runtime()).Msg("plugin tool registered")
+			logger.Info().Str("tool", t.Name()).Msg("SDK plugin tool registered")
 		}
 
-		// Collect hooks
-		for _, rh := range proc.Hooks() {
-			reg.hooks = append(reg.hooks, &pluginHook{proc: proc, event: rh.Event})
-			logger.Info().Str("skill", name).Str("event", rh.Event).Str("hook", rh.Name).Msg("plugin hook registered")
-		}
+		combined.Hooks = append(combined.Hooks, reg.Hooks...)
+		combined.Routes = append(combined.Routes, reg.Routes...)
 
-		// Collect HTTP routes (wired to mux later)
-		for _, rr := range proc.Routes() {
-			reg.routes = append(reg.routes, pluginHTTPRoute{method: rr.Method, path: rr.Path, proc: proc})
-			logger.Info().Str("skill", name).Str("method", rr.Method).Str("path", rr.Path).Msg("plugin route registered")
-		}
-
-		// Register LLM providers on the router
-		for _, rp := range proc.Providers() {
-			router.SetProvider(rp.Name, &pluginProvider{proc: proc, name: rp.Name, models: rp.Models})
-			logger.Info().Str("skill", name).Str("provider", rp.Name).Msg("plugin provider registered")
-		}
-
-		if len(proc.Tools()) == 0 && len(proc.Hooks()) == 0 && len(proc.Routes()) == 0 && len(proc.Providers()) == 0 {
-			logger.Warn().Str("skill", name).Msg("plugin registered nothing")
-			proc.Close() //nolint:errcheck
+		for _, pe := range reg.Providers {
+			router.SetProvider(pe.Name, pe.Provider)
+			logger.Info().Str("provider", pe.Name).Msg("SDK plugin provider registered")
 		}
 	}
 
-	return reg
+	return combined
+}
+
+// sdkPlugins returns all compiled-in Go SDK plugins.
+// Add new plugins here.
+func sdkPlugins() []gosdk.Plugin {
+	return []gosdk.Plugin{
+		// Add plugins here, e.g.:
+		// myplugin.New(),
+	}
 }

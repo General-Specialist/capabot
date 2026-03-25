@@ -1,6 +1,4 @@
-# gostaff
-
-Self-hosted AI agent management platform. Connect your LLM providers, install skills, and run agents from a web UI, CLI, or chat platforms like Discord and Telegram.
+Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99% of use cases. Same skill ecosystem, same plugin protocol. Clean, easy-to-use web UI.
 
 **Questions?** [Join the Discord](https://discord.gg/ktAy8fZH)
 

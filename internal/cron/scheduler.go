@@ -247,36 +247,6 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 		return
 	}
 
-	if pluginDir, ok := s.skillReg.PluginPath(skillName); ok {
-		proc, err := skill.NewPluginProcess(ctx, pluginDir)
-		if err != nil {
-			log.Error().Err(err).Msg("loading plugin skill")
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin load: %v", err))
-			return
-		}
-		defer proc.Close() //nolint:errcheck
-
-		// Use the first registered tool for direct automation invocation.
-		tools := proc.Tools()
-		if len(tools) == 0 {
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", "plugin registered no tools")
-			return
-		}
-		result, err := proc.Invoke(ctx, tools[0].Name, inputJSON)
-		if err != nil {
-			log.Error().Err(err).Msg("executing plugin skill")
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin execute: %v", err))
-			return
-		}
-		status := "success"
-		if result.IsError {
-			status = "error"
-		}
-		_ = s.store.FinishAutomationRun(ctx, runID, status, result.Content, "")
-		log.Info().Str("skill", skillName).Msg("plugin skill automation complete")
-		return
-	}
-
 	log.Warn().Str("skill", skillName).Msg("skill has no executable — needs a prompt to run via agent")
 	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q has no executable; add a prompt to run it via the agent", skillName))
 }

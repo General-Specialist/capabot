@@ -52,7 +52,6 @@ func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
 
 	skillDir := filepath.Join(s.skillsDir, inp.Name)
 
-	// Create the skill directory
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		writeError(w, fmt.Sprintf("creating skill directory: %v", err), http.StatusInternalServerError)
 		return
@@ -73,22 +72,20 @@ func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compile the skill to verify the code is valid
+	// Compile to verify the code is valid
 	exec, err := skill.NewNativeExecutor(r.Context(), skillDir)
 	if err != nil {
-		// Clean up on compile failure
 		os.RemoveAll(skillDir)
 		writeError(w, fmt.Sprintf("compilation failed: %v", err), http.StatusBadRequest)
 		return
 	}
-	_ = exec // executor will be created fresh when registry loads
+	_ = exec
 
 	// Hot-reload into skill registry
 	if s.skillReg != nil {
 		s.skillReg.LoadDir(s.skillsDir) //nolint:errcheck
 	}
 
-	// Register as a callable tool immediately
 	s.registerNewNativeSkill(r.Context(), inp.Name)
 
 	w.WriteHeader(http.StatusCreated)
@@ -120,7 +117,6 @@ func (s *Server) registerNewNativeSkill(ctx context.Context, name string) {
 	}
 
 	nativeTool := skill.NewNativeTool(parsed, exec)
-	// Use the adapter that bridges skill.NativeTool → agent.Tool
 	if err := s.toolReg.Register(&nativeToolBridge{inner: nativeTool}); err != nil {
 		s.logger.Error().Err(err).Str("skill", name).Msg("failed to register new native skill")
 		return
@@ -129,8 +125,7 @@ func (s *Server) registerNewNativeSkill(ctx context.Context, name string) {
 	s.logger.Info().Str("skill", name).Msg("custom native skill created and registered")
 }
 
-// nativeToolBridge adapts skill.NativeTool to agent.Tool (same as nativeAgentTool in serve.go
-// but lives here to avoid import cycles since api package can import both skill and agent).
+// nativeToolBridge adapts skill.NativeTool to agent.Tool.
 type nativeToolBridge struct {
 	inner *skill.NativeTool
 }
