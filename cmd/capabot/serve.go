@@ -252,45 +252,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		apiAddr = ":8080"
 	}
 	discordRoles := transport.NewDiscordRoleClient(cfg.Transports.Discord.Token, cfg.Transports.Discord.GuildID)
-
-	// Sync Discord roles for personas and tags.
-	if discordRoles != nil && store != nil {
-		personas, err := store.ListPersonas(ctx)
-		if err == nil {
-			// Sync persona roles.
-			for _, p := range personas {
-				if p.DiscordRoleID == "" && p.Username != "" {
-					roleID, err := discordRoles.CreateRole(ctx, p.Username)
-					if err != nil {
-						logger.Warn().Err(err).Str("persona", p.Username).Msg("failed to sync Discord role")
-					} else {
-						_ = store.SetPersonaDiscordRoleID(ctx, p.ID, roleID)
-						logger.Info().Str("persona", p.Username).Str("role_id", roleID).Msg("synced Discord persona role")
-					}
-				}
-			}
-
-			// Sync tag roles.
-			allTags := make(map[string]bool)
-			for _, p := range personas {
-				for _, t := range p.Tags {
-					allTags[t] = true
-				}
-			}
-			existingTagRoles, _ := store.ListDiscordTagRoles(ctx)
-			for tag := range allTags {
-				if _, exists := existingTagRoles[tag]; !exists {
-					roleID, err := discordRoles.CreateRole(ctx, tag)
-					if err != nil {
-						logger.Warn().Err(err).Str("tag", tag).Msg("failed to sync Discord tag role")
-					} else {
-						_ = store.UpsertDiscordTagRole(ctx, tag, roleID)
-						logger.Info().Str("tag", tag).Str("role_id", roleID).Msg("synced Discord tag role")
-					}
-				}
-			}
-		}
-	}
+	syncDiscordRoles(ctx, discordRoles, store, logger)
 
 	apiServer := api.New(api.Config{
 		Store:           store,
@@ -420,6 +382,48 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	logger.Info().Msg("capabot ready")
 	<-ctx.Done()
 	return nil
+}
+
+// syncDiscordRoles creates Discord roles for any personas or tags that don't have one yet.
+func syncDiscordRoles(ctx context.Context, discordRoles *transport.DiscordRoleClient, store *memory.Store, logger zerolog.Logger) {
+	if discordRoles == nil || store == nil {
+		return
+	}
+	personas, err := store.ListPersonas(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, p := range personas {
+		if p.DiscordRoleID == "" && p.Username != "" {
+			roleID, err := discordRoles.CreateRole(ctx, p.Username)
+			if err != nil {
+				logger.Warn().Err(err).Str("persona", p.Username).Msg("failed to sync Discord role")
+			} else {
+				_ = store.SetPersonaDiscordRoleID(ctx, p.ID, roleID)
+				logger.Info().Str("persona", p.Username).Str("role_id", roleID).Msg("synced Discord persona role")
+			}
+		}
+	}
+
+	allTags := make(map[string]bool)
+	for _, p := range personas {
+		for _, t := range p.Tags {
+			allTags[t] = true
+		}
+	}
+	existingTagRoles, _ := store.ListDiscordTagRoles(ctx)
+	for tag := range allTags {
+		if _, exists := existingTagRoles[tag]; !exists {
+			roleID, err := discordRoles.CreateRole(ctx, tag)
+			if err != nil {
+				logger.Warn().Err(err).Str("tag", tag).Msg("failed to sync Discord tag role")
+			} else {
+				_ = store.UpsertDiscordTagRole(ctx, tag, roleID)
+				logger.Info().Str("tag", tag).Str("role_id", roleID).Msg("synced Discord tag role")
+			}
+		}
+	}
 }
 
 // makeMessageHandler returns a factory that wires inbound messages to the agent runner.

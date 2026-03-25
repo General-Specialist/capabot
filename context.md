@@ -17,7 +17,7 @@ The canonical config reference. Copy to `~/.capabot/config.yaml`. Key sections:
 
 ### `go.mod`
 Module: `github.com/polymath/capabot`. Direct dependencies:
-- `google/uuid`, `gorilla/websocket`, `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `tetratelabs/wazero` (WASM runtime), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
+- `google/uuid`, `bwmarrin/discordgo` (Discord gateway), `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `tetratelabs/wazero` (WASM runtime), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
 
 ---
 
@@ -51,7 +51,7 @@ The main wiring function. Startup sequence:
 7. Init skill registry (loads dirs); register WASM and native skills as tools
 8. Register `skill_create` and `skill_edit` as _extended_ tools
 9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures
-10. Sync Discord roles for personas and tags (startup)
+10. `syncDiscordRoles` — creates Discord roles for personas/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
 12. Start API server on `cfg.Server.Addr`
 13. Optional: content filter, session TTL cleanup goroutine
@@ -362,12 +362,12 @@ Adapters that wrap `WASMExecutor` / `NativeExecutor` as `agent.Tool` implementat
 **`OutboundMessage`**: `ChannelID`, `ReplyToID`, `Text`, `Markdown`, `DisplayName`, `AvatarURL`, `AvatarData`
 
 ### `discord.go`
-`DiscordTransport` — implements Discord Gateway WebSocket protocol from scratch (no third-party Discord library).
-- Handles gateway opcodes: Heartbeat, Identify, Resume, Reconnect, InvalidSession
-- Auto-reconnect with session resume
-- Messages > 2000 chars are split
-- Persona replies use Discord webhooks (cached per channel in `webhooks map`)
-- Intents: `33280` = GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT
+`DiscordTransport` — wraps `bwmarrin/discordgo` for the gateway connection. discordgo handles heartbeat, resume, and reconnect automatically.
+- `Start` calls `session.Open()` then blocks until context is cancelled
+- Event handlers: `onMessageCreate` (skips bots), `onInteractionCreate` (slash commands → ACK + synthetic InboundMessage)
+- Registers global slash commands via REST on startup (`registerSlashCommands`)
+- Persona replies use Discord webhooks (cached per channel in `webhooks map`, managed in `discord_send.go`)
+- Intents: `IntentsGuildMessages | IntentMessageContent`
 
 ### `discord_roles.go`
 `DiscordRoleClient` — creates and manages Discord roles for personas and tags via REST API. Used at startup to sync roles.
@@ -393,8 +393,10 @@ Helpers for sending messages via Discord REST API (regular messages and webhook-
 ### `server.go`
 `Server` — HTTP mux with all REST routes registered. Key routes:
 - `GET /api/health` — version, uptime, skills count, provider count
-- `POST /api/chat` — synchronous chat; creates/upserts session, runs agent, returns response
-- `POST /api/chat/stream` — SSE streaming; emits `event: thinking/tool_start/tool_end/response` events
+- `POST /api/chat` — synchronous chat; uses `prepareChatRequest`, supports global sys prompt, model tag, single persona
+- `POST /api/chat/stream` — SSE streaming; uses `prepareChatRequest`, supports all of the above plus multi-persona fan-out
+
+`prepareChatRequest` — shared helper called by both chat handlers. Resolves: session ID, global system prompt, `@model-id` tag extraction, persona/tag mention (`resolvePersonas`). Returns `preparedChat` struct.
 - `GET /api/logs` — SSE stream of log broadcaster
 - `GET/POST /api/automations` — CRUD for scheduled automations
 - `POST /api/automations/{id}/trigger` — manual trigger
@@ -453,9 +455,9 @@ Manual trigger via `Trigger(automationID)` sends to `triggerC` channel.
 `StopRun(runID)` — cancels a running run.
 
 ### `parser.go`
-`Parse(rrule)` — custom minimal RRule parser. Supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL=n`, `BYDAY=MO,WE,FR`. Not a full RFC 5545 implementation.
+`Parse(rrule)` — custom minimal RRule parser. Supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL=n`, `BYDAY=MO,WE,FR`, `BYHOUR=0-23`, `BYMINUTE=0-59`.
 
-`Schedule.Next(from)` — computes next occurrence after `from`. For WEEKLY with BYDAY: finds next matching weekday.
+`Schedule.Next(from)` — computes next occurrence after `from`. For WEEKLY with BYDAY: finds next matching weekday. If `BYHOUR`/`BYMINUTE` are set, overrides the hour/minute of the computed date so automations can fire at a specific time of day.
 
 ---
 
@@ -565,7 +567,7 @@ Opt-in: only runs when `CAPABOT_AUTOUPDATE` is set. Not appropriate for Docker/R
 ## Key Data Flows
 
 ### Chat request (API)
-`POST /api/chat` → `handleChat` → creates/upserts session → calls `defaultAgent(ctx, sessionID, messages, onEvent)` closure → `agent.Run` → ReAct loop → returns `RunResult`
+`POST /api/chat` or `/api/chat/stream` → `prepareChatRequest` (resolves session, sys prompt, model tag, persona) → single persona: `agentWithPrompt`; no persona: `defaultAgent`; multi-persona (stream only): `streamMultiAgent` → `agent.Run` → ReAct loop → returns `RunResult`
 
 ### Transport message (e.g. Discord)
 `DiscordTransport` receives message → `makeMessageHandler` → resolve personas/channel binding → `runAgentEphemeral` (no store) → send response via transport

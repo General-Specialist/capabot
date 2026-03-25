@@ -354,6 +354,50 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// preparedChat holds the resolved state shared by handleChat and handleChatStream.
+type preparedChat struct {
+	sessionID string
+	msgs      []llm.ChatMessage
+	sysPrompt string
+	modelID   string
+	personas  []memory.Persona
+}
+
+// prepareChatRequest resolves session, model tag, global system prompt, and persona mentions.
+func (s *Server) prepareChatRequest(ctx context.Context, messages []llm.ChatMessage, sessionID, tenantID string) preparedChat {
+	lastUserText := lastUserContent(messages)
+	sid := s.ensureSession(ctx, sessionID, tenantID, lastUserText)
+
+	var globalSysPrompt string
+	if s.store != nil {
+		globalSysPrompt, _ = s.store.GetSystemPrompt(ctx)
+	}
+
+	modelID := s.extractModelTag(lastUserText)
+	if modelID == "" && s.store != nil {
+		modelID, _ = s.store.GetSetting(ctx, "default_model")
+	} else if modelID != "" {
+		lastUserText = strings.TrimSpace(strings.Replace(lastUserText, "@"+modelID, "", 1))
+	}
+
+	strippedText, personas := s.resolvePersonas(ctx, lastUserText)
+
+	msgs := messages
+	if strippedText != lastUserContent(messages) {
+		msgs = make([]llm.ChatMessage, len(messages))
+		copy(msgs, messages)
+		msgs[len(msgs)-1] = llm.ChatMessage{Role: "user", Content: strippedText}
+	}
+
+	return preparedChat{
+		sessionID: sid,
+		msgs:      msgs,
+		sysPrompt: globalSysPrompt,
+		modelID:   modelID,
+		personas:  personas,
+	}
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Messages  []llm.ChatMessage `json:"messages"`
@@ -372,17 +416,28 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lastUserText := lastUserContent(req.Messages)
 	tenantID := TenantIDFromContext(r.Context())
-	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
+	p := s.prepareChatRequest(r.Context(), req.Messages, req.SessionID, tenantID)
 
-	result, err := s.defaultAgent(r.Context(), sessionID, req.Messages, nil)
+	// Apply single persona prompt if present (multi-persona not supported in sync path).
+	sysPrompt := p.sysPrompt
+	if len(p.personas) == 1 {
+		sysPrompt = combinePrompts(p.sysPrompt, p.personas[0].Prompt)
+	}
+
+	var result *agent.RunResult
+	var err error
+	if (sysPrompt != "" || p.modelID != "") && s.agentWithPrompt != nil {
+		result, err = s.agentWithPrompt(r.Context(), sysPrompt, p.modelID, p.sessionID, p.msgs, nil)
+	} else {
+		result, err = s.defaultAgent(r.Context(), p.sessionID, p.msgs, nil)
+	}
 	if err != nil {
 		writeError(w, fmt.Sprintf("agent error: %v", err), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]any{
-		"session_id":  sessionID,
+		"session_id":  p.sessionID,
 		"response":    result.Response,
 		"tool_calls":  result.ToolCalls,
 		"iterations":  result.Iterations,
@@ -487,66 +542,36 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lastUserText := lastUserContent(req.Messages)
 	tenantID := TenantIDFromContext(r.Context())
-	sessionID := s.ensureSession(r.Context(), req.SessionID, tenantID, lastUserText)
-	sendSSE(w, flusher, map[string]any{"session_id": sessionID})
+	p := s.prepareChatRequest(r.Context(), req.Messages, req.SessionID, tenantID)
+	sendSSE(w, flusher, map[string]any{"session_id": p.sessionID})
 
-	// Load global system prompt (prepended to every persona prompt).
-	globalSysPrompt, _ := s.store.GetSystemPrompt(r.Context())
-
-	// Extract @model-id tag from the message (if any).
-	modelID := s.extractModelTag(lastUserText)
-	if modelID == "" {
-		// No explicit model tag — use default model from settings.
-		modelID, _ = s.store.GetSetting(r.Context(), "default_model")
-	} else {
-		// Strip the @model tag from the user text.
-		lastUserText = strings.Replace(lastUserText, "@"+modelID, "", 1)
-		lastUserText = strings.TrimSpace(lastUserText)
-	}
-
-	// Check for @persona or @tag mention in the last user message.
-	strippedText, personas := s.resolvePersonas(r.Context(), lastUserText)
-
-	if len(personas) == 0 {
-		// No persona — run default agent with global system prompt if set.
-		msgs := req.Messages
-		if strippedText != lastUserContent(req.Messages) {
-			msgs = make([]llm.ChatMessage, len(req.Messages))
-			copy(msgs, req.Messages)
-			msgs[len(msgs)-1] = llm.ChatMessage{Role: "user", Content: strippedText}
-		}
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, globalSysPrompt, modelID, "")
+	if len(p.personas) == 0 {
+		s.streamSingleAgent(r.Context(), w, flusher, p.sessionID, p.msgs, p.sysPrompt, p.modelID, "")
 		return
 	}
 
-	// Build messages with the @mention stripped from the last user message.
-	msgs := make([]llm.ChatMessage, len(req.Messages))
-	copy(msgs, req.Messages)
-	msgs[len(msgs)-1] = llm.ChatMessage{Role: "user", Content: strippedText}
-
-	if len(personas) == 1 {
-		p := personas[0]
-		displayName := p.Username
+	if len(p.personas) == 1 {
+		persona := p.personas[0]
+		displayName := persona.Username
 		if displayName == "" {
-			displayName = p.Name
+			displayName = persona.Name
 		}
-		combinedPrompt := combinePrompts(globalSysPrompt, p.Prompt)
-		s.streamSingleAgent(r.Context(), w, flusher, sessionID, msgs, combinedPrompt, modelID, displayName)
+		s.streamSingleAgent(r.Context(), w, flusher, p.sessionID, p.msgs, combinePrompts(p.sysPrompt, persona.Prompt), p.modelID, displayName)
 		return
 	}
 
 	// Multiple personas — fan out in parallel, prepend global system prompt to each.
-	if globalSysPrompt != "" {
+	personas := p.personas
+	if p.sysPrompt != "" {
 		enriched := make([]memory.Persona, len(personas))
-		for i, p := range personas {
-			enriched[i] = p
-			enriched[i].Prompt = combinePrompts(globalSysPrompt, p.Prompt)
+		for i, persona := range personas {
+			enriched[i] = persona
+			enriched[i].Prompt = combinePrompts(p.sysPrompt, persona.Prompt)
 		}
 		personas = enriched
 	}
-	s.streamMultiAgent(r.Context(), w, flusher, sessionID, msgs, personas)
+	s.streamMultiAgent(r.Context(), w, flusher, p.sessionID, p.msgs, personas)
 }
 
 // streamSingleAgent runs one agent and streams its events.
