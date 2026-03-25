@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/polymath/capabot/internal/llm"
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/llm"
+	"github.com/polymath/gostaff/internal/memory"
 	"github.com/rs/zerolog"
 )
 

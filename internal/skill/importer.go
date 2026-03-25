@@ -10,14 +10,14 @@ import (
 	"strings"
 )
 
-// SkillTier classifies how a skill executes in Capabot.
+// SkillTier classifies how a skill executes in GoStaff.
 const (
 	TierMarkdown = 1 // Pure instruction injection (OpenClaw compatible)
 	TierNative   = 2 // Native Go tool implementation
 	TierPlugin   = 3 // Script-based execution (TS/JS/Python code module skills)
 )
 
-// ToolMapping records a single OpenClaw→Capabot tool name translation.
+// ToolMapping records a single OpenClaw→GoStaff tool name translation.
 type ToolMapping struct {
 	From string
 	To   string
@@ -252,13 +252,13 @@ func formatInstallHint(spec InstallSpec) string {
 }
 
 // scanToolReferences looks for OpenClaw tool names in the instruction text
-// and records any that have Capabot equivalents.
+// and records any that have GoStaff equivalents.
 func scanToolReferences(instructions string, result *ImportResult) {
-	for openClawName, capabotName := range openClawToCapabot {
+	for openClawName, gostaffName := range openClawToGoStaff {
 		if containsToolReference(instructions, openClawName) {
 			result.MappedTools = append(result.MappedTools, ToolMapping{
 				From: openClawName,
-				To:   capabotName,
+				To:   gostaffName,
 			})
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 func TestBuildSystemPrompt_NoSkills(t *testing.T) {

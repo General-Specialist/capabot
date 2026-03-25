@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/polymath/capabot/internal/tools"
+	"github.com/polymath/gostaff/internal/tools"
 )
 
 // ---- web_search ----

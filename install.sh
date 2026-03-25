@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-REPO="General-Specialist/capabot"
-BINARY="capabot"
-INSTALL_DIR="${CAPABOT_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="General-Specialist/gostaff"
+BINARY="gostaff"
+INSTALL_DIR="${GOSTAFF_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS and arch
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -54,10 +54,10 @@ BOLD="\033[1m"
 GREEN="\033[32m"
 
 printf "\n"
-printf "  ${GREEN}${BOLD}✓${RESET} capabot ${LATEST} installed to ${INSTALL_DIR}\n"
+printf "  ${GREEN}${BOLD}✓${RESET} gostaff ${LATEST} installed to ${INSTALL_DIR}\n"
 printf "\n"
-printf "  Run ${BOLD}capabot serve${RESET} to start the server.\n"
-printf "  Run ${BOLD}capabot --help${RESET} for all commands.\n"
+printf "  Run ${BOLD}gostaff serve${RESET} to start the server.\n"
+printf "  Run ${BOLD}gostaff --help${RESET} for all commands.\n"
 printf "\n"
 
 # Check if install dir is in PATH

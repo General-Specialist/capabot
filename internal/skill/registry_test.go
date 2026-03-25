@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 func TestRegistry_LoadDir_Empty(t *testing.T) {

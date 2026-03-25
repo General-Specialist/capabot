@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 // BrowserTool provides autonomous browser control via Playwright.
@@ -31,11 +31,11 @@ type BrowserTool struct {
 }
 
 // NewBrowserTool creates a browser tool. dataDir is where the persistent
-// browser profile and Playwright helper are stored (default ~/.capabot/browser).
+// browser profile and Playwright helper are stored (default ~/.gostaff/browser).
 func NewBrowserTool(dataDir string) *BrowserTool {
 	if dataDir == "" {
 		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".capabot", "browser")
+		dataDir = filepath.Join(home, ".gostaff", "browser")
 	}
 	return &BrowserTool{dataDir: dataDir}
 }

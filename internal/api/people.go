@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/memory"
 )
 
 func (s *Server) handleDefaultModelGet(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +239,7 @@ func (s *Server) syncTagRoles(ctx context.Context, tags []string) {
 
 func (s *Server) avatarsDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".capabot", "avatars")
+	return filepath.Join(home, ".gostaff", "avatars")
 }
 
 func (s *Server) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {

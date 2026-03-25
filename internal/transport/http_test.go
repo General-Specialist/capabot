@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/polymath/capabot/internal/transport"
+	"github.com/polymath/gostaff/internal/transport"
 )
 
 func newTestTransport(t *testing.T, apiKeys []string) *transport.HTTPTransport {

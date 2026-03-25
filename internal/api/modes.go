@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/memory"
 )
 
 func (s *Server) handleModesGet(w http.ResponseWriter, r *http.Request) {

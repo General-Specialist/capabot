@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/memory"
 )
 
 // MemoryTool provides persistent key-value memory with store/recall/delete actions.

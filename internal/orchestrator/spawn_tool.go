@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 // SpawnAgentTool is a built-in tool that lets a parent agent delegate subtasks

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // WebFetchTool implements the web_fetch tool.
@@ -68,7 +68,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, params json.RawMessage) (age
 	if err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("request error: %v", err), IsError: true}, nil
 	}
-	req.Header.Set("User-Agent", "capabot/1.0")
+	req.Header.Set("User-Agent", "gostaff/1.0")
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {

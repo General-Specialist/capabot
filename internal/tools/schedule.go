@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // ScheduleTool implements the schedule tool, which waits for a specified

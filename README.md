@@ -1,4 +1,4 @@
-# capabot
+# gostaff
 
 Self-hosted AI agent management platform. Connect your LLM providers, install skills, and run agents from a web UI, CLI, or chat platforms like Discord and Telegram.
 
@@ -9,9 +9,9 @@ Self-hosted AI agent management platform. Connect your LLM providers, install sk
 **Prerequisites:** [Docker](https://www.docker.com/get-started/)
 
 ```bash
-git clone https://github.com/General-Specialist/capabot.git
-cd capabot
-cp config.example.yaml ~/.capabot/config.yaml
+git clone https://github.com/General-Specialist/gostaff.git
+cd gostaff
+cp config.example.yaml ~/.gostaff/config.yaml
 # add at least one API key in config.yaml
 docker compose up --build
 ```
@@ -33,11 +33,11 @@ cd web && bun install && bun run dev  # frontend HMR on :5173
 **Skills & Plugins** — Extend the agent with skills from [ClawHub](https://clawhub.ai), the community skill registry with 30K+ skills. Any OpenClaw `SKILL.md` works out of the box. Skills are just Markdown — write instructions and the agent follows them. For real computation, write a plugin in TypeScript, JavaScript, or Python using the OpenClaw `register(api)` protocol — or write native Go.
 
 ```bash
-capabot skill search "code review"      # search ClawHub
-capabot skill install code-reviewer     # install from ClawHub
-capabot skill install owner/repo        # install from GitHub
-capabot skill create my-skill           # scaffold a new skill
-capabot skill init --plugin my-plugin   # scaffold a TS plugin
+gostaff skill search "code review"      # search ClawHub
+gostaff skill install code-reviewer     # install from ClawHub
+gostaff skill install owner/repo        # install from GitHub
+gostaff skill create my-skill           # scaffold a new skill
+gostaff skill init --plugin my-plugin   # scaffold a TS plugin
 ```
 
 Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, commands, and services. OpenClaw's `definePluginEntry` import works out of the box. Dependencies are auto-installed (`bun install` or `npm install`) on import. New skills are hot-reloaded into the running server — no restart needed.

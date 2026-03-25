@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/api"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/api"
+	"github.com/polymath/gostaff/internal/llm"
 	"github.com/rs/zerolog"
 )
 

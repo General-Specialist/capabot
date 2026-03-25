@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 // helper to create a temp skill directory with files
@@ -310,7 +310,7 @@ metadata:
   openclaw:
     requires:
       env:
-        - CAPABOT_TEST_NONEXISTENT_VAR_XYZ
+        - GOSTAFF_TEST_NONEXISTENT_VAR_XYZ
 ---
 Use the var.
 `,
@@ -324,7 +324,7 @@ Use the var.
 
 	hasEnvWarning := false
 	for _, w := range result.Warnings {
-		if strings.Contains(w, "CAPABOT_TEST_NONEXISTENT_VAR_XYZ") {
+		if strings.Contains(w, "GOSTAFF_TEST_NONEXISTENT_VAR_XYZ") {
 			hasEnvWarning = true
 			break
 		}
@@ -344,8 +344,8 @@ metadata:
   openclaw:
     requires:
       anyBins:
-        - capabot_fake_bin_aaa
-        - capabot_fake_bin_bbb
+        - gostaff_fake_bin_aaa
+        - gostaff_fake_bin_bbb
 ---
 Instructions.
 `,
@@ -359,7 +359,7 @@ Instructions.
 
 	hasWarning := false
 	for _, w := range result.Warnings {
-		if strings.Contains(w, "capabot_fake_bin_aaa") || strings.Contains(w, "alternative") || strings.Contains(w, "none") {
+		if strings.Contains(w, "gostaff_fake_bin_aaa") || strings.Contains(w, "alternative") || strings.Contains(w, "none") {
 			hasWarning = true
 			break
 		}
@@ -379,14 +379,14 @@ metadata:
   openclaw:
     requires:
       bins:
-        - capabot_fake_ynab_xyz
+        - gostaff_fake_ynab_xyz
       env:
         - YNAB_API_KEY
     install:
       - kind: node
         package: "@stephendolan/ynab-cli"
         bins:
-          - capabot_fake_ynab_xyz
+          - gostaff_fake_ynab_xyz
         label: "Install ynab-cli (npm)"
 ---
 Use ynab to manage your budget.

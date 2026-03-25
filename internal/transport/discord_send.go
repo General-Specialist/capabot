@@ -129,7 +129,7 @@ func (t *DiscordTransport) getOrCreatePersonWebhook(ctx context.Context, channel
 	}
 	t.webhooksMu.Unlock()
 
-	webhookName := "capabot-" + displayName
+	webhookName := "gostaff-" + displayName
 
 	// Check for existing webhooks we own.
 	listURL := discordAPIBase + "/channels/" + channelID + "/webhooks"

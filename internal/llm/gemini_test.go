@@ -297,7 +297,7 @@ func TestGeminiProvider_SystemInstruction(t *testing.T) {
 	})
 
 	result, err := provider.Chat(context.Background(), ChatRequest{
-		System:    "You are a helpful assistant named Capabot.",
+		System:    "You are a helpful assistant named GoStaff.",
 		Messages:  []ChatMessage{{Role: "user", Content: "Who are you?"}},
 		MaxTokens: 50,
 	})

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 // FileReadTool implements the file_read tool.

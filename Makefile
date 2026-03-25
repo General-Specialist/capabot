@@ -1,4 +1,4 @@
-BINARY  := capabot
+BINARY  := gostaff
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 PKGS    := ./cmd/... ./internal/...
@@ -8,17 +8,17 @@ PKGS    := ./cmd/... ./internal/...
 ## all: build the binary (default)
 all: build
 
-## build: compile the capabot binary
+## build: compile the gostaff binary
 build:
-	CGO_ENABLED=0 go build $(LDFLAGS) -o $(BINARY) ./cmd/capabot
+	CGO_ENABLED=0 go build $(LDFLAGS) -o $(BINARY) ./cmd/gostaff
 
 ## build-linux: cross-compile for Linux amd64
 build-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BINARY)-linux-amd64 ./cmd/capabot
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BINARY)-linux-amd64 ./cmd/gostaff
 
 ## build-arm: cross-compile for Linux arm64
 build-arm:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BINARY)-linux-arm64 ./cmd/capabot
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BINARY)-linux-arm64 ./cmd/gostaff
 
 ## test: run all Go tests
 test:
@@ -46,7 +46,7 @@ lint:
 fmt:
 	gofmt -w -s .
 
-## run: build and run capabot serve
+## run: build and run gostaff serve
 run: build
 	./$(BINARY) serve
 

@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$repo = "General-Specialist/capabot"
-$binary = "capabot"
+$repo = "General-Specialist/gostaff"
+$binary = "gostaff"
 
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
 $installDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
@@ -26,8 +26,8 @@ try {
     Write-Host ""
     Write-Host "  ✓ $binary $tag installed to $installDir" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Run 'capabot serve' to start the server."
-    Write-Host "  Run 'capabot --help' for all commands."
+    Write-Host "  Run 'gostaff serve' to start the server."
+    Write-Host "  Run 'gostaff --help' for all commands."
     Write-Host ""
 } finally {
     Remove-Item $tmp.FullName -ErrorAction SilentlyContinue

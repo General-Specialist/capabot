@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // SearchTool combines file finding (glob) and content searching (grep) into one tool.

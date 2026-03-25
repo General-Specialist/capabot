@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // UseToolTool is a meta-tool that proxies calls to extended (lazy-loaded) tools.

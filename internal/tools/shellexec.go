@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // ShellExecTool implements the shell_exec tool with allowlist-based security.

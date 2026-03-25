@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level configuration for Capabot.
+// Config is the top-level configuration for GoStaff.
 type Config struct {
 	Server     ServerConfig     `yaml:"server"`
 	LogLevel   string           `yaml:"log_level"`
@@ -142,55 +142,55 @@ func LoadFromFile(path string) (Config, error) {
 // applyEnvOverrides returns a new Config with environment variable values
 // taking precedence over file-loaded values.
 func applyEnvOverrides(cfg Config) Config {
-	if v := os.Getenv("CAPABOT_SERVER_ADDR"); v != "" {
+	if v := os.Getenv("GOSTAFF_SERVER_ADDR"); v != "" {
 		cfg.Server.Addr = v
 	}
-	if v := os.Getenv("CAPABOT_LOG_LEVEL"); v != "" {
+	if v := os.Getenv("GOSTAFF_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 	}
-	if v := os.Getenv("CAPABOT_DATABASE_URL"); v != "" {
+	if v := os.Getenv("GOSTAFF_DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
 	}
-	if v := os.Getenv("CAPABOT_ANTHROPIC_API_KEY"); v != "" {
+	if v := os.Getenv("GOSTAFF_ANTHROPIC_API_KEY"); v != "" {
 		cfg.Providers.Anthropic.APIKey = v
 	}
-	if v := os.Getenv("CAPABOT_ANTHROPIC_MODEL"); v != "" {
+	if v := os.Getenv("GOSTAFF_ANTHROPIC_MODEL"); v != "" {
 		cfg.Providers.Anthropic.Model = v
 	}
-	if v := os.Getenv("CAPABOT_OPENAI_API_KEY"); v != "" {
+	if v := os.Getenv("GOSTAFF_OPENAI_API_KEY"); v != "" {
 		cfg.Providers.OpenAI.APIKey = v
 	}
-	if v := os.Getenv("CAPABOT_OPENAI_BASE_URL"); v != "" {
+	if v := os.Getenv("GOSTAFF_OPENAI_BASE_URL"); v != "" {
 		cfg.Providers.OpenAI.BaseURL = v
 	}
-	for _, envKey := range []string{"CAPABOT_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+	for _, envKey := range []string{"GOSTAFF_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
 		if v := os.Getenv(envKey); v != "" {
 			cfg.Providers.Gemini.APIKey = v
 			break
 		}
 	}
-	if v := os.Getenv("CAPABOT_GEMINI_MODEL"); v != "" {
+	if v := os.Getenv("GOSTAFF_GEMINI_MODEL"); v != "" {
 		cfg.Providers.Gemini.Model = v
 	}
-	if v := os.Getenv("CAPABOT_OPENROUTER_API_KEY"); v != "" {
+	if v := os.Getenv("GOSTAFF_OPENROUTER_API_KEY"); v != "" {
 		cfg.Providers.OpenRouter.APIKey = v
 	}
-	if v := os.Getenv("CAPABOT_OPENROUTER_MODEL"); v != "" {
+	if v := os.Getenv("GOSTAFF_OPENROUTER_MODEL"); v != "" {
 		cfg.Providers.OpenRouter.Model = v
 	}
-	if v := os.Getenv("CAPABOT_API_KEY"); v != "" {
+	if v := os.Getenv("GOSTAFF_API_KEY"); v != "" {
 		cfg.Security.APIKey = v
 	}
-	if v := os.Getenv("CAPABOT_TELEGRAM_TOKEN"); v != "" {
+	if v := os.Getenv("GOSTAFF_TELEGRAM_TOKEN"); v != "" {
 		cfg.Transports.Telegram.Token = v
 	}
-	if v := os.Getenv("CAPABOT_DISCORD_TOKEN"); v != "" {
+	if v := os.Getenv("GOSTAFF_DISCORD_TOKEN"); v != "" {
 		cfg.Transports.Discord.Token = v
 	}
-	if v := os.Getenv("CAPABOT_SLACK_APP_TOKEN"); v != "" {
+	if v := os.Getenv("GOSTAFF_SLACK_APP_TOKEN"); v != "" {
 		cfg.Transports.Slack.AppToken = v
 	}
-	if v := os.Getenv("CAPABOT_SLACK_BOT_TOKEN"); v != "" {
+	if v := os.Getenv("GOSTAFF_SLACK_BOT_TOKEN"); v != "" {
 		cfg.Transports.Slack.BotToken = v
 	}
 	return cfg

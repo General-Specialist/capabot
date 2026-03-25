@@ -18,9 +18,9 @@ type state struct {
 
 // CheckAndUpdate fetches from origin and pulls if new commits are available.
 // Rate-limited to once per minute. air detects changes and rebuilds automatically.
-// Only runs when CAPABOT_AUTOUPDATE is set (opt-in; not appropriate for Docker/Railway deployments).
+// Only runs when GOSTAFF_AUTOUPDATE is set (opt-in; not appropriate for Docker/Railway deployments).
 func CheckAndUpdate() {
-	if os.Getenv("CAPABOT_AUTOUPDATE") == "" {
+	if os.Getenv("GOSTAFF_AUTOUPDATE") == "" {
 		return
 	}
 
@@ -38,17 +38,17 @@ func CheckAndUpdate() {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "capabot: new commits available, pulling...")
+	fmt.Fprintln(os.Stderr, "gostaff: new commits available, pulling...")
 	if err := run("git", "pull", "--ff-only"); err != nil {
-		fmt.Fprintf(os.Stderr, "capabot: git pull failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gostaff: git pull failed: %v\n", err)
 		return
 	}
-	fmt.Fprintln(os.Stderr, "capabot: updated — restarting...")
+	fmt.Fprintln(os.Stderr, "gostaff: updated — restarting...")
 }
 
 func statePath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".capabot", "update.json")
+	return filepath.Join(home, ".gostaff", "update.json")
 }
 
 func lastCheck() time.Time {

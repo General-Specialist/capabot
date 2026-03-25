@@ -59,7 +59,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		auth := r.Header.Get("Authorization")
 		token, ok := strings.CutPrefix(auth, "Bearer ")
 		if !ok || token != apiKey {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="capabot"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="gostaff"`)
 			writeError(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

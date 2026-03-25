@@ -1,5 +1,5 @@
 // Compatibility shim for openclaw/plugin-sdk/plugin-entry.
-// Allows OpenClaw plugins using definePluginEntry to run in capabot.
+// Allows OpenClaw plugins using definePluginEntry to run in gostaff.
 
 export function definePluginEntry(opts) {
   const configSchema =

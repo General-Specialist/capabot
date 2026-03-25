@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/polymath/capabot/internal/config"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/config"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 type providerKeys struct {

@@ -296,23 +296,23 @@ func CheckRequirements(s *ParsedSkill) []string {
 }
 
 // DefaultDirs returns the standard skill directory search path:
-// workspace (.capabot/skills), user (~/.capabot/skills), system (/etc/capabot/skills).
+// workspace (.gostaff/skills), user (~/.gostaff/skills), system (/etc/gostaff/skills).
 // The caller is responsible for passing these to LoadDir in order.
 func DefaultDirs(workspaceRoot string) []string {
 	dirs := []string{}
 
 	// Workspace-local skills (highest precedence)
 	if workspaceRoot != "" {
-		dirs = append(dirs, filepath.Join(workspaceRoot, ".capabot", "skills"))
+		dirs = append(dirs, filepath.Join(workspaceRoot, ".gostaff", "skills"))
 	}
 
 	// User-local skills
 	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".capabot", "skills"))
+		dirs = append(dirs, filepath.Join(home, ".gostaff", "skills"))
 	}
 
 	// System-level skills
-	dirs = append(dirs, "/etc/capabot/skills")
+	dirs = append(dirs, "/etc/gostaff/skills")
 
 	return dirs
 }

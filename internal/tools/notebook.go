@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // notebookCell is a single Jupyter notebook cell.

@@ -1,14 +1,14 @@
 version: 2
 
-project_name: capabot
+project_name: gostaff
 
 before:
   hooks:
     - sh -c "cd web && npm install && npm run build"
 
 builds:
-  - main: ./cmd/capabot
-    binary: capabot
+  - main: ./cmd/gostaff
+    binary: gostaff
     ldflags:
       - -s -w -X main.version={{.Version}}
     goos:

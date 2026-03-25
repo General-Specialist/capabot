@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/polymath/capabot/internal/llm"
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/llm"
+	"github.com/polymath/gostaff/internal/memory"
 )
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {

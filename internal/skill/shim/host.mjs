@@ -1,4 +1,4 @@
-// host.mjs — Capabot plugin host shim.
+// host.mjs — GoStaff plugin host shim.
 // Spawned by the Go PluginProcess as: bun run host.mjs ./index.ts
 // (or: node host.mjs ./index.js)
 //
@@ -62,8 +62,8 @@ const logger = {
 
 const api = {
   // Identity fields
-  id: "capabot-plugin",
-  name: "capabot-plugin",
+  id: "gostaff-plugin",
+  name: "gostaff-plugin",
   version: "1.0.0",
   description: "",
   source: pluginPath,
@@ -71,7 +71,7 @@ const api = {
   registrationMode: "full",
   config: {},
   pluginConfig: {},
-  runtime: { platform: "capabot" },
+  runtime: { platform: "gostaff" },
   logger,
 
   // --- Core registration methods (fully implemented) ---
@@ -157,7 +157,7 @@ const api = {
       hookHandlers.set(`${mapped}:${key}`, handler);
       send({ type: "register_hook", event: mapped, name: key });
     }
-    // Unknown events are silently ignored (no-op) since capabot
+    // Unknown events are silently ignored (no-op) since gostaff
     // doesn't have the infrastructure for most OpenClaw lifecycle events.
   },
 
@@ -196,30 +196,30 @@ const api = {
     }
   },
 
-  // --- No-op stubs for infrastructure capabot doesn't have ---
+  // --- No-op stubs for infrastructure gostaff doesn't have ---
 
   registerChannel(_reg) {
-    logger.warn("registerChannel is not supported in capabot (no-op)");
+    logger.warn("registerChannel is not supported in gostaff (no-op)");
   },
 
   registerGatewayMethod(_method, _handler) {
-    logger.warn("registerGatewayMethod is not supported in capabot (no-op)");
+    logger.warn("registerGatewayMethod is not supported in gostaff (no-op)");
   },
 
   registerCli(_registrar, _opts) {
-    logger.warn("registerCli is not supported in capabot (no-op)");
+    logger.warn("registerCli is not supported in gostaff (no-op)");
   },
 
   registerSpeechProvider(_provider) {
-    logger.warn("registerSpeechProvider is not supported in capabot (no-op)");
+    logger.warn("registerSpeechProvider is not supported in gostaff (no-op)");
   },
 
   registerMediaUnderstandingProvider(_provider) {
-    logger.warn("registerMediaUnderstandingProvider is not supported in capabot (no-op)");
+    logger.warn("registerMediaUnderstandingProvider is not supported in gostaff (no-op)");
   },
 
   registerImageGenerationProvider(_provider) {
-    logger.warn("registerImageGenerationProvider is not supported in capabot (no-op)");
+    logger.warn("registerImageGenerationProvider is not supported in gostaff (no-op)");
   },
 
   registerWebSearchProvider(provider) {
@@ -240,19 +240,19 @@ const api = {
   },
 
   registerInteractiveHandler(_reg) {
-    logger.warn("registerInteractiveHandler is not supported in capabot (no-op)");
+    logger.warn("registerInteractiveHandler is not supported in gostaff (no-op)");
   },
 
   onConversationBindingResolved(_handler) {
-    // No-op — capabot doesn't have conversation bindings
+    // No-op — gostaff doesn't have conversation bindings
   },
 
   registerContextEngine(_id, _factory) {
-    logger.warn("registerContextEngine is not supported in capabot (no-op)");
+    logger.warn("registerContextEngine is not supported in gostaff (no-op)");
   },
 
   registerMemoryPromptSection(_builder) {
-    logger.warn("registerMemoryPromptSection is not supported in capabot (no-op)");
+    logger.warn("registerMemoryPromptSection is not supported in gostaff (no-op)");
   },
 
   resolvePath(input) {

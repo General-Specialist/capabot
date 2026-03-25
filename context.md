@@ -1,12 +1,12 @@
-# Capabot Codebase Context
+# GoStaff Codebase Context
 
-Capabot is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files, native Go executables, or OpenClaw-compatible plugins (TS/JS/Python) that extend the agent's behavior.
+GoStaff is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files, native Go executables, or OpenClaw-compatible plugins (TS/JS/Python) that extend the agent's behavior.
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      cmd/capabot                        │
+│                      cmd/gostaff                        │
 │  main.go → serve.go (wires everything together)         │
 └────────────────────────┬────────────────────────────────┘
                          │
@@ -54,14 +54,14 @@ Capabot is a self-hosted AI agent platform. Users configure LLM providers and sk
 - **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess
 - **Tier 3** (Plugin): TS/JS/Python subprocess using OpenClaw's `register(api)` protocol. Can register tools, hooks, HTTP routes, LLM providers, commands, and services. Full OpenClaw `definePluginEntry` compatibility via embedded SDK shim.
 
-**Deployment**: Docker (`CMD ["capabot", "serve"]`) or direct binary. Config at `~/.capabot/config.yaml`. Database: Postgres (optional — most features work without it). `CAPABOT_AUTOUPDATE=1` enables self-update via git pull.
+**Deployment**: Docker (`CMD ["gostaff", "serve"]`) or direct binary. Config at `~/.gostaff/config.yaml`. Database: Postgres (optional — most features work without it). `GOSTAFF_AUTOUPDATE=1` enables self-update via git pull.
 
 ---
 
 ## Top-Level Config
 
 ### `config.example.yaml`
-The canonical config reference. Copy to `~/.capabot/config.yaml`. Key sections:
+The canonical config reference. Copy to `~/.gostaff/config.yaml`. Key sections:
 - `server.addr` — HTTP API listen address (default `:8080`)
 - `providers.*` — LLM provider keys + default models
 - `agent.*` — `max_iterations`, `context_budget_pct`, `max_tool_output_tokens`
@@ -70,12 +70,12 @@ The canonical config reference. Copy to `~/.capabot/config.yaml`. Key sections:
 - `transports.*` — Telegram, Discord, Slack tokens
 
 ### `go.mod`
-Module: `github.com/polymath/capabot`. Direct dependencies:
+Module: `github.com/polymath/gostaff`. Direct dependencies:
 - `google/uuid`, `bwmarrin/discordgo` (Discord gateway), `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
 
 ---
 
-## `cmd/capabot/` — CLI entry point
+## `cmd/gostaff/` — CLI entry point
 
 ### `main.go`
 Dispatches to subcommands:
@@ -127,7 +127,7 @@ Key closures defined in `serve.go`:
 - Single person: runs agent with person's prompt
 - Multiple people (e.g. `@tag` targeting many): runs all in parallel goroutines
 
-`avatarToDataURI` — reads a local avatar file from `~/.capabot/avatars/` and returns a base64 data URI for Discord webhook avatar display.
+`avatarToDataURI` — reads a local avatar file from `~/.gostaff/avatars/` and returns a base64 data URI for Discord webhook avatar display.
 
 ### `chat.go`
 `runChat` — minimal interactive REPL. Creates one default agent, no store, reads from stdin, prints `Bot: <response>`. Maintains `history []llm.ChatMessage` for multi-turn context.
@@ -147,7 +147,7 @@ CLI skill subcommands:
 - `runSkillInstall` — downloads URL (tar.gz or zip), ClawHub name, or GitHub shorthand (`owner/repo`), extracts, calls `ImportSkill`
 - `extractZip` / `extractTarGz` — archive extraction with path traversal protection
 
-`defaultSkillsDir()` — `~/.capabot/skills`
+`defaultSkillsDir()` — `~/.gostaff/skills`
 
 ### `agent_cmds.go`
 `runAgentList` — stub; prints "no agents configured". Not yet implemented.
@@ -180,7 +180,7 @@ Calls `initStore` (which runs migrations as a side effect). Prints "migrations a
 3. Apply `applyEnvOverrides` (env takes precedence over file)
 4. Run `validate`
 
-`applyEnvOverrides` — maps `CAPABOT_*` env vars to config fields. Gemini key is read from `CAPABOT_GEMINI_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` (first non-empty wins).
+`applyEnvOverrides` — maps `GOSTAFF_*` env vars to config fields. Gemini key is read from `GOSTAFF_GEMINI_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` (first non-empty wins).
 
 `SetKey(path, key, value)` — reads raw YAML, walks dot-path to set a nested value, rewrites file with `0o600` perms.
 
@@ -409,7 +409,7 @@ Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 `ImportResult` contains `{SkillName, Tier, Warnings, Errors, MappedTools, InstallHints, DestPath}`.
 
 ### `toolmap.go`
-`openClawToCapabot` — map from OpenClaw flat tool names (`exec`, `read`, `write`) to Capabot equivalents (`shell_exec`, `file_read`, `file_write`). Used by importer to generate `MappedTools` warnings.
+`openClawToGoStaff` — map from OpenClaw flat tool names (`exec`, `read`, `write`) to GoStaff equivalents (`shell_exec`, `file_read`, `file_write`). Used by importer to generate `MappedTools` warnings.
 
 ### `lint.go`
 `LintSkill(source)` — parses and validates SKILL.md. Errors on missing `name` or `description`. Warnings for missing version, instructions, etc.
@@ -595,7 +595,7 @@ Only the first token (binary name) is checked against the allowlist.
 ### `browser.go`
 `BrowserTool` — long-running Node.js subprocess running Playwright. Browser persists across calls (cookies/sessions preserved). Actions: `navigate`, `click`, `type`, `get_text`, `screenshot` (returns base64 PNG as multimodal Part), `evaluate` (JS), `close`.
 
-Auto-installs Playwright helper script to `~/.capabot/browser/` on first use. If the subprocess crashes, state is reset on the next `send()` error so the following call will restart it cleanly.
+Auto-installs Playwright helper script to `~/.gostaff/browser/` on first use. If the subprocess crashes, state is reset on the next `send()` error so the following call will restart it cleanly.
 
 ### `memory.go`
 `MemoryTool` — persistent key-value store backed by `memory.Store`. Actions: `store`, `recall` (single key or list all), `delete`. Requires store to be non-nil.
@@ -616,7 +616,7 @@ Auto-installs Playwright helper script to `~/.capabot/browser/` on first use. If
 `UseToolTool` (`use_tool`) — meta-tool proxy for extended tools. Takes `{tool, input}` and dispatches to the named extended tool. Description dynamically includes all extended tool names and descriptions.
 
 ### `skill_create.go`
-`SkillCreateTool` (`skill_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.capabot/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Skill is immediately usable.
+`SkillCreateTool` (`skill_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.gostaff/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Skill is immediately usable.
 
 ### `skill_edit.go`
 `SkillEditTool` (`skill_edit`) — extended tool. Edits an existing skill's `main.go`. Recompiles after edit.
@@ -626,9 +626,9 @@ Auto-installs Playwright helper script to `~/.capabot/browser/` on first use. If
 ## `internal/updater/`
 
 ### `updater.go`
-`CheckAndUpdate()` — called as goroutine on startup. Rate-limited to once per minute (state stored in `~/.capabot/update.json`). Does `git fetch origin`, checks commit count, then `git pull --ff-only`.
+`CheckAndUpdate()` — called as goroutine on startup. Rate-limited to once per minute (state stored in `~/.gostaff/update.json`). Does `git fetch origin`, checks commit count, then `git pull --ff-only`.
 
-Opt-in: only runs when `CAPABOT_AUTOUPDATE` is set. Not appropriate for Docker/Railway deployments where updates happen via image rebuild.
+Opt-in: only runs when `GOSTAFF_AUTOUPDATE` is set. Not appropriate for Docker/Railway deployments where updates happen via image rebuild.
 
 ---
 

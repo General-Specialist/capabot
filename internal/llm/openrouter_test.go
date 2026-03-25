@@ -3,7 +3,7 @@ package llm_test
 import (
 	"testing"
 
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 func TestOpenRouterProvider_Name(t *testing.T) {

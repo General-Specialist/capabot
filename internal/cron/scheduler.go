@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
-	"github.com/polymath/capabot/internal/memory"
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
+	"github.com/polymath/gostaff/internal/memory"
+	"github.com/polymath/gostaff/internal/skill"
 	"github.com/rs/zerolog"
 )
 

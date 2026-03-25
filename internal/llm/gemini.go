@@ -107,7 +107,7 @@ func (g *GeminiProvider) resolveModel(requestModel string) string {
 	return g.model
 }
 
-// convertMessages translates Capabot ChatMessages to Gemini Content slices.
+// convertMessages translates GoStaff ChatMessages to Gemini Content slices.
 func convertMessages(messages []ChatMessage) []*genai.Content {
 	var contents []*genai.Content
 	for _, msg := range messages {
@@ -178,7 +178,7 @@ func mapRole(role string) genai.Role {
 	}
 }
 
-// buildConfig translates Capabot ChatRequest options to Gemini config.
+// buildConfig translates GoStaff ChatRequest options to Gemini config.
 func buildConfig(req ChatRequest) *genai.GenerateContentConfig {
 	config := &genai.GenerateContentConfig{}
 
@@ -206,7 +206,7 @@ func buildConfig(req ChatRequest) *genai.GenerateContentConfig {
 	return config
 }
 
-// convertTools translates Capabot ToolDefinitions to Gemini FunctionDeclarations.
+// convertTools translates GoStaff ToolDefinitions to Gemini FunctionDeclarations.
 func convertTools(tools []ToolDefinition) []*genai.Tool {
 	var decls []*genai.FunctionDeclaration
 	for _, t := range tools {
@@ -226,7 +226,7 @@ func convertTools(tools []ToolDefinition) []*genai.Tool {
 	return []*genai.Tool{{FunctionDeclarations: decls}}
 }
 
-// extractResponse converts a Gemini response to a Capabot ChatResponse.
+// extractResponse converts a Gemini response to a GoStaff ChatResponse.
 func extractResponse(resp *genai.GenerateContentResponse) (*ChatResponse, error) {
 	if resp == nil {
 		return nil, fmt.Errorf("nil response from gemini")

@@ -10,9 +10,9 @@ import (
 
 func testDSN(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("CAPABOT_TEST_DATABASE_URL")
+	dsn := os.Getenv("GOSTAFF_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CAPABOT_TEST_DATABASE_URL not set, skipping Postgres tests")
+		t.Skip("GOSTAFF_TEST_DATABASE_URL not set, skipping Postgres tests")
 	}
 	return dsn
 }

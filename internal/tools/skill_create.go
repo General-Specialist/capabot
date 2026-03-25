@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)

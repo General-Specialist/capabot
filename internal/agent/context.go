@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 // ContextManager tracks token usage across an agent loop and decides

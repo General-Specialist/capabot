@@ -300,7 +300,7 @@ func TestAnthropicProvider_Chat_SystemPrompt(t *testing.T) {
 	provider := newTestAnthropicProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&capturedBody)
 		resp := anthropicResponse{
-			Content:    []anthropicContentBlock{{Type: "text", Text: "I am Capabot."}},
+			Content:    []anthropicContentBlock{{Type: "text", Text: "I am GoStaff."}},
 			StopReason: "end_turn",
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -308,12 +308,12 @@ func TestAnthropicProvider_Chat_SystemPrompt(t *testing.T) {
 	})
 
 	provider.Chat(context.Background(), ChatRequest{
-		System:    "You are Capabot.",
+		System:    "You are GoStaff.",
 		Messages:  []ChatMessage{{Role: "user", Content: "Who are you?"}},
 		MaxTokens: 50,
 	})
 
-	if capturedBody["system"] != "You are Capabot." {
+	if capturedBody["system"] != "You are GoStaff." {
 		t.Errorf("expected system prompt in request body, got %v", capturedBody["system"])
 	}
 }

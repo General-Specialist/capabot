@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/llm"
 	"github.com/rs/zerolog"
 )
 

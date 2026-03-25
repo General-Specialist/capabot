@@ -1,4 +1,4 @@
--- Capabot schema v1 (Postgres)
+-- GoStaff schema v1 (Postgres)
 
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,

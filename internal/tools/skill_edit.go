@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 // SkillEditTool lets the agent update an existing skill's SKILL.md instructions or Go source code.

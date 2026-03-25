@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
 	"github.com/rs/zerolog"
 )
 
@@ -295,12 +295,12 @@ func testLogger() zerolog.Logger {
 // Ensure echoTool.Execute works correctly in isolation.
 func TestEchoTool(t *testing.T) {
 	tool := &echoTool{}
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"text":"capabot"}`))
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"text":"gostaff"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Content != "echo: capabot" {
-		t.Fatalf("want 'echo: capabot', got %q", result.Content)
+	if result.Content != "echo: gostaff" {
+		t.Fatalf("want 'echo: gostaff', got %q", result.Content)
 	}
 	if result.IsError {
 		t.Fatal("should not be an error")

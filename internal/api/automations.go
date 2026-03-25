@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/polymath/capabot/internal/cron"
-	"github.com/polymath/capabot/internal/memory"
+	"github.com/polymath/gostaff/internal/cron"
+	"github.com/polymath/gostaff/internal/memory"
 )
 
 type automationInput struct {

@@ -1,4 +1,4 @@
-// Package api provides the REST API server for the Capabot web UI.
+// Package api provides the REST API server for the GoStaff web UI.
 package api
 
 import (
@@ -15,20 +15,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/cron"
-	applog "github.com/polymath/capabot/internal/log"
-	"github.com/polymath/capabot/internal/llm"
-	"github.com/polymath/capabot/internal/memory"
-	"github.com/polymath/capabot/internal/orchestrator"
-	"github.com/polymath/capabot/internal/skill"
-	"github.com/polymath/capabot/internal/transport"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/cron"
+	applog "github.com/polymath/gostaff/internal/log"
+	"github.com/polymath/gostaff/internal/llm"
+	"github.com/polymath/gostaff/internal/memory"
+	"github.com/polymath/gostaff/internal/orchestrator"
+	"github.com/polymath/gostaff/internal/skill"
+	"github.com/polymath/gostaff/internal/transport"
 	"github.com/rs/zerolog"
 )
 
 var startTime = time.Now()
 
-// Server is the REST API server for the Capabot web UI.
+// Server is the REST API server for the GoStaff web UI.
 type Server struct {
 	store          *memory.Store
 	skillReg       *skill.Registry
@@ -67,7 +67,7 @@ type Config struct {
 	// RateLimitRPM limits API requests per minute per IP. 0 = disabled.
 	RateLimitRPM int
 	// SkillsDir is the directory where skills installed via the API are written.
-	// Defaults to the user's ~/.capabot/skills if empty.
+	// Defaults to the user's ~/.gostaff/skills if empty.
 	SkillsDir string
 	// ClawHubToken is an optional GitHub PAT to raise ClawHub API rate limits.
 	ClawHubToken string
@@ -86,7 +86,7 @@ func New(cfg Config) *Server {
 	skillsDir := cfg.SkillsDir
 	if skillsDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			skillsDir = home + "/.capabot/skills"
+			skillsDir = home + "/.gostaff/skills"
 		}
 	}
 
@@ -781,7 +781,7 @@ func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
 
 	client := skill.NewClawHubClient(skill.ClawHubConfig{})
 
-	tmpDir, err := os.MkdirTemp("", "capabot-install-*")
+	tmpDir, err := os.MkdirTemp("", "gostaff-install-*")
 	if err != nil {
 		writeError(w, fmt.Sprintf("temp dir: %v", err), http.StatusInternalServerError)
 		return

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 // Tool is the interface all agent tools must implement.

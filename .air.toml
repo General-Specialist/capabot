@@ -2,9 +2,9 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/capabot ./cmd/capabot"
-  bin = "./tmp/capabot"
-  full_bin = "./tmp/capabot serve"
+  cmd = "go build -o ./tmp/gostaff ./cmd/gostaff"
+  bin = "./tmp/gostaff"
+  full_bin = "./tmp/gostaff serve"
   include_ext = ["go"]
   exclude_dir = ["tmp", "web", "vendor"]
   delay = 500

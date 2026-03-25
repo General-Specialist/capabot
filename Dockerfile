@@ -4,10 +4,10 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o capabot ./cmd/capabot
+RUN CGO_ENABLED=0 go build -o gostaff ./cmd/gostaff
 
 FROM alpine:3.21
 RUN apk add --no-cache git ca-certificates
-COPY --from=build /app/capabot /usr/local/bin/capabot
+COPY --from=build /app/gostaff /usr/local/bin/gostaff
 WORKDIR /app
-CMD ["capabot", "serve"]
+CMD ["gostaff", "serve"]

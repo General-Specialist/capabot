@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/gostaff/internal/llm"
 )
 
 func TestContextManager_Budget(t *testing.T) {

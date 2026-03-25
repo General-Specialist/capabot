@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/polymath/capabot/internal/agent"
-	"github.com/polymath/capabot/internal/llm"
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/agent"
+	"github.com/polymath/gostaff/internal/llm"
+	"github.com/polymath/gostaff/internal/skill"
 	"github.com/rs/zerolog"
 )
 

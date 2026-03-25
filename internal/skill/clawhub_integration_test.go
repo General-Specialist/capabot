@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/polymath/capabot/internal/skill"
+	"github.com/polymath/gostaff/internal/skill"
 )
 
 const clawhubPath = "/tmp/clawhub-skills/skills"

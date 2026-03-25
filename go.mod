@@ -1,4 +1,4 @@
-module github.com/polymath/capabot
+module github.com/polymath/gostaff
 
 go 1.26.1
 

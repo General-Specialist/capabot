@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // TodoItem represents a single task.

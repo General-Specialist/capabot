@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/gostaff/internal/agent"
 )
 
 // WebSearchTool implements the web_search tool using configurable backends.
@@ -105,7 +105,7 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, n in
 	if err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("request error: %v", err), IsError: true}, nil
 	}
-	req.Header.Set("User-Agent", "capabot/1.0")
+	req.Header.Set("User-Agent", "gostaff/1.0")
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {

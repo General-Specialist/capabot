@@ -13,7 +13,7 @@ func Default() Config {
 		},
 		LogLevel: "info",
 		Database: DatabaseConfig{
-			URL: "postgres://capabot:capabot@localhost:5432/capabot?sslmode=disable",
+			URL: "postgres://gostaff:gostaff@localhost:5432/gostaff?sslmode=disable",
 		},
 		Providers: ProvidersConfig{
 			Anthropic: AnthropicConfig{
@@ -44,7 +44,7 @@ func Default() Config {
 func defaultSkillsDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".", ".capabot", "skills")
+		return filepath.Join(".", ".gostaff", "skills")
 	}
-	return filepath.Join(home, ".capabot", "skills")
+	return filepath.Join(home, ".gostaff", "skills")
 }

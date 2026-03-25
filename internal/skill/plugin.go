@@ -158,7 +158,7 @@ func NewPluginProcess(ctx context.Context, skillDir string) (*PluginProcess, err
 	if err != nil {
 		return nil, fmt.Errorf("reading embedded shim: %w", err)
 	}
-	shimPath := filepath.Join(os.TempDir(), "capabot-plugin-shim.mjs")
+	shimPath := filepath.Join(os.TempDir(), "gostaff-plugin-shim.mjs")
 	if err := os.WriteFile(shimPath, shimData, 0o644); err != nil {
 		return nil, fmt.Errorf("writing shim: %w", err)
 	}

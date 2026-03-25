@@ -41,7 +41,7 @@ server:
   addr: ":9090"
 log_level: "debug"
 database:
-  url: "postgres://localhost:5432/capabot-test?sslmode=disable"
+  url: "postgres://localhost:5432/gostaff-test?sslmode=disable"
 providers:
   anthropic:
     api_key: "test-key-123"
@@ -69,8 +69,8 @@ skills:
 	if cfg.LogLevel != "debug" {
 		t.Errorf("expected log level debug, got %s", cfg.LogLevel)
 	}
-	if cfg.Database.URL != "postgres://localhost:5432/capabot-test?sslmode=disable" {
-		t.Errorf("expected db URL postgres://localhost:5432/capabot-test?sslmode=disable, got %s", cfg.Database.URL)
+	if cfg.Database.URL != "postgres://localhost:5432/gostaff-test?sslmode=disable" {
+		t.Errorf("expected db URL postgres://localhost:5432/gostaff-test?sslmode=disable, got %s", cfg.Database.URL)
 	}
 	if cfg.Providers.Anthropic.APIKey != "test-key-123" {
 		t.Errorf("expected api key test-key-123, got %s", cfg.Providers.Anthropic.APIKey)
@@ -102,10 +102,10 @@ providers:
 		t.Fatal(err)
 	}
 
-	t.Setenv("CAPABOT_LOG_LEVEL", "warn")
-	t.Setenv("CAPABOT_SERVER_ADDR", ":7070")
-	t.Setenv("CAPABOT_ANTHROPIC_API_KEY", "env-key")
-	t.Setenv("CAPABOT_DATABASE_URL", "postgres://localhost:5432/envdb?sslmode=disable")
+	t.Setenv("GOSTAFF_LOG_LEVEL", "warn")
+	t.Setenv("GOSTAFF_SERVER_ADDR", ":7070")
+	t.Setenv("GOSTAFF_ANTHROPIC_API_KEY", "env-key")
+	t.Setenv("GOSTAFF_DATABASE_URL", "postgres://localhost:5432/envdb?sslmode=disable")
 
 	cfg, err := LoadFromFile(cfgPath)
 	if err != nil {
