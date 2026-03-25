@@ -9,7 +9,7 @@ const TOP_NAV: NavItem[] = [
   { Icon: LayoutDashboard, label: 'Dashboard', route: '/dashboard' },
   { Icon: Blocks, label: 'Skills', route: '/skills' },
   { Icon: CalendarSync, label: 'Automations', route: '/automations' },
-  { Icon: Users, label: 'Personas', route: '/personas' },
+  { Icon: Users, label: 'People', route: '/people' },
   { Icon: DollarSign, label: 'Costs', route: '/costs' },
   { Icon: Brain, label: 'Memory', route: '/memory' },
 ]

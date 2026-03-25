@@ -77,7 +77,7 @@ type Config struct {
 	ConfigPath string
 	// Router is the LLM router, used to hot-reload provider keys.
 	Router *llm.Router
-	// DiscordRoles syncs persona roles to Discord (nil if Discord not configured).
+	// DiscordRoles syncs person roles to Discord (nil if Discord not configured).
 	DiscordRoles *transport.DiscordRoleClient
 }
 
@@ -138,10 +138,10 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/runs", s.handleAllRuns)
 	s.mux.HandleFunc("GET /api/config/keys", s.handleConfigKeysGet)
 	s.mux.HandleFunc("PUT /api/config/keys", s.handleConfigKeysPut)
-	s.mux.HandleFunc("GET /api/personas", s.handlePersonasList)
-	s.mux.HandleFunc("POST /api/personas", s.handlePersonasCreate)
-	s.mux.HandleFunc("GET /api/personas/system-prompt", s.handleSystemPromptGet)
-	s.mux.HandleFunc("PUT /api/personas/system-prompt", s.handleSystemPromptPut)
+	s.mux.HandleFunc("GET /api/people", s.handlePeopleList)
+	s.mux.HandleFunc("POST /api/people", s.handlePeopleCreate)
+	s.mux.HandleFunc("GET /api/people/system-prompt", s.handleSystemPromptGet)
+	s.mux.HandleFunc("PUT /api/people/system-prompt", s.handleSystemPromptPut)
 	s.mux.HandleFunc("GET /api/settings/default-model", s.handleDefaultModelGet)
 	s.mux.HandleFunc("PUT /api/settings/default-model", s.handleDefaultModelPut)
 	s.mux.HandleFunc("GET /api/settings/summarization-model", s.handleSummarizationModelGet)
@@ -152,8 +152,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("PUT /api/modes/active", s.handleActiveModePut)
 	s.mux.HandleFunc("PUT /api/modes/{name}", s.handleModesPut)
 	s.mux.HandleFunc("DELETE /api/modes/{name}", s.handleModesDelete)
-	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
-	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
+	s.mux.HandleFunc("PUT /api/people/{id}", s.handlePeopleUpdate)
+	s.mux.HandleFunc("DELETE /api/people/{id}", s.handlePeopleDelete)
 	s.mux.HandleFunc("GET /api/memory", s.handleMemoryList)
 	s.mux.HandleFunc("PUT /api/memory/{key}", s.handleMemoryUpsert)
 	s.mux.HandleFunc("DELETE /api/memory/{key}", s.handleMemoryDelete)
@@ -363,7 +363,7 @@ type preparedChat struct {
 	msgs      []llm.ChatMessage
 	sysPrompt string
 	modelID   string
-	personas  []memory.Persona
+	people    []memory.Person
 }
 
 // prepareChatRequest resolves session, model tag, global system prompt, and persona mentions.
@@ -383,7 +383,7 @@ func (s *Server) prepareChatRequest(ctx context.Context, messages []llm.ChatMess
 		lastUserText = strings.TrimSpace(strings.Replace(lastUserText, "@"+modelID, "", 1))
 	}
 
-	strippedText, personas := s.resolvePersonas(ctx, lastUserText)
+	strippedText, people := s.resolvePeople(ctx, lastUserText)
 
 	msgs := messages
 	if strippedText != lastUserContent(messages) {
@@ -397,7 +397,7 @@ func (s *Server) prepareChatRequest(ctx context.Context, messages []llm.ChatMess
 		msgs:      msgs,
 		sysPrompt: globalSysPrompt,
 		modelID:   modelID,
-		personas:  personas,
+		people:    people,
 	}
 }
 
@@ -422,10 +422,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	tenantID := TenantIDFromContext(r.Context())
 	p := s.prepareChatRequest(r.Context(), req.Messages, req.SessionID, tenantID)
 
-	// Apply single persona prompt if present (multi-persona not supported in sync path).
+	// Apply single person prompt if present (multi-person not supported in sync path).
 	sysPrompt := p.sysPrompt
-	if len(p.personas) == 1 {
-		sysPrompt = combinePrompts(p.sysPrompt, p.personas[0].Prompt)
+	if len(p.people) == 1 {
+		sysPrompt = combinePrompts(p.sysPrompt, p.people[0].Prompt)
 	}
 
 	var result *agent.RunResult
@@ -449,9 +449,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolvePersonas checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
-// Returns the stripped text and matching personas.
-func (s *Server) resolvePersonas(ctx context.Context, text string) (string, []memory.Persona) {
+// resolvePeople checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
+// Returns the stripped text and matching people.
+func (s *Server) resolvePeople(ctx context.Context, text string) (string, []memory.Person) {
 	if s.store == nil || len(text) < 2 {
 		return text, nil
 	}
@@ -465,15 +465,15 @@ func (s *Server) resolvePersonas(ctx context.Context, text string) (string, []me
 			if remainder == "" {
 				remainder = text
 			}
-			// Try persona role.
-			persona, err := s.store.GetPersonaByDiscordRoleID(ctx, roleID)
+			// Try person role.
+			person, err := s.store.GetPersonByDiscordRoleID(ctx, roleID)
 			if err == nil {
-				return remainder, []memory.Persona{persona}
+				return remainder, []memory.Person{person}
 			}
 			// Try tag role.
 			tag, err := s.store.GetTagByDiscordRoleID(ctx, roleID)
 			if err == nil {
-				tagged, err := s.store.GetPersonasByTag(ctx, tag)
+				tagged, err := s.store.GetPeopleByTag(ctx, tag)
 				if err == nil && len(tagged) > 0 {
 					return remainder, tagged
 				}
@@ -502,13 +502,13 @@ func (s *Server) resolvePersonas(ctx context.Context, text string) (string, []me
 	}
 
 	// Try exact username first (the @mention handle).
-	persona, err := s.store.GetPersonaByUsername(ctx, name)
+	person, err := s.store.GetPersonByUsername(ctx, name)
 	if err == nil {
-		return remainder, []memory.Persona{persona}
+		return remainder, []memory.Person{person}
 	}
 
 	// Try as a tag.
-	tagged, err := s.store.GetPersonasByTag(ctx, name)
+	tagged, err := s.store.GetPeopleByTag(ctx, name)
 	if err == nil && len(tagged) > 0 {
 		return remainder, tagged
 	}
@@ -549,32 +549,32 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	p := s.prepareChatRequest(r.Context(), req.Messages, req.SessionID, tenantID)
 	sendSSE(w, flusher, map[string]any{"session_id": p.sessionID})
 
-	if len(p.personas) == 0 {
+	if len(p.people) == 0 {
 		s.streamSingleAgent(r.Context(), w, flusher, p.sessionID, p.msgs, p.sysPrompt, p.modelID, "")
 		return
 	}
 
-	if len(p.personas) == 1 {
-		persona := p.personas[0]
-		displayName := persona.Username
+	if len(p.people) == 1 {
+		person := p.people[0]
+		displayName := person.Username
 		if displayName == "" {
-			displayName = persona.Name
+			displayName = person.Name
 		}
-		s.streamSingleAgent(r.Context(), w, flusher, p.sessionID, p.msgs, combinePrompts(p.sysPrompt, persona.Prompt), p.modelID, displayName)
+		s.streamSingleAgent(r.Context(), w, flusher, p.sessionID, p.msgs, combinePrompts(p.sysPrompt, person.Prompt), p.modelID, displayName)
 		return
 	}
 
-	// Multiple personas — fan out in parallel, prepend global system prompt to each.
-	personas := p.personas
+	// Multiple people — fan out in parallel, prepend global system prompt to each.
+	people := p.people
 	if p.sysPrompt != "" {
-		enriched := make([]memory.Persona, len(personas))
-		for i, persona := range personas {
-			enriched[i] = persona
-			enriched[i].Prompt = combinePrompts(p.sysPrompt, persona.Prompt)
+		enriched := make([]memory.Person, len(people))
+		for i, person := range people {
+			enriched[i] = person
+			enriched[i].Prompt = combinePrompts(p.sysPrompt, person.Prompt)
 		}
-		personas = enriched
+		people = enriched
 	}
-	s.streamMultiAgent(r.Context(), w, flusher, p.sessionID, p.msgs, personas)
+	s.streamMultiAgent(r.Context(), w, flusher, p.sessionID, p.msgs, people)
 }
 
 // streamSingleAgent runs one agent and streams its events.
@@ -632,45 +632,45 @@ func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, f
 	})
 }
 
-// personaEvent is a tagged agent event for multiplexing parallel persona streams.
-type personaEvent struct {
-	persona memory.Persona
-	event   agent.AgentEvent
+// personEvent is a tagged agent event for multiplexing parallel person streams.
+type personEvent struct {
+	person memory.Person
+	event  agent.AgentEvent
 }
 
-// personaDone signals that a persona's agent run has completed.
-type personaDone struct {
-	persona memory.Persona
-	result  *agent.RunResult
-	err     error
+// personDone signals that a person's agent run has completed.
+type personDone struct {
+	person memory.Person
+	result *agent.RunResult
+	err    error
 }
 
-// streamMultiAgent runs multiple personas in parallel, all seeing the full chat history.
+// streamMultiAgent runs multiple people in parallel, all seeing the full chat history.
 // Events are multiplexed onto the single SSE connection with a "persona" field.
-func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, personas []memory.Persona) {
-	eventCh := make(chan personaEvent, 64*len(personas))
-	doneCh := make(chan personaDone, len(personas))
+func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, messages []llm.ChatMessage, people []memory.Person) {
+	eventCh := make(chan personEvent, 64*len(people))
+	doneCh := make(chan personDone, len(people))
 
-	// Launch all personas in parallel.
+	// Launch all people in parallel.
 	var wg sync.WaitGroup
-	for _, p := range personas {
+	for _, p := range people {
 		wg.Add(1)
-		go func(persona memory.Persona) {
+		go func(person memory.Person) {
 			defer wg.Done()
 			onEvent := func(ev agent.AgentEvent) {
 				select {
-				case eventCh <- personaEvent{persona: persona, event: ev}:
+				case eventCh <- personEvent{person: person, event: ev}:
 				case <-ctx.Done():
 				}
 			}
 			var result *agent.RunResult
 			var err error
 			if s.agentWithPrompt != nil {
-				result, err = s.agentWithPrompt(ctx, persona.Prompt, "", sessionID, messages, onEvent)
+				result, err = s.agentWithPrompt(ctx, person.Prompt, "", sessionID, messages, onEvent)
 			} else {
 				result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
 			}
-			doneCh <- personaDone{persona: persona, result: result, err: err}
+			doneCh <- personDone{person: person, result: result, err: err}
 		}(p)
 	}
 
@@ -682,9 +682,9 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 
 	// Drain events in the main goroutine (single writer to w — no race).
 	for ev := range eventCh {
-		displayName := ev.persona.Username
+		displayName := ev.person.Username
 		if displayName == "" {
-			displayName = ev.persona.Name
+			displayName = ev.person.Name
 		}
 		sendSSE(w, flusher, map[string]any{
 			"event":      string(ev.event.Kind),
@@ -702,9 +702,9 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 	// All agents finished and all events drained. Send errors and final done.
 	close(doneCh)
 	for d := range doneCh {
-		displayName := d.persona.Username
+		displayName := d.person.Username
 		if displayName == "" {
-			displayName = d.persona.Name
+			displayName = d.person.Name
 		}
 		if d.err != nil {
 			sendSSE(w, flusher, map[string]any{"persona": displayName, "error": d.err.Error()})

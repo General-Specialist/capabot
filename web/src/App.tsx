@@ -5,7 +5,7 @@ import { SkillsPage } from '@/pages/SkillsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
-import { PersonasPage } from '@/pages/PersonasPage'
+import { PeoplePage } from '@/pages/PeoplePage'
 import { CostsPage } from '@/pages/CostsPage'
 import { MemoryPage } from '@/pages/MemoryPage'
 
@@ -22,7 +22,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/automations" element={<AutomationsPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/personas" element={<PersonasPage />} />
+            <Route path="/people" element={<PeoplePage />} />
             <Route path="/costs" element={<CostsPage />} />
             <Route path="/memory" element={<MemoryPage />} />
           </Routes>

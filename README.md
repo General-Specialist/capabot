@@ -48,7 +48,7 @@ Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM pr
 
 **Multi-provider** — Anthropic, OpenAI, Gemini, OpenRouter. Switch models per-message with `@model-name`. Falls back to next provider on rate limits or errors.
 
-**Personas** — Give the agent different names, prompts, and avatars. Route Discord/Slack channels to specific personas or tags. Mention with `@persona-name` to address one directly.
+**People** — Give the agent different names, prompts, and avatars. Route Discord/Slack channels to specific people or tags. Mention with `@person-name` to address one directly.
 
 **Transports** — Discord, Telegram, Slack, or plain HTTP. All route to the same agent core.
 

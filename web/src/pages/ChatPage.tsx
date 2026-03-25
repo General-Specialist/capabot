@@ -173,8 +173,8 @@ export function ChatPage() {
       return updated
     }), [])
 
-  // updatePersonaMessage updates or inserts an assistant message for a specific persona.
-  const updatePersonaMessage = useCallback((persona: string, patch: Partial<Message>) =>
+  // updatePersonMessage updates or inserts an assistant message for a specific person.
+  const updatePersonMessage = useCallback((persona: string, patch: Partial<Message>) =>
     setMessages(prev => {
       const updated = [...prev]
       // Find the existing assistant message for this persona.
@@ -249,13 +249,13 @@ export function ChatPage() {
           const ps = getState(chunk.persona)
           if (chunk.event === 'thinking' && chunk.thinking) {
             ps.thinking += chunk.thinking
-            updatePersonaMessage(chunk.persona, { thinking: ps.thinking, streaming: true })
+            updatePersonMessage(chunk.persona, { thinking: ps.thinking, streaming: true })
           }
           if (chunk.event === 'tool_start' && chunk.tool_name) {
             const tc: ToolCall = { name: chunk.tool_name, label: toolLabel(chunk.tool_name, chunk.tool_input) }
             ps.toolCalls = [...ps.toolCalls, tc]
             ps.pendingToolCalls = [...ps.pendingToolCalls, { id: chunk.tool_id ?? chunk.tool_name, name: chunk.tool_name, input: chunk.tool_input ?? {} }]
-            updatePersonaMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
+            updatePersonMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
           }
           if (chunk.event === 'tool_end' && chunk.tool_id) {
             ps.pendingToolResults = [...ps.pendingToolResults, { tool_use_id: chunk.tool_id, content: chunk.content ?? '', is_error: chunk.is_error }]
@@ -263,12 +263,12 @@ export function ChatPage() {
             if (idx < ps.toolCalls.length) {
               ps.toolCalls = [...ps.toolCalls]
               ps.toolCalls[idx] = { ...ps.toolCalls[idx], result: chunk.content ?? '' }
-              updatePersonaMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
+              updatePersonMessage(chunk.persona, { toolCalls: [...ps.toolCalls], streaming: true })
             }
           }
           if (chunk.event === 'response' && chunk.content) {
             ps.content = chunk.content
-            updatePersonaMessage(chunk.persona, { content: ps.content, streaming: true })
+            updatePersonMessage(chunk.persona, { content: ps.content, streaming: true })
           }
         } else if (!isMulti) {
           // Single-agent path (no persona).
@@ -317,7 +317,7 @@ export function ChatPage() {
           if (isMulti) {
             // Finalize all persona messages.
             for (const [pName, ps] of Object.entries(personaState)) {
-              updatePersonaMessage(pName, { content: ps.content, streaming: false })
+              updatePersonMessage(pName, { content: ps.content, streaming: false })
             }
             // Add combined responses to LLM history.
             for (const ps of Object.values(personaState)) {
@@ -342,7 +342,7 @@ export function ChatPage() {
         }
         if (chunk.error) {
           if (isMulti && chunk.persona) {
-            updatePersonaMessage(chunk.persona, { content: chunk.error, streaming: false })
+            updatePersonMessage(chunk.persona, { content: chunk.error, streaming: false })
           } else {
             updateLast({ content: accumulated || chunk.error, streaming: false })
           }
@@ -361,7 +361,7 @@ export function ChatPage() {
       }
       setLoading(false)
     }
-  }, [loading, updateLast, updatePersonaMessage])
+  }, [loading, updateLast, updatePersonMessage])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

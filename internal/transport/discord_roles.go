@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// DiscordRoleClient manages Discord guild roles for persona sync.
+// DiscordRoleClient manages Discord guild roles for person sync.
 // It uses the Discord REST API directly — no gateway connection needed.
 type DiscordRoleClient struct {
 	token   string

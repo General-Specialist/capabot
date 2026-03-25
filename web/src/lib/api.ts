@@ -98,7 +98,7 @@ export interface StreamChunk {
   tool_input?: Record<string, unknown>
   is_error?: boolean
   iteration?: number
-  // persona (set when @persona or @tag activated an agent)
+  // person (set when @person or @tag activated an agent)
   persona?: string
   // completion fields
   session_id?: string
@@ -161,7 +161,7 @@ export interface TraceMessage {
   tool_input?: string
 }
 
-export interface Persona {
+export interface Person {
   id: number
   name: string
   prompt: string
@@ -280,7 +280,7 @@ export const api = {
     if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
   },
 
-  personas: () => get<Persona[]>('/personas'),
+  people: () => get<Person[]>('/people'),
   modes: () => get<{ modes: Record<string, ProviderKeys>; active: string }>('/modes'),
   modeSet: (name: string, keys: ProviderKeys) => fetch(BASE + `/modes/${name}`, {
     method: 'PUT',
@@ -305,8 +305,8 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ summarization_model: model }),
   }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
-  systemPromptGet: () => get<{ system_prompt: string }>('/personas/system-prompt'),
-  systemPromptSet: (prompt: string) => fetch(BASE + '/personas/system-prompt', {
+  systemPromptGet: () => get<{ system_prompt: string }>('/people/system-prompt'),
+  systemPromptSet: (prompt: string) => fetch(BASE + '/people/system-prompt', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system_prompt: prompt }),
@@ -319,17 +319,17 @@ export const api = {
     const data = await res.json() as { url: string }
     return data.url
   },
-  personaCreate: (data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) =>
-    post<{ id: number }>('/personas', data),
-  personaUpdate: (id: number, data: { name: string; prompt: string; username?: string; avatar_url?: string; avatar_position?: string; tags?: string[] }) => {
-    return fetch(BASE + `/personas/${id}`, {
+  personCreate: (data: { name: string; prompt: string; username?: string; avatar_url?: string; tags?: string[] }) =>
+    post<{ id: number }>('/people', data),
+  personUpdate: (id: number, data: { name: string; prompt: string; username?: string; avatar_url?: string; avatar_position?: string; tags?: string[] }) => {
+    return fetch(BASE + `/people/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
-  personaDelete: (id: number) => {
-    return fetch(BASE + `/personas/${id}`, { method: 'DELETE' })
+  personDelete: (id: number) => {
+    return fetch(BASE + `/people/${id}`, { method: 'DELETE' })
       .then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
 

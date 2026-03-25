@@ -65,10 +65,10 @@ func (t *DiscordTransport) postMessage(ctx context.Context, channelID, content, 
 	return nil
 }
 
-// sendViaWebhook sends a message through a per-persona webhook.
-// Each persona gets its own webhook (keyed by channel+displayName) with avatar baked in.
+// sendViaWebhook sends a message through a per-person webhook.
+// Each person gets their own webhook (keyed by channel+displayName) with avatar baked in.
 func (t *DiscordTransport) sendViaWebhook(ctx context.Context, msg OutboundMessage) error {
-	webhookURL, err := t.getOrCreatePersonaWebhook(ctx, msg.ChannelID, msg.DisplayName, msg.AvatarData)
+	webhookURL, err := t.getOrCreatePersonWebhook(ctx, msg.ChannelID, msg.DisplayName, msg.AvatarData)
 	if err != nil {
 		t.logger.Warn().Err(err).Msg("discord: webhook fallback to bot message")
 		chunks := splitMessage(msg.Text, discordMaxMsgLen)
@@ -109,14 +109,14 @@ func (t *DiscordTransport) sendViaWebhook(ctx context.Context, msg OutboundMessa
 	return nil
 }
 
-// webhookKey returns the cache key for a persona webhook.
+// webhookKey returns the cache key for a person webhook.
 func webhookKey(channelID, displayName string) string {
 	return channelID + ":" + displayName
 }
 
-// getOrCreatePersonaWebhook returns a webhook URL for a specific persona in a channel.
+// getOrCreatePersonWebhook returns a webhook URL for a specific person in a channel.
 // The webhook's avatar is set via base64 data on creation so Discord stores it.
-func (t *DiscordTransport) getOrCreatePersonaWebhook(ctx context.Context, channelID, displayName, avatarData string) (string, error) {
+func (t *DiscordTransport) getOrCreatePersonWebhook(ctx context.Context, channelID, displayName, avatarData string) (string, error) {
 	key := webhookKey(channelID, displayName)
 
 	t.webhooksMu.Lock()
@@ -200,7 +200,7 @@ func (t *DiscordTransport) getOrCreatePersonaWebhook(ctx context.Context, channe
 	return url, nil
 }
 
-// UpdateWebhookAvatar updates a cached webhook's avatar. Called when a persona's avatar changes.
+// UpdateWebhookAvatar updates a cached webhook's avatar. Called when a person's avatar changes.
 func (t *DiscordTransport) UpdateWebhookAvatar(ctx context.Context, channelID, displayName, avatarData string) error {
 	key := webhookKey(channelID, displayName)
 	t.webhooksMu.Lock()

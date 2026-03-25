@@ -33,7 +33,7 @@ func setupTestStore(t *testing.T) *Store {
 
 	// Clean tables between tests
 	db := pool.DB()
-	for _, table := range []string{"automation_runs", "automations", "tool_executions", "messages", "sessions", "memory", "personas"} {
+	for _, table := range []string{"automation_runs", "automations", "tool_executions", "messages", "sessions", "memory", "people"} {
 		if _, err := db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			t.Fatalf("cleaning table %s: %v", table, err)
 		}

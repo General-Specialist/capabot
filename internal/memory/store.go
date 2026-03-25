@@ -551,8 +551,8 @@ func scanAutomationRuns(rows *sql.Rows) ([]AutomationRun, error) {
 	return runs, rows.Err()
 }
 
-// Persona is a named system prompt with optional display overrides and tags.
-type Persona struct {
+// Person is a named system prompt with optional display overrides and tags.
+type Person struct {
 	ID             int64     `json:"id"`
 	Name           string    `json:"name"`
 	Prompt         string    `json:"prompt"`
@@ -565,16 +565,16 @@ type Persona struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
+func (s *Store) ListPeople(ctx context.Context) ([]Person, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas ORDER BY name ASC`)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Persona
+	var out []Person
 	for rows.Next() {
-		var p Persona
+		var p Person
 		var tags pgStringArray
 		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
@@ -588,11 +588,11 @@ func (s *Store) ListPersonas(ctx context.Context) ([]Persona, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, error) {
-	var p Persona
+func (s *Store) GetPersonByName(ctx context.Context, name string) (Person, error) {
+	var p Person
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE name = $1`, name,
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people WHERE name = $1`, name,
 	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
@@ -601,12 +601,12 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (Persona, err
 	return p, err
 }
 
-// GetPersonaByUsername returns a persona by its username (the @mention handle).
-func (s *Store) GetPersonaByUsername(ctx context.Context, username string) (Persona, error) {
-	var p Persona
+// GetPersonByUsername returns a person by their username (the @mention handle).
+func (s *Store) GetPersonByUsername(ctx context.Context, username string) (Person, error) {
+	var p Person
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE username = $1`, username,
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people WHERE username = $1`, username,
 	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
@@ -615,17 +615,17 @@ func (s *Store) GetPersonaByUsername(ctx context.Context, username string) (Pers
 	return p, err
 }
 
-// GetPersonasByTag returns all personas that have the given tag.
-func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, error) {
+// GetPeopleByTag returns all people that have the given tag.
+func (s *Store) GetPeopleByTag(ctx context.Context, tag string) ([]Person, error) {
 	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people WHERE $1 = ANY(tags) ORDER BY name ASC`, tag)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Persona
+	var out []Person
 	for rows.Next() {
-		var p Persona
+		var p Person
 		var tags pgStringArray
 		if err := rows.Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
@@ -639,14 +639,14 @@ func (s *Store) GetPersonasByTag(ctx context.Context, tag string) ([]Persona, er
 	return out, rows.Err()
 }
 
-func (s *Store) CreatePersona(ctx context.Context, p Persona) (int64, error) {
+func (s *Store) CreatePerson(ctx context.Context, p Person) (int64, error) {
 	var id int64
 	if p.Tags == nil {
 		p.Tags = []string{}
 	}
 	err := s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`INSERT INTO personas (name, prompt, username, avatar_url, avatar_position, tags)
+			`INSERT INTO people (name, prompt, username, avatar_url, avatar_position, tags)
 			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING id`,
 			p.Name, p.Prompt, p.Username, p.AvatarURL, p.AvatarPosition, pgStringArray(p.Tags),
@@ -655,32 +655,32 @@ func (s *Store) CreatePersona(ctx context.Context, p Persona) (int64, error) {
 	return id, err
 }
 
-func (s *Store) UpdatePersona(ctx context.Context, p Persona) error {
+func (s *Store) UpdatePerson(ctx context.Context, p Person) error {
 	if p.Tags == nil {
 		p.Tags = []string{}
 	}
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE personas SET name=$1, prompt=$2, username=$3, avatar_url=$4, avatar_position=$5, tags=$6, updated_at=NOW() WHERE id=$7`,
+			`UPDATE people SET name=$1, prompt=$2, username=$3, avatar_url=$4, avatar_position=$5, tags=$6, updated_at=NOW() WHERE id=$7`,
 			p.Name, p.Prompt, p.Username, p.AvatarURL, p.AvatarPosition, pgStringArray(p.Tags), p.ID)
 		return err
 	})
 }
 
-// SetPersonaDiscordRoleID stores the Discord role ID for a persona.
-func (s *Store) SetPersonaDiscordRoleID(ctx context.Context, id int64, roleID string) error {
+// SetPersonDiscordRoleID stores the Discord role ID for a person.
+func (s *Store) SetPersonDiscordRoleID(ctx context.Context, id int64, roleID string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE personas SET discord_role_id=$1, updated_at=NOW() WHERE id=$2`, roleID, id)
+		_, err := tx.ExecContext(ctx, `UPDATE people SET discord_role_id=$1, updated_at=NOW() WHERE id=$2`, roleID, id)
 		return err
 	})
 }
 
-// GetPersonaByDiscordRoleID returns a persona by its Discord role ID.
-func (s *Store) GetPersonaByDiscordRoleID(ctx context.Context, roleID string) (Persona, error) {
-	var p Persona
+// GetPersonByDiscordRoleID returns a person by their Discord role ID.
+func (s *Store) GetPersonByDiscordRoleID(ctx context.Context, roleID string) (Person, error) {
+	var p Person
 	var tags pgStringArray
 	err := s.pool.DB().QueryRowContext(ctx,
-		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM personas WHERE discord_role_id = $1`, roleID,
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people WHERE discord_role_id = $1`, roleID,
 	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
 	p.Tags = []string(tags)
 	if p.Tags == nil {
@@ -689,9 +689,9 @@ func (s *Store) GetPersonaByDiscordRoleID(ctx context.Context, roleID string) (P
 	return p, err
 }
 
-func (s *Store) DeletePersona(ctx context.Context, id int64) error {
+func (s *Store) DeletePerson(ctx context.Context, id int64) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM personas WHERE id=$1`, id)
+		_, err := tx.ExecContext(ctx, `DELETE FROM people WHERE id=$1`, id)
 		return err
 	})
 }

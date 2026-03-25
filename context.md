@@ -105,7 +105,7 @@ The main wiring function. Startup sequence:
 7. Init skill registry (loads dirs); spawn plugin processes and register tools/hooks/routes/providers; register native skills as tools
 8. Register `skill_create` and `skill_edit` as _extended_ tools; start skill hot-reload poller (1s interval — detects newly installed skills and registers their plugin tools/hooks/providers without restart)
 9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach plugin hooks to each agent)
-10. `syncDiscordRoles` — creates Discord roles for personas/tags that don't have one yet (startup helper, extracted from `runServe`)
+10. `syncDiscordPeopleRoles` — creates Discord roles for people/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
 12. Start API server on `cfg.Server.Addr`
 13. Optional: content filter, session TTL cleanup goroutine
@@ -123,9 +123,9 @@ Key closures defined in `serve.go`:
 - Content filter check
 - `/default_role`, `/chat`, `/execute`, `/mode` commands
 - `@model-id` tag extraction
-- `@PersonaName` or channel binding persona routing
-- Single persona: runs agent with persona prompt
-- Multiple personas (e.g. `@tag` targeting many): runs all in parallel goroutines
+- `@PersonName` or channel binding person routing
+- Single person: runs agent with person's prompt
+- Multiple people (e.g. `@tag` targeting many): runs all in parallel goroutines
 
 `avatarToDataURI` — reads a local avatar file from `~/.capabot/avatars/` and returns a base64 data URI for Discord webhook avatar display.
 
@@ -305,11 +305,11 @@ Migration files (what they add):
 - 002: skill_names array on automations
 - 003: start_offset on automations
 - 004: datepicker schema changes
-- 005: persona avatar_url
-- 006: persona tags
-- 007: persona discord_role_id
+- 005: person avatar_url
+- 006: person tags
+- 007: person discord_role_id
 - 008: discord_tag_roles table
-- 009: persona avatar_position
+- 009: person avatar_position
 - 010: system_prompt settings key
 - 011: settings table
 - 012: channel_bindings table
@@ -324,7 +324,7 @@ Repository pattern. All DB access goes through this.
 - `Message` — `session_id`, `role`, `content`, `tool_call_id`, `tool_name`, `tool_input`, `token_count`
 - `MemoryEntry` — `tenant_id`, `key`, `value`
 - `ToolExecution` — audit log of tool calls
-- `Persona` — `id`, `name`, `username`, `prompt`, `avatar_url`, `avatar_position`, `tags`, `discord_role_id`
+- `Person` — `id`, `name`, `username`, `prompt`, `avatar_url`, `avatar_position`, `tags`, `discord_role_id`
 - `Automation` — `id`, `name`, `rrule`, `start_at`, `end_at`, `prompt`, `skill_names`, `enabled`, `next_run_at`
 - `AutomationRun` — `id`, `automation_id`, `status`, `output`, `started_at`, `finished_at`
 - `ModeKeys` — `model` (default model for mode), `skill_names []string`, `system_prompt_override`
@@ -334,7 +334,7 @@ Repository pattern. All DB access goes through this.
 - `MarkStaleRunsAsFailed` — sets any `running` automation runs to `failed` at startup
 - `GetActiveMode` / `SetActiveMode` — stored in the `settings` table under key `active_mode`; returns `"default"` if unset
 - `GetSystemPrompt` / `SetSystemPrompt` — stored in `settings` as `system_prompt`
-- `GetChannelBinding` / `SetChannelBinding` / `DeleteChannelBinding` — `channel_bindings` table maps channel ID to `persona:<username>` or a tag name
+- `GetChannelBinding` / `SetChannelBinding` / `DeleteChannelBinding` — `channel_bindings` table maps channel ID to `persona:<username>` (person binding) or a tag name
 - `SaveUsage` — writes to `usage_log` table for cost tracking
 
 ---
@@ -434,14 +434,14 @@ Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 - `Start` calls `session.Open()` then blocks until context is cancelled
 - Event handlers: `onMessageCreate` (skips bots), `onInteractionCreate` (slash commands → ACK + synthetic InboundMessage)
 - Registers global slash commands via REST on startup (`registerSlashCommands`)
-- Persona replies use Discord webhooks (cached per channel in `webhooks map`, managed in `discord_send.go`)
+- Person replies use Discord webhooks (cached per channel in `webhooks map`, managed in `discord_send.go`)
 - Intents: `IntentsGuildMessages | IntentMessageContent`
 
 ### `discord_roles.go`
-`DiscordRoleClient` — creates and manages Discord roles for personas and tags via REST API. Used at startup to sync roles.
+`DiscordRoleClient` — creates and manages Discord roles for people and tags via REST API. Used at startup to sync roles.
 
 ### `discord_send.go`
-Helpers for sending messages via Discord REST API (regular messages and webhook-based persona messages).
+Helpers for sending messages via Discord REST API (regular messages and webhook-based person messages).
 
 ### `slack.go`
 `SlackTransport` — Socket Mode WebSocket connection. Uses `xapp-` token to get WebSocket URL, `xoxb-` token to send. Auto-reconnect with exponential backoff (1s → 30s max). Messages > 3000 chars split.
@@ -461,18 +461,18 @@ Helpers for sending messages via Discord REST API (regular messages and webhook-
 ### `server.go`
 `Server` — HTTP mux with all REST routes registered. Key routes:
 - `GET /api/health` — version, uptime, skills count, provider count
-- `POST /api/chat` — synchronous chat; uses `prepareChatRequest`, supports global sys prompt, model tag, single persona
-- `POST /api/chat/stream` — SSE streaming; uses `prepareChatRequest`, supports all of the above plus multi-persona fan-out
+- `POST /api/chat` — synchronous chat; uses `prepareChatRequest`, supports global sys prompt, model tag, single person
+- `POST /api/chat/stream` — SSE streaming; uses `prepareChatRequest`, supports all of the above plus multi-person fan-out
 
-`prepareChatRequest` — shared helper called by both chat handlers. Resolves: session ID, global system prompt, `@model-id` tag extraction, persona/tag mention (`resolvePersonas`). Returns `preparedChat` struct.
+`prepareChatRequest` — shared helper called by both chat handlers. Resolves: session ID, global system prompt, `@model-id` tag extraction, person/tag mention (`resolvePeople`). Returns `preparedChat` struct.
 - `GET /api/logs` — SSE stream of log broadcaster
 - `GET/POST /api/automations` — CRUD for scheduled automations
 - `POST /api/automations/{id}/trigger` — manual trigger
 - `GET /api/runs/{runID}/stream` — SSE stream of a running automation's agent events
 - `GET/PUT /api/skills`, `POST /api/skills/install`, `POST /api/skills/create`
 - `GET/PUT /api/config/keys` — hot-reload provider API keys
-- `GET/POST/PUT/DELETE /api/personas` — persona management
-- `GET/PUT /api/personas/system-prompt` — global system prompt prepended to all personas
+- `GET/POST/PUT/DELETE /api/people` — people management
+- `GET/PUT /api/people/system-prompt` — global system prompt prepended to all people
 - `GET/PUT /api/modes/active`, `PUT/DELETE /api/modes/{name}`
 - `GET/PUT /api/settings/default-model`, `GET/PUT /api/settings/summarization-model`
 - `GET /api/usage`, `GET /api/credits`
@@ -496,8 +496,8 @@ CRUD handlers for automations. `handleAutomationsCreate` / `handleAutomationsUpd
 ### `modes.go`
 Handlers for mode CRUD. Built-in modes (`default`, `chat`, `execute`) cannot be deleted.
 
-### `personas.go`
-CRUD for personas. On create/update, syncs Discord role if Discord is configured.
+### `people.go`
+CRUD for people. On create/update, syncs Discord role if Discord is configured.
 
 ### `skills_create.go`
 `handleSkillsCreate` — calls `tools.NewSkillCreateTool` indirectly via the agent (skill creation goes through the LLM). Actually the handler directly writes the skill directory.
@@ -635,10 +635,10 @@ Opt-in: only runs when `CAPABOT_AUTOUPDATE` is set. Not appropriate for Docker/R
 ## Key Data Flows
 
 ### Chat request (API)
-`POST /api/chat` or `/api/chat/stream` → `prepareChatRequest` (resolves session, sys prompt, model tag, persona) → single persona: `agentWithPrompt`; no persona: `defaultAgent`; multi-persona (stream only): `streamMultiAgent` → `agent.Run` → ReAct loop → returns `RunResult`
+`POST /api/chat` or `/api/chat/stream` → `prepareChatRequest` (resolves session, sys prompt, model tag, person) → single person: `agentWithPrompt`; no person: `defaultAgent`; multi-person (stream only): `streamMultiAgent` → `agent.Run` → ReAct loop → returns `RunResult`
 
 ### Transport message (e.g. Discord)
-`DiscordTransport` receives message → `makeMessageHandler` → resolve personas/channel binding → `runAgentEphemeral` (no store) → send response via transport
+`DiscordTransport` receives message → `makeMessageHandler` → resolve people/channel binding → `runAgentEphemeral` (no store) → send response via transport
 
 ### Automation run
 `cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence

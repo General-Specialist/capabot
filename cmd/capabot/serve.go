@@ -313,7 +313,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		apiAddr = ":8080"
 	}
 	discordRoles := transport.NewDiscordRoleClient(cfg.Transports.Discord.Token, cfg.Transports.Discord.GuildID)
-	syncDiscordRoles(ctx, discordRoles, store, logger)
+	syncDiscordPeopleRoles(ctx, discordRoles, store, logger)
 
 	apiServer := api.New(api.Config{
 		Store:           store,
@@ -481,30 +481,30 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	return nil
 }
 
-// syncDiscordRoles creates Discord roles for any personas or tags that don't have one yet.
-func syncDiscordRoles(ctx context.Context, discordRoles *transport.DiscordRoleClient, store *memory.Store, logger zerolog.Logger) {
+// syncDiscordPeopleRoles creates Discord roles for any people or tags that don't have one yet.
+func syncDiscordPeopleRoles(ctx context.Context, discordRoles *transport.DiscordRoleClient, store *memory.Store, logger zerolog.Logger) {
 	if discordRoles == nil || store == nil {
 		return
 	}
-	personas, err := store.ListPersonas(ctx)
+	people, err := store.ListPeople(ctx)
 	if err != nil {
 		return
 	}
 
-	for _, p := range personas {
+	for _, p := range people {
 		if p.DiscordRoleID == "" && p.Username != "" {
 			roleID, err := discordRoles.CreateRole(ctx, p.Username)
 			if err != nil {
-				logger.Warn().Err(err).Str("persona", p.Username).Msg("failed to sync Discord role")
+				logger.Warn().Err(err).Str("person", p.Username).Msg("failed to sync Discord role")
 			} else {
-				_ = store.SetPersonaDiscordRoleID(ctx, p.ID, roleID)
-				logger.Info().Str("persona", p.Username).Str("role_id", roleID).Msg("synced Discord persona role")
+				_ = store.SetPersonDiscordRoleID(ctx, p.ID, roleID)
+				logger.Info().Str("person", p.Username).Str("role_id", roleID).Msg("synced Discord person role")
 			}
 		}
 	}
 
 	allTags := make(map[string]bool)
-	for _, p := range personas {
+	for _, p := range people {
 		for _, t := range p.Tags {
 			allTags[t] = true
 		}
@@ -525,7 +525,7 @@ func syncDiscordRoles(ctx context.Context, discordRoles *transport.DiscordRoleCl
 
 // makeMessageHandler returns a factory that wires inbound messages to the agent runner.
 // Transports don't support streaming, so onEvent is passed as nil.
-// If the message starts with @PersonaName, the persona's prompt is used as the system prompt.
+// If the message starts with @PersonName, the person's prompt is used as the system prompt.
 // avatarToDataURI reads a local avatar file (e.g. /api/avatars/abc.png) and returns
 // a base64 data URI suitable for Discord's webhook avatar field.
 func avatarToDataURI(avatarURL string) string {
@@ -601,21 +601,21 @@ func makeMessageHandler(
 				msg.Text = strings.TrimSpace(msg.Text)
 			}
 
-			// Detect @PersonaName or @tag mention at the start of the message.
-			text, personas := resolvePersonas(msgCtx, store, msg.Text, logger)
+			// Detect @PersonName or @tag mention at the start of the message.
+			text, people := resolvePeople(msgCtx, store, msg.Text, logger)
 
-			// If no @mention, check for channel binding (auto-route to bound tag or persona).
-			if len(personas) == 0 && store != nil {
+			// If no @mention, check for channel binding (auto-route to bound tag or person).
+			if len(people) == 0 && store != nil {
 				if binding, _ := store.GetChannelBinding(msgCtx, msg.ChannelID); binding != "" {
 					if strings.HasPrefix(binding, "persona:") {
 						username := strings.TrimPrefix(binding, "persona:")
-						if p, err := store.GetPersonaByUsername(msgCtx, username); err == nil {
-							personas = []memory.Persona{p}
-							logger.Info().Str("channel", msg.ChannelID).Str("persona", username).Msg("channel binding auto-routed to persona")
+						if p, err := store.GetPersonByUsername(msgCtx, username); err == nil {
+							people = []memory.Person{p}
+							logger.Info().Str("channel", msg.ChannelID).Str("person", username).Msg("channel binding auto-routed to person")
 						}
 					} else {
-						if tagged, err := store.GetPersonasByTag(msgCtx, binding); err == nil && len(tagged) > 0 {
-							personas = tagged
+						if tagged, err := store.GetPeopleByTag(msgCtx, binding); err == nil && len(tagged) > 0 {
+							people = tagged
 							logger.Info().Str("channel", msg.ChannelID).Str("tag", binding).Int("count", len(tagged)).Msg("channel binding auto-routed to tag")
 						}
 					}
@@ -623,7 +623,7 @@ func makeMessageHandler(
 			}
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
 
-			// Load global system prompt (prepended to every persona prompt).
+			// Load global system prompt (prepended to every person's prompt).
 			globalSysPrompt, _ := store.GetSystemPrompt(msgCtx)
 
 			sendResponse := func(result *agent.RunResult, displayName, avatarData string) {
@@ -637,7 +637,7 @@ func makeMessageHandler(
 				}
 			}
 
-			if len(personas) == 0 {
+			if len(people) == 0 {
 				result, err := runAgent(msgCtx, globalSysPrompt, modelID, msg.ChannelID, messages)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
@@ -645,8 +645,8 @@ func makeMessageHandler(
 					return
 				}
 				sendResponse(result, "", "")
-			} else if len(personas) == 1 {
-				p := personas[0]
+			} else if len(people) == 1 {
+				p := people[0]
 				displayName := p.Username
 				if displayName == "" {
 					displayName = p.Name
@@ -657,41 +657,41 @@ func makeMessageHandler(
 				}
 				result, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
 				if err != nil {
-					logger.Error().Err(err).Str("session", msg.ChannelID).Str("persona", p.Name).Msg("agent run failed")
+					logger.Error().Err(err).Str("session", msg.ChannelID).Str("person", p.Name).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
 					return
 				}
 				sendResponse(result, displayName, avatarToDataURI(p.AvatarURL))
 			} else {
-				// Multiple personas — run in parallel, send as each finishes.
-				type personaResult struct {
-					persona memory.Persona
-					result  *agent.RunResult
-					err     error
+				// Multiple people — run in parallel, send as each finishes.
+				type personResult struct {
+					person memory.Person
+					result *agent.RunResult
+					err    error
 				}
-				resultCh := make(chan personaResult, len(personas))
-				for _, p := range personas {
-					go func(persona memory.Persona) {
-						prompt := persona.Prompt
+				resultCh := make(chan personResult, len(people))
+				for _, p := range people {
+					go func(person memory.Person) {
+						prompt := person.Prompt
 						if globalSysPrompt != "" {
 							prompt = globalSysPrompt + "\n\n" + prompt
 						}
 						res, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
-						resultCh <- personaResult{persona: persona, result: res, err: err}
+						resultCh <- personResult{person: person, result: res, err: err}
 					}(p)
 				}
-				for range personas {
+				for range people {
 					r := <-resultCh
-					displayName := r.persona.Username
+					displayName := r.person.Username
 					if displayName == "" {
-						displayName = r.persona.Name
+						displayName = r.person.Name
 					}
 					if r.err != nil {
-						logger.Error().Err(r.err).Str("persona", r.persona.Name).Msg("persona agent failed")
-						_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", r.err), DisplayName: displayName, AvatarData: avatarToDataURI(r.persona.AvatarURL)})
+						logger.Error().Err(r.err).Str("person", r.person.Name).Msg("person agent failed")
+						_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", r.err), DisplayName: displayName, AvatarData: avatarToDataURI(r.person.AvatarURL)})
 						continue
 					}
-					sendResponse(r.result, displayName, avatarToDataURI(r.persona.AvatarURL))
+					sendResponse(r.result, displayName, avatarToDataURI(r.person.AvatarURL))
 				}
 			}
 		}
@@ -699,8 +699,8 @@ func makeMessageHandler(
 }
 
 // handleDefaultRoleCmd processes the /default_role command.
-// /default_role @tag      → bind this channel to all personas with that tag
-// /default_role @persona  → bind this channel to a single persona
+// /default_role @tag      → bind this channel to all people with that tag
+// /default_role @person   → bind this channel to a single person
 // /default_role none      → clear binding
 // /default_role           → show current binding
 // handleModeCmd processes /chat, /execute, and /mode commands.
@@ -754,14 +754,14 @@ func handleDefaultRoleCmd(ctx context.Context, store *memory.Store, t transport.
 			// Try tag role first.
 			if tag, err := store.GetTagByDiscordRoleID(ctx, roleID); err == nil {
 				arg = tag
-			} else if persona, err := store.GetPersonaByDiscordRoleID(ctx, roleID); err == nil {
-				// Persona role — bind directly to this persona.
-				binding := "persona:" + persona.Username
+			} else if person, err := store.GetPersonByDiscordRoleID(ctx, roleID); err == nil {
+				// Person role — bind directly to this person.
+				binding := "persona:" + person.Username
 				if err := store.SetChannelBinding(ctx, msg.ChannelID, binding); err != nil {
 					reply("Failed to set binding.")
 					return
 				}
-				reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this persona.", persona.Name))
+				reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this person.", person.Name))
 				return
 			} else {
 				reply("Unknown role.")
@@ -776,7 +776,7 @@ func handleDefaultRoleCmd(ctx context.Context, store *memory.Store, t transport.
 		if binding == "" {
 			reply("No default role set for this channel.")
 		} else if strings.HasPrefix(binding, "persona:") {
-			reply(fmt.Sprintf("Default role for this channel: persona **%s**", strings.TrimPrefix(binding, "persona:")))
+			reply(fmt.Sprintf("Default role for this channel: person **%s**", strings.TrimPrefix(binding, "persona:")))
 		} else {
 			reply(fmt.Sprintf("Default role for this channel: tag **%s**", binding))
 		}
@@ -792,20 +792,20 @@ func handleDefaultRoleCmd(ctx context.Context, store *memory.Store, t transport.
 		return
 	}
 
-	// Try as persona username first.
-	if persona, err := store.GetPersonaByUsername(ctx, arg); err == nil {
-		if err := store.SetChannelBinding(ctx, msg.ChannelID, "persona:"+persona.Username); err != nil {
+	// Try as person username first.
+	if person, err := store.GetPersonByUsername(ctx, arg); err == nil {
+		if err := store.SetChannelBinding(ctx, msg.ChannelID, "persona:"+person.Username); err != nil {
 			reply("Failed to set binding.")
 			return
 		}
-		reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this persona.", persona.Name))
+		reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this person.", person.Name))
 		return
 	}
 
 	// Try as tag.
-	tagged, err := store.GetPersonasByTag(ctx, arg)
+	tagged, err := store.GetPeopleByTag(ctx, arg)
 	if err != nil || len(tagged) == 0 {
-		reply(fmt.Sprintf("No persona or tag found matching **%s**.", arg))
+		reply(fmt.Sprintf("No person or tag found matching **%s**.", arg))
 		return
 	}
 
@@ -818,7 +818,7 @@ func handleDefaultRoleCmd(ctx context.Context, store *memory.Store, t transport.
 	for i, p := range tagged {
 		names[i] = p.Name
 	}
-	reply(fmt.Sprintf("Default role set to tag **%s** (%s). All messages in this channel will be answered by these personas.", arg, strings.Join(names, ", ")))
+	reply(fmt.Sprintf("Default role set to tag **%s** (%s). All messages in this channel will be answered by these people.", arg, strings.Join(names, ", ")))
 }
 
 // extractModelTag checks if text contains @model-id matching a known model.
@@ -834,9 +834,9 @@ func extractModelTag(text string, router *llm.Router) string {
 	return ""
 }
 
-// resolvePersonas checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
-// Returns the stripped text and matching personas (0 = no match, 1 = direct, N = tag fan-out).
-func resolvePersonas(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, []memory.Persona) {
+// resolvePeople checks if text starts with @username, @tag, or a Discord role mention <@&ID>.
+// Returns the stripped text and matching people (0 = no match, 1 = direct, N = tag fan-out).
+func resolvePeople(ctx context.Context, store *memory.Store, text string, logger zerolog.Logger) (string, []memory.Person) {
 	if store == nil || len(text) < 2 {
 		return text, nil
 	}
@@ -850,16 +850,16 @@ func resolvePersonas(ctx context.Context, store *memory.Store, text string, logg
 			if remainder == "" {
 				remainder = text
 			}
-			// Try persona role.
-			persona, err := store.GetPersonaByDiscordRoleID(ctx, roleID)
+			// Try person role.
+			person, err := store.GetPersonByDiscordRoleID(ctx, roleID)
 			if err == nil {
-				logger.Info().Str("role_id", roleID).Str("persona", persona.Username).Msg("Discord role mention resolved")
-				return remainder, []memory.Persona{persona}
+				logger.Info().Str("role_id", roleID).Str("person", person.Username).Msg("Discord role mention resolved")
+				return remainder, []memory.Person{person}
 			}
 			// Try tag role.
 			tag, err := store.GetTagByDiscordRoleID(ctx, roleID)
 			if err == nil {
-				tagged, err := store.GetPersonasByTag(ctx, tag)
+				tagged, err := store.GetPeopleByTag(ctx, tag)
 				if err == nil && len(tagged) > 0 {
 					logger.Info().Str("role_id", roleID).Str("tag", tag).Int("count", len(tagged)).Msg("Discord tag role mention resolved")
 					return remainder, tagged
@@ -889,19 +889,19 @@ func resolvePersonas(ctx context.Context, store *memory.Store, text string, logg
 	}
 
 	// Try exact username first (the @mention handle).
-	persona, err := store.GetPersonaByUsername(ctx, name)
+	person, err := store.GetPersonByUsername(ctx, name)
 	if err == nil {
-		return remainder, []memory.Persona{persona}
+		return remainder, []memory.Person{person}
 	}
 
 	// Try as a tag.
-	tagged, err := store.GetPersonasByTag(ctx, name)
+	tagged, err := store.GetPeopleByTag(ctx, name)
 	if err == nil && len(tagged) > 0 {
-		logger.Info().Str("tag", name).Int("count", len(tagged)).Msg("tag matched personas")
+		logger.Info().Str("tag", name).Int("count", len(tagged)).Msg("tag matched people")
 		return remainder, tagged
 	}
 
-	logger.Debug().Str("mention", name).Msg("no persona or tag match, treating as plain text")
+	logger.Debug().Str("mention", name).Msg("no person or tag match, treating as plain text")
 	return text, nil
 }
 

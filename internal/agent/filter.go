@@ -53,7 +53,7 @@ func (f *ContentFilter) Check(text string) FilterResult {
 // injection attempts. This list is kept short and high-precision to avoid
 // false positives on legitimate user messages.
 var injectionPatterns = []string{
-	// Role/persona hijacking
+	// Role/identity hijacking
 	"ignore previous instructions",
 	"ignore all previous",
 	"disregard previous",

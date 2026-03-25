@@ -35,7 +35,7 @@ type DiscordTransport struct {
 	httpClient *http.Client
 	logger     zerolog.Logger
 	stopCh     chan struct{}
-	// webhooks caches channel+persona → webhook URL for persona messages.
+	// webhooks caches channel+person → webhook URL for person messages.
 	webhooks   map[string]string
 	webhooksMu sync.Mutex
 }
@@ -168,9 +168,9 @@ func (t *DiscordTransport) registerSlashCommands(ctx context.Context) {
 	commands := []map[string]any{
 		{
 			"name":        "default_role",
-			"description": "Set the default persona or tag that responds in this channel",
+			"description": "Set the default person or tag that responds in this channel",
 			"options": []map[string]any{
-				{"name": "role", "description": "Persona username, tag name, or 'none' to clear", "type": 3, "required": false},
+				{"name": "role", "description": "Person username, tag name, or 'none' to clear", "type": 3, "required": false},
 			},
 		},
 		{"name": "chat", "description": "Switch to chat mode (no tools — faster & cheaper)"},
