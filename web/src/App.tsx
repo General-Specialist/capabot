@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from '@/components/Sidebar'
 import { ChatPage } from '@/pages/ChatPage'
 import { SkillsPage } from '@/pages/SkillsPage'
+import { PluginsPage } from '@/pages/PluginsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="/" element={<ChatPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/plugins" element={<PluginsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/automations" element={<AutomationsPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />

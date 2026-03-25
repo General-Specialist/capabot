@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +119,7 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/skills/catalog", s.handleSkillsCatalog)
 	s.mux.HandleFunc("POST /api/skills/install", s.handleSkillsInstall)
 	s.mux.HandleFunc("POST /api/skills/create", s.handleSkillsCreate)
+	s.mux.HandleFunc("POST /api/skills/create-markdown", s.handleSkillsCreateMarkdown)
 	s.mux.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
 	s.mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)
 	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
@@ -146,6 +148,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("PUT /api/settings/default-model", s.handleDefaultModelPut)
 	s.mux.HandleFunc("GET /api/settings/summarization-model", s.handleSummarizationModelGet)
 	s.mux.HandleFunc("PUT /api/settings/summarization-model", s.handleSummarizationModelPut)
+	s.mux.HandleFunc("GET /api/settings/execute-fallback", s.handleExecuteFallbackGet)
+	s.mux.HandleFunc("PUT /api/settings/execute-fallback", s.handleExecuteFallbackPut)
 	s.mux.HandleFunc("GET /api/usage", s.handleUsage)
 	s.mux.HandleFunc("GET /api/credits", s.handleCredits)
 	s.mux.HandleFunc("GET /api/modes", s.handleModesGet)
@@ -310,7 +314,8 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		Version      string `json:"version"`
 		Instructions string `json:"instructions"`
 		Removable    bool   `json:"removable"`
-		Tier         int    `json:"tier"` // 1=prompt-only, 2=native Go, 3=plugin (TS/JS/Python)
+		Tier         int    `json:"tier"`    // 1=prompt-only, 2=native Go, 3=plugin (TS/JS/Python)
+		Source       string `json:"source"` // "custom" or "clawhub"
 	}
 	out := make([]skillDTO, len(all))
 	for i, sk := range all {
@@ -323,6 +328,12 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		} else if _, ok := s.skillReg.PluginPath(name); ok {
 			tier = 3
 		}
+		source := "custom"
+		if hasPath {
+			if _, err := os.Stat(filepath.Join(path, "_meta.json")); err == nil {
+				source = "clawhub"
+			}
+		}
 		out[i] = skillDTO{
 			Name:         name,
 			Description:  sk.Manifest.Description,
@@ -330,6 +341,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			Instructions: strings.TrimSpace(sk.Instructions),
 			Removable:    removable,
 			Tier:         tier,
+			Source:       source,
 		}
 	}
 	writeJSON(w, out)
@@ -779,20 +791,53 @@ func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := skill.NewClawHubClient(skill.ClawHubConfig{})
-
-	tmpDir, err := os.MkdirTemp("", "gostaff-install-*")
-	if err != nil {
-		writeError(w, fmt.Sprintf("temp dir: %v", err), http.StatusInternalServerError)
-		return
+	// Normalize: if user pasted a full GitHub URL, extract owner/repo
+	target := strings.TrimSpace(req.Name)
+	if shorthand, ok := skill.ParseGitHubURL(target); ok {
+		target = shorthand
 	}
-	defer os.RemoveAll(tmpDir)
 
-	skillPath, err := client.DownloadSkill(r.Context(), req.Name, tmpDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("download failed: %v", err), http.StatusBadGateway)
-		return
+	var skillPath string
+	var cleanup func()
+
+	if skill.IsGitHubShorthand(target) {
+		// GitHub install: download tarball, extract, import
+		srcDir, err := skill.DownloadGitHub(r.Context(), target)
+		if err != nil {
+			writeError(w, fmt.Sprintf("GitHub download failed: %v", err), http.StatusBadGateway)
+			return
+		}
+		// srcDir may be inside a parent temp dir — clean the parent
+		cleanup = func() { os.RemoveAll(filepath.Dir(srcDir)) }
+		skillPath = srcDir
+	} else {
+		// Bare name: try ClawHub first, fall back to npm
+		client := skill.NewClawHubClient(skill.ClawHubConfig{})
+		tmpDir, err := os.MkdirTemp("", "gostaff-install-*")
+		if err != nil {
+			writeError(w, fmt.Sprintf("temp dir: %v", err), http.StatusInternalServerError)
+			return
+		}
+		cleanup = func() { os.RemoveAll(tmpDir) }
+
+		dlPath, dlErr := client.DownloadSkill(r.Context(), target, tmpDir)
+		if dlErr == nil {
+			skillPath = dlPath
+		} else {
+			// ClawHub miss — try npm
+			npmPath, npmErr := skill.DownloadNPM(r.Context(), target)
+			if npmErr != nil {
+				cleanup()
+				writeError(w, fmt.Sprintf("not found on ClawHub or npm: %v", npmErr), http.StatusBadGateway)
+				return
+			}
+			// npmPath is inside its own temp dir
+			oldCleanup := cleanup
+			cleanup = func() { oldCleanup(); os.RemoveAll(filepath.Dir(npmPath)) }
+			skillPath = npmPath
+		}
 	}
+	defer cleanup()
 
 	result, err := skill.ImportSkill(skillPath, s.skillsDir)
 	if err != nil {

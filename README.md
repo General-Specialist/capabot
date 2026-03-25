@@ -28,17 +28,18 @@ cd web && bun install && bun run dev  # frontend HMR on :5173
 
 ## Key features
 
-**Skills & Plugins** — Extend the agent with skills from [ClawHub](https://clawhub.ai), the community skill registry with 30K+ skills. Any OpenClaw `SKILL.md` works out of the box. Skills are just Markdown — write instructions and the agent follows them. For real computation, write a plugin in TypeScript, JavaScript, or Python using the OpenClaw `register(api)` protocol — or write native Go.
+**Skills** — Markdown instructions that shape the agent's behavior. Create your own from the web UI or CLI, or install from [ClawHub](https://clawhub.ai) (30K+ community skills). Any OpenClaw `SKILL.md` works out of the box. The web UI separates custom skills from ClawHub-installed ones.
+
+**Plugins** — Executable extensions for real computation. Write a native Go plugin (Tier 2) from the web UI — it compiles and hot-reloads instantly. Or install OpenClaw TS/JS/Python plugins (Tier 3) from ClawHub. The agent can also create, edit, delete, and search for skills/plugins on its own via built-in tools.
 
 ```bash
 gostaff skill search "code review"      # search ClawHub
 gostaff skill install code-reviewer     # install from ClawHub
 gostaff skill install owner/repo        # install from GitHub
 gostaff skill create my-skill           # scaffold a new skill
-gostaff skill init --plugin my-plugin   # scaffold a TS plugin
 ```
 
-Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, commands, and services. OpenClaw's `definePluginEntry` import works out of the box. Dependencies are auto-installed (`bun install` or `npm install`) on import. New skills are hot-reloaded into the running server — no restart needed.
+The Go SDK (`internal/sdk`) is the plugin system. Plugins implement `sdk.Plugin` and register tools, hooks, HTTP routes, and LLM providers in-process — no subprocess overhead. OpenClaw TS/JS/Python plugins from ClawHub are automatically wrapped via an adapter and work transparently. New skills are hot-reloaded into the running server.
 
 **Built-in tools** — file read/write/edit, shell exec (allowlisted), browser automation via Playwright, web search, web fetch, persistent memory, and more.
 

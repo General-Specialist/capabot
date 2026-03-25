@@ -203,8 +203,13 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 		// Persist assistant message
 		a.persistMessage(ctx, sessionID, "assistant", resp.Content, resp.Usage)
 
-		// No tool calls -> final response
+		// No tool calls -> final response (retry once if empty)
 		if len(resp.ToolCalls) == 0 {
+			if strings.TrimSpace(resp.Content) == "" {
+				a.logger.Warn().Int("iteration", iteration+1).Msg("empty response, retrying")
+				history = append(history, llm.ChatMessage{Role: "user", Content: "Please provide a response."})
+				continue
+			}
 			result.Response = resp.Content
 			result.History = history
 			a.emit(AgentEvent{Kind: EventResponse, Content: resp.Content, Iteration: iteration + 1})

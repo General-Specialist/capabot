@@ -1,6 +1,6 @@
 # GoStaff Codebase Context
 
-GoStaff is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files or native Go executables. Plugins use the Go SDK (`internal/sdk`) and run in-process; OpenClaw-compatible TS/JS/Python plugins are supported via an adapter that wraps their subprocess behind the same SDK interface.
+Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99% of use cases. Same skill ecosystem, same plugin protocol. Clean, easy-to-use web UI.
 
 ## Architecture Overview
 
@@ -483,7 +483,8 @@ Helpers for sending messages via Discord REST API (regular messages and webhook-
 - `GET/POST /api/automations` — CRUD for scheduled automations
 - `POST /api/automations/{id}/trigger` — manual trigger
 - `GET /api/runs/{runID}/stream` — SSE stream of a running automation's agent events
-- `GET/PUT /api/skills`, `POST /api/skills/install`, `POST /api/skills/create`
+- `GET /api/skills` — lists all skills with `tier`, `source` ("custom"|"clawhub" based on `_meta.json` presence), `removable`
+- `PUT /api/skills/{name}`, `DELETE /api/skills/{name}`, `POST /api/skills/install`, `POST /api/skills/create`, `POST /api/skills/create-markdown`
 - `GET/PUT /api/config/keys` — hot-reload provider API keys
 - `GET/POST/PUT/DELETE /api/people` — people management
 - `GET/PUT /api/people/system-prompt` — global system prompt prepended to all people
@@ -514,7 +515,13 @@ Handlers for mode CRUD. Built-in modes (`default`, `chat`, `execute`) cannot be 
 CRUD for people. On create/update, syncs Discord role if Discord is configured.
 
 ### `skills_create.go`
-`handleSkillsCreate` — calls `tools.NewSkillCreateTool` indirectly via the agent (skill creation goes through the LLM). Actually the handler directly writes the skill directory.
+`handleSkillsCreate` — creates a Tier 2 native Go skill. Writes `SKILL.md` + `main.go`, compiles, hot-reloads into registries.
+
+`handleSkillsCreateMarkdown` — creates a Tier 1 markdown skill. Writes `SKILL.md` with instructions only (no code). Hot-reloads into skill registry.
+
+`handleSkillGet` — returns a single skill's source (name, description, code, tier).
+
+`handleSkillUpdate` — overwrites a Tier 2 skill's code/description and recompiles.
 
 ### `usage.go`
 `handleUsage` — returns usage log (token counts, costs) aggregated from `usage_log` table.
@@ -632,8 +639,17 @@ Auto-installs Playwright helper script to `~/.gostaff/browser/` on first use. If
 ### `skill_create.go`
 `SkillCreateTool` (`skill_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.gostaff/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Skill is immediately usable.
 
+### `skill_create_markdown.go`
+`SkillCreateMarkdownTool` (`skill_create_markdown`) — extended tool. Creates a Tier 1 markdown skill. Takes `{name, instructions, description?}`. Writes `SKILL.md` with frontmatter + instructions. No code, no compilation. Hot-reloads into skill registry.
+
 ### `skill_edit.go`
-`SkillEditTool` (`skill_edit`) — extended tool. Edits an existing skill's `main.go`. Recompiles after edit.
+`SkillEditTool` (`skill_edit`) — extended tool. Edits an existing skill's instructions, description, or Go source code. Preserves fields not provided. Recompiles if code is updated.
+
+### `skill_delete.go`
+`SkillDeleteTool` (`skill_delete`) — extended tool. Removes an installed skill by name. Only skills inside the managed `~/.gostaff/skills/` directory can be deleted. Unregisters from skill registry.
+
+### `skill_search.go`
+`SkillSearchTool` (`skill_search`) — extended tool. Searches the ClawHub catalog via `ClawHubClient.BrowseSkills`. Takes `{query, limit?}`. Returns formatted list of matching skills with name, slug, description, and download count.
 
 ---
 

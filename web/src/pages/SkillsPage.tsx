@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus } from 'lucide-react'
+import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
 
@@ -14,23 +14,9 @@ interface InstalledSkill extends Skill {
   removable: boolean
 }
 
-const GO_PLACEHOLDER = `package main
-
-import (
-\t"encoding/json"
-\t"fmt"
-\t"os"
-)
-
-func main() {
-\tvar params map[string]any
-\tjson.NewDecoder(os.Stdin).Decode(&params)
-\tfmt.Print(\`{"content":"hello","is_error":false}\`)
-}`
-
 export function SkillsPage() {
-  const [tab, setTab] = useState<'installed' | 'browse' | 'create'>('installed')
-  const [installed, setInstalled] = useState<InstalledSkill[]>([])
+  const [tab, setTab] = useState<'custom' | 'clawhub' | 'browse'>('custom')
+  const [allSkills, setAllSkills] = useState<InstalledSkill[]>([])
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
@@ -42,21 +28,21 @@ export function SkillsPage() {
   const [loading, setLoading] = useState(true)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Create form state
+  // Create form
+  const [showCreate, setShowCreate] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createDesc, setCreateDesc] = useState('')
-  const [createCode, setCreateCode] = useState('')
+  const [createInstructions, setCreateInstructions] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [createSuccess, setCreateSuccess] = useState<string | null>(null)
 
-  const loadInstalled = () =>
-    api.skills().then(res => setInstalled(res as InstalledSkill[]))
+  const loadSkills = () =>
+    api.skills().then(res => setAllSkills(res.filter(s => s.tier === 1) as InstalledSkill[]))
 
   useEffect(() => {
     let cancelled = false
     api.skills()
-      .then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
+      .then(res => { if (!cancelled) setAllSkills(res.filter(s => s.tier === 1) as InstalledSkill[]) })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -94,7 +80,7 @@ export function SkillsPage() {
     try {
       const res = await api.skillsInstall(skill.path)
       setInstallResults(prev => ({ ...prev, [skill.name]: { success: res.success, message: res.success ? `Installed as "${res.skill_name}"` : 'Install failed' } }))
-      if (res.success) await loadInstalled()
+      if (res.success) await loadSkills()
     } catch (err) {
       setInstallResults(prev => ({ ...prev, [skill.name]: { success: false, message: err instanceof Error ? err.message : 'Install failed' } }))
     } finally {
@@ -106,7 +92,7 @@ export function SkillsPage() {
     setRemoving(prev => ({ ...prev, [name]: true }))
     try {
       await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
-      await loadInstalled()
+      await loadSkills()
     } catch {
       // silently fail
     } finally {
@@ -116,22 +102,21 @@ export function SkillsPage() {
 
   const createSkill = async () => {
     setCreateError(null)
-    setCreateSuccess(null)
     if (!createName.trim()) { setCreateError('Name is required'); return }
-    if (!createCode.trim()) { setCreateError('Code is required'); return }
+    if (!createInstructions.trim()) { setCreateError('Instructions are required'); return }
     setCreating(true)
     try {
-      const res = await api.skillCreate({
+      const res = await api.skillCreateMarkdown({
         name: createName.trim(),
         description: createDesc.trim() || undefined,
-        code: createCode,
+        instructions: createInstructions,
       })
       if (res.success) {
-        setCreateSuccess(`Created "${res.name}"`)
         setCreateName('')
         setCreateDesc('')
-        setCreateCode('')
-        await loadInstalled()
+        setCreateInstructions('')
+        setShowCreate(false)
+        await loadSkills()
       }
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Creation failed')
@@ -140,59 +125,77 @@ export function SkillsPage() {
     }
   }
 
-  const installedNames = new Set(installed.map(s => s.name))
+  const custom = allSkills.filter(s => s.source === 'custom')
+  const clawhub = allSkills.filter(s => s.source === 'clawhub')
+  const installedNames = new Set(allSkills.map(s => s.name))
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-6 mb-6">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex gap-1 text-sm">
-            {(['installed', 'browse', 'create'] as const).map(t => (
+            {(['custom', 'clawhub', 'browse'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={`px-3 py-1 rounded-md transition-colors ${tab === t ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
               >
-                {t === 'installed' && <>Installed {installed.length > 0 && <span className="ml-1 text-xs text-normal-black">({installed.length})</span>}</>}
+                {t === 'custom' && <>Custom {custom.length > 0 && <span className="ml-1 text-xs text-normal-black">({custom.length})</span>}</>}
+                {t === 'clawhub' && <>ClawHub {clawhub.length > 0 && <span className="ml-1 text-xs text-normal-black">({clawhub.length})</span>}</>}
                 {t === 'browse' && 'Browse'}
-                {t === 'create' && <span className="flex items-center gap-1"><Plus size={13} />Create</span>}
               </button>
             ))}
           </div>
+          {tab === 'custom' && (
+            <button
+              onClick={() => { setShowCreate(s => !s); setCreateError(null) }}
+              className="flex items-center gap-1 text-xs text-normal-black hover:text-hover-black transition-colors"
+            >
+              {showCreate ? <X size={13} /> : <Plus size={13} />}
+              {showCreate ? 'Cancel' : 'New'}
+            </button>
+          )}
         </div>
 
-        {tab === 'create' && (
-          <div className="space-y-4">
+        {tab === 'custom' && showCreate && (
+          <div className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white">
             <input
               value={createName}
               onChange={e => setCreateName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
               placeholder="skill-name"
-              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none font-mono"
+              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-white text-hover-black outline-none font-mono"
             />
             <input
               value={createDesc}
               onChange={e => setCreateDesc(e.target.value)}
               placeholder="Description (optional)"
-              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+              className="w-full px-4 py-2 text-sm rounded-xl border border-border-white bg-white text-hover-black outline-none"
             />
             <textarea
-              value={createCode}
-              onChange={e => setCreateCode(e.target.value)}
-              placeholder={GO_PLACEHOLDER}
-              rows={16}
-              className="w-full px-4 py-3 text-sm rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none font-mono resize-y leading-relaxed"
+              value={createInstructions}
+              onChange={e => setCreateInstructions(e.target.value)}
+              placeholder="Markdown instructions for the agent…"
+              rows={10}
+              className="w-full px-4 py-3 text-sm rounded-xl border border-border-white bg-white text-hover-black outline-none resize-y leading-relaxed"
               spellCheck={false}
             />
             {createError && <p className="text-sm text-red">{createError}</p>}
-            {createSuccess && <p className="text-sm text-terminal-green">{createSuccess}</p>}
             <button
               onClick={() => void createSkill()}
               disabled={creating}
               className="px-4 py-2 text-sm rounded-xl bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity"
             >
-              {creating ? 'Creating…' : 'Create Skill'}
+              {creating ? 'Creating…' : 'Create'}
             </button>
           </div>
+        )}
+
+        {tab === 'custom' && !showCreate && (
+          <SkillList skills={custom} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No custom skills yet. Skills are instructions for how your agent interacts with something — have an agent create one for you, or click New to create one." />
+        )}
+
+        {tab === 'clawhub' && (
+          <SkillList skills={clawhub} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No ClawHub skills installed. Browse and install some." />
         )}
 
         {tab === 'browse' && (
@@ -272,69 +275,76 @@ export function SkillsPage() {
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
 
-        {tab === 'installed' && (
-          <>
-            {!loading && installed.length === 0 ? (
-              <p className="text-sm text-normal-black">No skills installed yet. Browse and install some.</p>
-            ) : (
-              <div className="space-y-2">
-                {installed.map(skill => {
-                  const isExpanded = expanded[skill.name]
-                  const isRemoving = removing[skill.name]
-                  return (
-                    <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
-                      <div className="flex items-center gap-3 px-4 py-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
-                            {skill.version && (
-                              <span className="text-xs text-normal-black font-mono shrink-0">{skill.version}</span>
-                            )}
-                          </div>
-                          {skill.description && (
-                            <p className="text-xs text-normal-black truncate mt-0.5">{skill.description}</p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {skill.instructions?.trim() && (
-                            <button
-                              onClick={() => setExpanded(prev => ({ ...prev, [skill.name]: !isExpanded }))}
-                              className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
-                              title="Instructions"
-                            >
-                              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                            </button>
-                          )}
-                          {skill.removable && (
-                            <button
-                              onClick={() => void uninstall(skill.name)}
-                              disabled={isRemoving}
-                              className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
-                            >
-                              {isRemoving
-                                ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-                                : <Trash2 size={13} />
-                              }
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {isExpanded && skill.instructions?.trim() && (
-                        <div className="border-t border-border-white px-4 py-3 bg-sidebar-white max-h-64 overflow-y-auto">
-                          <div className="text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
-                            <Markdown>{skill.instructions}</Markdown>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove, empty }: {
+  skills: InstalledSkill[]
+  loading: boolean
+  expanded: Record<string, boolean>
+  setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+  removing: Record<string, boolean>
+  onRemove: (name: string) => void
+  empty: string
+}) {
+  if (!loading && skills.length === 0) {
+    return <p className="text-sm text-normal-black">{empty}</p>
+  }
+
+  return (
+    <div className="space-y-2">
+      {skills.map(skill => {
+        const isExpanded = expanded[skill.name]
+        const isRemoving = removing[skill.name]
+        return (
+          <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
+                  {skill.version && (
+                    <span className="text-xs text-normal-black font-mono shrink-0">{skill.version}</span>
+                  )}
+                </div>
+                {skill.description && (
+                  <p className="text-xs text-normal-black truncate mt-0.5">{skill.description}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {skill.instructions?.trim() && (
+                  <button
+                    onClick={() => setExpanded(prev => ({ ...prev, [skill.name]: !isExpanded }))}
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
+                  >
+                    {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  </button>
+                )}
+                {skill.removable && (
+                  <button
+                    onClick={() => onRemove(skill.name)}
+                    disabled={isRemoving}
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
+                  >
+                    {isRemoving
+                      ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                      : <Trash2 size={13} />
+                    }
+                  </button>
+                )}
+              </div>
+            </div>
+            {isExpanded && skill.instructions?.trim() && (
+              <div className="border-t border-border-white px-4 py-3 bg-sidebar-white max-h-64 overflow-y-auto">
+                <div className="text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
+                  <Markdown>{skill.instructions}</Markdown>
+                </div>
               </div>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

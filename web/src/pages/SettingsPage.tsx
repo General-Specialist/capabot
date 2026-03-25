@@ -27,6 +27,7 @@ const EMPTY: ProviderKeys = { anthropic: '', openai: '', gemini: '', openrouter:
 
 export function SettingsPage() {
   const [keys, setKeys] = useState<ProviderKeys>(EMPTY)
+  const [executeFallback, setExecuteFallback] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [defaultModel, setDefaultModel] = useState('')
@@ -44,6 +45,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     api.configKeys().then(setKeys).catch(() => {})
+    api.executeFallbackGet().then(r => setExecuteFallback(r.enabled)).catch(() => {})
     api.providers().then(setProviders).catch(() => {})
     api.defaultModelGet().then(r => setDefaultModel(r.default_model)).catch(() => {})
     api.summarizationModelGet().then(r => setSummarizationModel(r.summarization_model)).catch(() => {})
@@ -132,6 +134,23 @@ export function SettingsPage() {
             className={`relative w-10 h-5 rounded-full transition-colors ${dark ? 'bg-brand-primary' : 'bg-sidebar-hover-white'}`}
           >
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${dark ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm text-normal-black">Execute key fallback</span>
+            <p className="text-xs text-normal-black opacity-60 mt-0.5">When chat key is rate-limited, retry with execute mode keys</p>
+          </div>
+          <button
+            onClick={() => {
+              const next = !executeFallback
+              setExecuteFallback(next)
+              api.executeFallbackSet(next).catch(() => setExecuteFallback(!next))
+            }}
+            className={`relative w-10 h-5 rounded-full transition-colors ${executeFallback ? 'bg-brand-primary' : 'bg-sidebar-hover-white'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${executeFallback ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
 

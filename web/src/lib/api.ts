@@ -38,7 +38,8 @@ export interface Skill {
   version: string
   instructions: string
   removable: boolean
-  tier: number // 1=prompt-only, 2=native Go, 3=WASM
+  tier: number // 1=prompt-only, 2=native Go, 3=plugin
+  source: 'custom' | 'clawhub'
 }
 
 export interface CatalogSkill {
@@ -267,6 +268,8 @@ export const api = {
   },
   skillCreate: (data: { name: string; description: string; parameters?: Record<string, unknown>; code: string }) =>
     post<{ name: string; success: boolean; tier: number }>('/skills/create', data),
+  skillCreateMarkdown: (data: { name: string; description?: string; instructions: string }) =>
+    post<{ name: string; success: boolean; tier: number }>('/skills/create-markdown', data),
   skillGet: (name: string) => get<{ name: string; description: string; code: string; tier: number }>(`/skills/${name}`),
   skillUpdate: (name: string, data: { description?: string; code?: string }) =>
     put<{ success: boolean; name: string }>(`/skills/${name}`, data),
@@ -292,6 +295,12 @@ export const api = {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
+  executeFallbackGet: () => get<{ enabled: boolean }>('/settings/execute-fallback'),
+  executeFallbackSet: (enabled: boolean) => fetch(BASE + '/settings/execute-fallback', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
   }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   defaultModelGet: () => get<{ default_model: string }>('/settings/default-model'),
   defaultModelSet: (model: string) => fetch(BASE + '/settings/default-model', {

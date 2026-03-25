@@ -214,6 +214,69 @@ func (s *Server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"success": true, "name": name})
 }
 
+func (s *Server) handleSkillsCreateMarkdown(w http.ResponseWriter, r *http.Request) {
+	var inp struct {
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Instructions string `json:"instructions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	inp.Name = strings.TrimSpace(inp.Name)
+	inp.Description = strings.TrimSpace(inp.Description)
+	inp.Instructions = strings.TrimSpace(inp.Instructions)
+
+	if inp.Name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if !validSkillName.MatchString(inp.Name) {
+		writeError(w, "name must be lowercase alphanumeric with hyphens/underscores", http.StatusBadRequest)
+		return
+	}
+	if inp.Instructions == "" {
+		writeError(w, "instructions are required", http.StatusBadRequest)
+		return
+	}
+	if inp.Description == "" {
+		inp.Description = inp.Name
+	}
+
+	skillDir := filepath.Join(s.skillsDir, inp.Name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		writeError(w, fmt.Sprintf("creating skill directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString("name: " + inp.Name + "\n")
+	sb.WriteString("description: " + inp.Description + "\n")
+	sb.WriteString("version: 1.0.0\n")
+	sb.WriteString("---\n\n")
+	sb.WriteString(inp.Instructions + "\n")
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(sb.String()), 0o644); err != nil {
+		os.RemoveAll(skillDir)
+		writeError(w, fmt.Sprintf("writing SKILL.md: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if s.skillReg != nil {
+		s.skillReg.LoadDir(s.skillsDir) //nolint:errcheck
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]any{
+		"name":    inp.Name,
+		"success": true,
+		"tier":    1,
+	})
+}
+
 func buildSkillMD(name, description string, parameters json.RawMessage) string {
 	var sb strings.Builder
 	sb.WriteString("---\n")

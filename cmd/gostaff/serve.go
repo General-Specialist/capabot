@@ -107,9 +107,12 @@ func runServe(configPath string) error {
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
-	// 7d. Register skill_create and skill_edit as extended tools
+	// 7d. Register skill management tools
 	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateMarkdownTool(defaultSkillsDir(), skillRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillSearchTool(skill.NewClawHubClient(skill.ClawHubConfig{})))
 
 	// 7e. Hot-reload: poll skill directories every 10s for newly installed skills
 	go func() {
@@ -306,6 +309,9 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		Router:          router,
 		DiscordRoles:    discordRoles,
 	})
+	// Restore execute fallback if previously enabled.
+	apiServer.RestoreExecuteFallback(ctx)
+
 	// Wire SDK plugin HTTP routes onto a wrapper mux that falls through to the API server.
 	apiHandler := apiServer.Handler()
 	if len(sdkRegs.Routes) > 0 {

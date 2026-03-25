@@ -158,6 +158,13 @@ func (r *Router) ChatWithModel(ctx context.Context, modelID string, req ChatRequ
 	return nil, fmt.Errorf("router: no provider found for model %q", modelID)
 }
 
+// SetFallbacks replaces the router's fallback provider list, thread-safe.
+func (r *Router) SetFallbacks(names []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.config.Fallbacks = append([]string(nil), names...)
+}
+
 // orderedProviders returns [primary, fallbacks...].
 func (r *Router) orderedProviders() []string {
 	r.mu.RLock()
