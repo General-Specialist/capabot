@@ -1,8 +1,11 @@
-# Binary
+# Binaries
 /gostaff
+/capabot
+*.bin
 
 # Env
 .env
+config.yaml
 
 # OS
 .DS_Store
@@ -16,10 +19,9 @@
 coverage.out
 *.test
 
-# Temp
+# Temp / build
 tmp/
 
 # Web
 web/node_modules/
 web/dist/
-config.yaml
