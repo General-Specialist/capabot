@@ -1,6 +1,6 @@
 # GoStaff Codebase Context
 
-GoStaff is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files, native Go executables, or OpenClaw-compatible plugins (TS/JS/Python) that extend the agent's behavior.
+GoStaff is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files or native Go executables. Plugins use the Go SDK (`internal/sdk`) and run in-process; OpenClaw-compatible TS/JS/Python plugins are supported via an adapter that wraps their subprocess behind the same SDK interface.
 
 ## Architecture Overview
 
@@ -45,14 +45,14 @@ GoStaff is a self-hosted AI agent platform. Users configure LLM providers and sk
 2. `serve.go` closures (`runAgent` / `runAgentWithPrompt`) create a fresh `agent.Agent` per request
 3. Agent runs the ReAct loop: call LLM → execute tools → call LLM → ... → return
 4. LLM calls go through `llm.Router` which picks a provider and handles retries
-5. Tool calls hit `internal/tools` (built-ins), plugins (TS/JS/Python), or native skills (Go)
-6. Plugin hooks intercept tool calls before/after execution (if registered)
+5. Tool calls hit `internal/tools` (built-ins), SDK plugins (in-process Go or OpenClaw adapter), or native skills (Go subprocess)
+6. SDK plugin hooks intercept tool calls before/after execution (if registered)
 7. Messages and tool executions are persisted to Postgres via `internal/memory`
 
 **Skill tiers**:
 - **Tier 1** (Markdown): SKILL.md instructions injected into the system prompt — no code
-- **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess
-- **Tier 3** (Plugin): TS/JS/Python subprocess using OpenClaw's `register(api)` protocol. Can register tools, hooks, HTTP routes, LLM providers, commands, and services. Full OpenClaw `definePluginEntry` compatibility via embedded SDK shim.
+- **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess per invocation
+- **Tier 3** (SDK Plugin): Go plugins implementing `sdk.Plugin` interface, running in-process. OpenClaw TS/JS/Python plugins are supported via `sdk.OpenClawPlugin` adapter which wraps their subprocess behind the same interface. Can register tools, hooks, HTTP routes, and LLM providers.
 
 **Deployment**: Docker (`CMD ["gostaff", "serve"]`) or direct binary. Config at `~/.gostaff/config.yaml`. Database: Postgres (optional — most features work without it). `GOSTAFF_AUTOUPDATE=1` enables self-update via git pull.
 
@@ -102,9 +102,9 @@ The main wiring function. Startup sequence:
 4. Init Postgres pool + store; call `store.MarkStaleRunsAsFailed` on startup
 5. Init LLM router
 6. Init tool registry (built-in tools + memory tool if store available)
-7. Init skill registry (loads dirs); spawn plugin processes and register tools/hooks/routes/providers; register native skills as tools
-8. Register `skill_create` and `skill_edit` as _extended_ tools; start skill hot-reload poller (1s interval — detects newly installed skills and registers their plugin tools/hooks/providers without restart)
-9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach plugin hooks to each agent)
+7. Init skill registry (loads dirs); register SDK plugins via `registerSDKPlugins` (compiled-in Go plugins + OpenClaw adapters for installed TS/JS/Python plugins); register native skills as tools
+8. Register `skill_create` and `skill_edit` as _extended_ tools; start skill hot-reload poller (1s interval — detects newly installed skills)
+9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach SDK plugin hooks to each agent)
 10. `syncDiscordPeopleRoles` — creates Discord roles for people/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
 12. Start API server on `cfg.Server.Addr`
@@ -376,21 +376,15 @@ Skill tiers are auto-detected at load time by presence of plugin entry points or
 `ActiveSkillsFromNames(reg, names)` — filters registry by name list.
 
 ### `plugin.go`
-`PluginProcess` — manages a long-running TS/JS/Python subprocess using JSON-line protocol over stdin/stdout.
+`PluginProcess` — manages a long-running TS/JS/Python subprocess using JSON-line protocol over stdin/stdout. **Not called directly from serve.go** — used internally by the `sdk.OpenClawPlugin` adapter.
 
 **Lifecycle**: spawn subprocess (bun/node/python3) → plugin calls `register(api)` to register tools/hooks/routes/providers → sends "ready" → host dispatches invocations via JSON-line messages.
 
 **Entry point detection**: probes for `index.ts` (bun), `index.js` (node), `index.py` (python3) in order.
 
-**Embedded shim** (`//go:embed shim/host.mjs`): provides the full OpenClaw-compatible `api` object to plugins. Supports both `export function register(api)` and `definePluginEntry` patterns.
-
-**OpenClaw SDK shim**: embedded `openclaw/plugin-sdk/` files are written to `node_modules/openclaw/` in the plugin directory so `import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry"` resolves.
-
 **Registration types**: `RegisteredTool`, `RegisteredHook`, `RegisteredRoute`, `RegisteredProvider`.
 
 **Invocation methods**: `Invoke` (tools), `InvokeHook` (pre/post tool hooks), `InvokeHTTP` (route handlers), `InvokeChat` (LLM providers).
-
-**OpenClaw API coverage**: `registerTool`, `registerHook`, `on()`, `registerHttpRoute`, `registerProvider`, `registerCommand` (surfaced as tool), `registerService` (background start/stop), `registerWebSearchProvider` (extracts tool). No-op stubs for: `registerChannel`, `registerGatewayMethod`, `registerCli`, `registerSpeechProvider`, `registerMediaUnderstandingProvider`, `registerImageGenerationProvider`, `registerInteractiveHandler`, `registerContextEngine`, `registerMemoryPromptSection`.
 
 ### `plugin_tool.go`
 `PluginTool` — wraps a `RegisteredTool` + `*PluginProcess` reference. Multiple `PluginTool`s can share the same process (one plugin registers many tools). `Run()` delegates to `proc.Invoke()`.
@@ -418,6 +412,26 @@ Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 `ClawHubClient` — fetches skills from `https://clawhub.ai` Convex backend.
 - `SearchSkills(ctx, query)` — queries `listPublicPageV4` Convex function
 - `DownloadSkill(ctx, name, destDir)` — downloads zip from ClawHub, extracts to temp dir
+
+---
+
+## `internal/sdk/`
+
+The Go plugin SDK. All Tier 3 plugins (both native Go and OpenClaw adapters) go through this layer.
+
+### `sdk.go`
+Core interfaces and types:
+- **`Plugin`** — interface: `Init(Registrar) error`, `Close() error`. All plugins implement this.
+- **`Registrar`** — interface passed to `Init`: `RegisterTool(agent.Tool)`, `RegisterHook(agent.ToolHook)`, `RegisterRoute(method, path, http.HandlerFunc)`, `RegisterProvider(name, llm.Provider)`.
+- **`Registration`** — concrete `Registrar` that collects tools/hooks/routes/providers into slices. Created by `InitPlugin(p)` which calls `p.Init(reg)` and returns the populated registration.
+- **`SimpleTool`** — convenience: wraps a `func(ctx, params) (string, error)` as an `agent.Tool`.
+
+### `openclaw.go`
+`OpenClawPlugin` — adapter that wraps an OpenClaw TS/JS/Python plugin directory behind the `sdk.Plugin` interface. On `Init`, spawns a `skill.PluginProcess` subprocess, then translates its registered tools/hooks/routes/providers into the SDK types (`agent.Tool`, `agent.ToolHook`, `http.HandlerFunc`, `llm.Provider`). Invocations delegate to the subprocess over JSON-line protocol.
+
+Contains adapter types: `openclawTool`, `openclawHook`, `openclawProvider`.
+
+**Usage in serve.go**: `registerSDKPlugins` collects compiled-in Go plugins from `sdkPlugins()` + auto-discovers OpenClaw plugins from the skill registry, wraps them via `NewOpenClawPlugin`, and registers everything through a single path.
 
 ---
 
@@ -644,7 +658,7 @@ Opt-in: only runs when `GOSTAFF_AUTOUPDATE` is set. Not appropriate for Docker/R
 `cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence
 
 ### Skill loading
-`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: plugins spawned as long-running subprocesses (tools/hooks/routes/providers registered), native skills compiled and registered as `agent.Tool`. Hot-reload poller (1s) calls `LoadNewSkills()` to detect skills installed via CLI while server is running.
+`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: `registerSDKPlugins` initializes compiled-in Go plugins + wraps OpenClaw TS/JS/Python plugins via `sdk.OpenClawPlugin` adapter (all go through `sdk.Plugin` interface); `registerNativeSkills` compiles Go skills and registers as `agent.Tool`. Hot-reload poller (1s) calls `LoadNewSkills()` to detect newly installed skills.
 
 ### Model routing
 `@modelname` tag in message → extracted, stripped from text → passed as `model` to `runAgent` → `llm.Router.Chat` with `req.Model` set → `ChatWithModel` finds provider by scanning all providers' `Models()` lists
