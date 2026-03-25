@@ -1,6 +1,6 @@
 # Capabot Codebase Context
 
-Capabot is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files (or Go/WASM executables) that extend the agent's behavior.
+Capabot is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files, native Go executables, or OpenClaw-compatible plugins (TS/JS/Python) that extend the agent's behavior.
 
 ## Architecture Overview
 
@@ -30,7 +30,7 @@ Capabot is a self-hosted AI agent platform. Users configure LLM providers and sk
           │Router →    │  │internal/skill   │
           │Anthropic   │  │(shell, file,    │
           │OpenAI      │  │browser, memory, │
-          │Gemini      │  │WASM skills...)  │
+          │Gemini      │  │plugins...)      │
           │OpenRouter  │  └─────────────────┘
           └────────────┘
                   ┌──────────────┐
@@ -45,13 +45,14 @@ Capabot is a self-hosted AI agent platform. Users configure LLM providers and sk
 2. `serve.go` closures (`runAgent` / `runAgentWithPrompt`) create a fresh `agent.Agent` per request
 3. Agent runs the ReAct loop: call LLM → execute tools → call LLM → ... → return
 4. LLM calls go through `llm.Router` which picks a provider and handles retries
-5. Tool calls hit `internal/tools` (built-ins) or compiled skills (WASM/native)
-6. Messages and tool executions are persisted to Postgres via `internal/memory`
+5. Tool calls hit `internal/tools` (built-ins), plugins (TS/JS/Python), or native skills (Go)
+6. Plugin hooks intercept tool calls before/after execution (if registered)
+7. Messages and tool executions are persisted to Postgres via `internal/memory`
 
 **Skill tiers**:
 - **Tier 1** (Markdown): SKILL.md instructions injected into the system prompt — no code
 - **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess
-- **Tier 3** (WASM): `skill.wasm` run in wazero sandbox — portable, sandboxed
+- **Tier 3** (Plugin): TS/JS/Python subprocess using OpenClaw's `register(api)` protocol. Can register tools, hooks, HTTP routes, LLM providers, commands, and services. Full OpenClaw `definePluginEntry` compatibility via embedded SDK shim.
 
 **Deployment**: Docker (`CMD ["capabot", "serve"]`) or direct binary. Config at `~/.capabot/config.yaml`. Database: Postgres (optional — most features work without it). `CAPABOT_AUTOUPDATE=1` enables self-update via git pull.
 
@@ -70,7 +71,7 @@ The canonical config reference. Copy to `~/.capabot/config.yaml`. Key sections:
 
 ### `go.mod`
 Module: `github.com/polymath/capabot`. Direct dependencies:
-- `google/uuid`, `bwmarrin/discordgo` (Discord gateway), `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `tetratelabs/wazero` (WASM runtime), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
+- `google/uuid`, `bwmarrin/discordgo` (Discord gateway), `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
 
 ---
 
@@ -101,9 +102,9 @@ The main wiring function. Startup sequence:
 4. Init Postgres pool + store; call `store.MarkStaleRunsAsFailed` on startup
 5. Init LLM router
 6. Init tool registry (built-in tools + memory tool if store available)
-7. Init skill registry (loads dirs); register WASM and native skills as tools
+7. Init skill registry (loads dirs); spawn plugin processes and register tools/hooks/routes/providers; register native skills as tools
 8. Register `skill_create` and `skill_edit` as _extended_ tools
-9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures
+9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach plugin hooks to each agent)
 10. `syncDiscordRoles` — creates Discord roles for personas/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
 12. Start API server on `cfg.Server.Addr`
@@ -141,7 +142,7 @@ CLI skill subcommands:
 - `runSkillLint` — resolves paths to SKILL.md files, runs `skill.LintSkill`, exits 1 on errors
 - `runSkillImport` — calls `skill.ImportSkill`
 - `runSkillCreate` — scaffolds `<name>/SKILL.md` in current dir
-- `runSkillInit` — like create, but with `--wasm` flag creates `main.go` + `Makefile` for WASM tier
+- `runSkillInit` — like create, but with `--plugin` flag creates `index.ts` for plugin tier
 - `runSkillSearch` — calls ClawHub API to search registry
 - `runSkillInstall` — downloads URL (tar.gz or zip) or ClawHub name, extracts, calls `ImportSkill`
 - `extractZip` / `extractTarGz` — archive extraction with path traversal protection
@@ -215,7 +216,9 @@ Core ReAct loop.
 
 **`buildToolDefs`** — converts registry tools to `[]llm.ToolDefinition` for the LLM request. Does NOT include extended tools.
 
-**`executeTool`** — looks up tool by name, runs it, emits events, persists audit log.
+**`ToolHook` interface** — `BeforeToolUse(ctx, toolName, params) (allow, modifiedParams, err)` and `AfterToolUse(ctx, toolName, params, result) (modifiedResult, err)`. Plugin hooks implement this interface.
+
+**`executeTool`** — runs pre-hooks (can block or modify params), looks up tool by name, runs it, runs post-hooks (can modify result), emits events, persists audit log.
 
 **Events**: `EventThinking`, `EventToolStart`, `EventToolEnd`, `EventResponse`. Emitted to `onEvent` callback (nil = no streaming).
 
@@ -343,7 +346,7 @@ Repository pattern. All DB access goes through this.
 - `Name`, `Description`, `Version`, `Homepage`
 - `Metadata SkillMetadata` — OpenClaw metadata under `openclaw`, `clawdbot`, or `clawdis` keys (aliases for same thing)
 - `UserInvocable *bool`, `DisableModelInvocation bool`, `CommandDispatch`, `CommandTool`, `CommandArgMode`
-- `Parameters json.RawMessage` — JSON Schema for WASM skills
+- `Parameters json.RawMessage` — JSON Schema for executable skills (Tier 2/3)
 
 **`SkillMetadataInner`** — OpenClaw metadata: `requires` (env vars, bins), `install` (package specs), `always`, `emoji`, `os`.
 
@@ -358,38 +361,48 @@ Repository pattern. All DB access goes through this.
 ### `registry.go`
 `Registry` — thread-safe map of `ParsedSkill` by name. Also tracks:
 - `skillPaths` — disk directory per skill
-- `wasmPaths` — path to `skill.wasm` (Tier 3)
+- `pluginPaths` — dir containing `index.ts`/`index.js`/`index.py` (Tier 3 plugin)
 - `nativePaths` — dir containing `main.go` (Tier 2)
 
 `LoadDir(dir)` — scans subdirectories for `SKILL.md`. Earlier dirs take precedence (workspace > user > bundled). Silently skips non-skill dirs.
 
-Skill tiers are auto-detected at load time by presence of `skill.wasm` or `main.go`.
+Skill tiers are auto-detected at load time by presence of plugin entry points or `main.go`.
 
 ### `inject.go`
 `BuildSystemPrompt(base, skills)` — appends each skill's instructions to the base prompt as `## Skill: <name>\n_<desc>_\n\n<instructions>`. This is how Tier 1 (markdown) skills work — pure prompt injection.
 
 `ActiveSkillsFromNames(reg, names)` — filters registry by name list.
 
-### `wasm.go`
-`WASMExecutor` — runs compiled WASM skills in wazero sandbox.
+### `plugin.go`
+`PluginProcess` — manages a long-running TS/JS/Python subprocess using JSON-line protocol over stdin/stdout.
 
-**ABI** (communication protocol between host and WASM module):
-- Host calls `capabot_write_input(len) ptr` — allocates buffer in WASM memory, returns pointer; host writes JSON params there
-- Host calls `run()` — executes skill logic
-- WASM calls host import `capabot.set_output(ptr, len)` — returns JSON result `{"content":"...","is_error":false}`
+**Lifecycle**: spawn subprocess (bun/node/python3) → plugin calls `register(api)` to register tools/hooks/routes/providers → sends "ready" → host dispatches invocations via JSON-line messages.
 
-Optional host capabilities (disabled by default): `AllowHTTPGet`, `AllowMemory`.
+**Entry point detection**: probes for `index.ts` (bun), `index.js` (node), `index.py` (python3) in order.
+
+**Embedded shim** (`//go:embed shim/host.mjs`): provides the full OpenClaw-compatible `api` object to plugins. Supports both `export function register(api)` and `definePluginEntry` patterns.
+
+**OpenClaw SDK shim**: embedded `openclaw/plugin-sdk/` files are written to `node_modules/openclaw/` in the plugin directory so `import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry"` resolves.
+
+**Registration types**: `RegisteredTool`, `RegisteredHook`, `RegisteredRoute`, `RegisteredProvider`.
+
+**Invocation methods**: `Invoke` (tools), `InvokeHook` (pre/post tool hooks), `InvokeHTTP` (route handlers), `InvokeChat` (LLM providers).
+
+**OpenClaw API coverage**: `registerTool`, `registerHook`, `on()`, `registerHttpRoute`, `registerProvider`, `registerCommand` (surfaced as tool), `registerService` (background start/stop), `registerWebSearchProvider` (extracts tool). No-op stubs for: `registerChannel`, `registerGatewayMethod`, `registerCli`, `registerSpeechProvider`, `registerMediaUnderstandingProvider`, `registerImageGenerationProvider`, `registerInteractiveHandler`, `registerContextEngine`, `registerMemoryPromptSection`.
+
+### `plugin_tool.go`
+`PluginTool` — wraps a `RegisteredTool` + `*PluginProcess` reference. Multiple `PluginTool`s can share the same process (one plugin registers many tools). `Run()` delegates to `proc.Invoke()`.
 
 ### `native.go`
 `NativeExecutor` — compiles `main.go` to `skill.bin` using `go build`. Caches compiled binary (skips rebuild if bin is newer than main.go). If no `go.mod`, creates a temporary one.
 
-Skill subprocess reads JSON params from stdin, writes `{"content":"...","is_error":false}` to stdout. Same envelope as WASM.
+Skill subprocess reads JSON params from stdin, writes `{"content":"...","is_error":false}` to stdout.
 
-### `wasm_tool.go` / `native_tool.go`
-Adapters that wrap `WASMExecutor` / `NativeExecutor` as `agent.Tool` implementations.
+### `native_tool.go`
+Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 
 ### `importer.go`
-`ImportSkill(srcDir, destRoot)` — copies an OpenClaw skill directory into `destRoot/<skillName>/`. Validates SKILL.md, checks binary dependencies, detects tier, translates tool names.
+`ImportSkill(srcDir, destRoot)` — copies an OpenClaw skill directory into `destRoot/<skillName>/`. Validates SKILL.md, checks binary dependencies, detects tier (Markdown/Native/Plugin), translates tool names.
 
 `ImportResult` contains `{SkillName, Tier, Warnings, Errors, MappedTools, InstallHints, DestPath}`.
 
@@ -629,7 +642,7 @@ Opt-in: only runs when `CAPABOT_AUTOUPDATE` is set. Not appropriate for Docker/R
 `cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence
 
 ### Skill loading
-`LoadDir` scans dirs → `ParseSkillMD` → detect tier (wasm file? main.go?) → register → in `serve.go`: WASM/native skills additionally registered as `agent.Tool`
+`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: plugins spawned as long-running subprocesses (tools/hooks/routes/providers registered), native skills compiled and registered as `agent.Tool`
 
 ### Model routing
 `@modelname` tag in message → extracted, stripped from text → passed as `model` to `runAgent` → `llm.Router.Chat` with `req.Model` set → `ChatWithModel` finds provider by scanning all providers' `Models()` lists

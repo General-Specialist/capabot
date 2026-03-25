@@ -30,13 +30,16 @@ cd web && bun install && bun run dev  # frontend HMR on :5173
 
 ## Key features
 
-**Skills** — Extend the agent with skills from [ClawHub](https://clawhub.ai), the community skill registry with 30K+ skills. Any OpenClaw `SKILL.md` works out of the box. Skills are just Markdown — write instructions and the agent follows them. For real computation, compile to WASM and it runs in a fully sandboxed runtime.
+**Skills & Plugins** — Extend the agent with skills from [ClawHub](https://clawhub.ai), the community skill registry with 30K+ skills. Any OpenClaw `SKILL.md` works out of the box. Skills are just Markdown — write instructions and the agent follows them. For real computation, write a plugin in TypeScript, JavaScript, or Python using the OpenClaw `register(api)` protocol — or write native Go.
 
 ```bash
 capabot skill search "code review"      # search ClawHub
 capabot skill install code-reviewer     # install from ClawHub
 capabot skill create my-skill           # scaffold a new skill
+capabot skill init --plugin my-plugin   # scaffold a TS plugin
 ```
+
+Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, commands, and services. OpenClaw's `definePluginEntry` import works out of the box.
 
 **Built-in tools** — file read/write/edit, shell exec (allowlisted), browser automation via Playwright, web search, web fetch, persistent memory, and more.
 
