@@ -209,8 +209,9 @@ Core ReAct loop.
 1. Copies messages to avoid mutating caller slice
 2. Loop: check ctx, compress old tool outputs, build windowed message slice, call LLM
 3. On tool calls: execute each tool, truncate if needed, append to history
-4. On no tool calls: return response
-5. On max iterations: return `[max iterations reached]`
+4. On empty response (no content, no tool calls): retry once with "Please provide a response."
+5. On no tool calls: return response
+6. On max iterations: return `[max iterations reached]`
 
 **`compressOldToolOutputs`** — mutates `history` in place. Finds last assistant message with tool calls; everything before that is "old" and gets compressed if `>300 chars`. Calls `llmSummarize` (cheap model) or falls back to `truncateOutput` (first 2 lines + stats).
 
@@ -272,6 +273,8 @@ Core types:
 `ChatWithModel(modelID, req)` — iterates all providers' `Models()` list to find the right one.
 
 `SetProvider(name, p)` — hot-swaps a provider (used when API keys are updated via UI).
+
+`SetFallbacks(names)` — replaces the fallback provider list at runtime (used by execute key fallback setting).
 
 `ProviderMap()` — returns a copy of the provider map (used by API server for `/api/providers`).
 
@@ -413,6 +416,18 @@ Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 - `SearchSkills(ctx, query)` — queries `listPublicPageV4` Convex function
 - `DownloadSkill(ctx, name, destDir)` — downloads zip from ClawHub, extracts to temp dir
 
+### `github.go`
+Reusable GitHub download/extract logic for installing skills from GitHub repos.
+- `IsGitHubShorthand(s)` — detects `owner/repo` patterns (no slashes in owner or repo)
+- `ParseGitHubURL(s)` — extracts `owner/repo` from full `github.com` URLs
+- `DownloadGitHub(ctx, target)` — downloads tarball from GitHub API, extracts, unwraps single wrapper dir
+- `extractTarGzReader` — streaming tar.gz extraction helper
+
+### `npm.go`
+npm registry fallback for installing OpenClaw plugins distributed as npm packages.
+- `DownloadNPM(ctx, spec)` — fetches package metadata from `registry.npmjs.org`, downloads tarball, extracts. Handles scoped packages (`@scope/name@version`).
+- Used as fallback when ClawHub 404s on a bare name (e.g. `shellward` is on npm, not ClawHub)
+
 ---
 
 ## `internal/sdk/`
@@ -484,12 +499,12 @@ Helpers for sending messages via Discord REST API (regular messages and webhook-
 - `POST /api/automations/{id}/trigger` — manual trigger
 - `GET /api/runs/{runID}/stream` — SSE stream of a running automation's agent events
 - `GET /api/skills` — lists all skills with `tier`, `source` ("custom"|"clawhub" based on `_meta.json` presence), `removable`
-- `PUT /api/skills/{name}`, `DELETE /api/skills/{name}`, `POST /api/skills/install`, `POST /api/skills/create`, `POST /api/skills/create-markdown`
+- `PUT /api/skills/{name}`, `DELETE /api/skills/{name}`, `POST /api/skills/install` (accepts ClawHub names, GitHub `owner/repo`, or npm package names with ClawHub→npm fallback), `POST /api/skills/create`, `POST /api/skills/create-markdown`
 - `GET/PUT /api/config/keys` — hot-reload provider API keys
 - `GET/POST/PUT/DELETE /api/people` — people management
 - `GET/PUT /api/people/system-prompt` — global system prompt prepended to all people
 - `GET/PUT /api/modes/active`, `PUT/DELETE /api/modes/{name}`
-- `GET/PUT /api/settings/default-model`, `GET/PUT /api/settings/summarization-model`
+- `GET/PUT /api/settings/default-model`, `GET/PUT /api/settings/summarization-model`, `GET/PUT /api/settings/execute-fallback`
 - `GET /api/usage`, `GET /api/credits`
 - `POST /api/avatars`, `GET /api/avatars/*` — avatar file upload/serve
 - SPA static files at `/` if `StaticFS` is provided
@@ -522,6 +537,12 @@ CRUD for people. On create/update, syncs Discord role if Discord is configured.
 `handleSkillGet` — returns a single skill's source (name, description, code, tier).
 
 `handleSkillUpdate` — overwrites a Tier 2 skill's code/description and recompiles.
+
+### `execute_fallback.go`
+Execute key fallback setting. When enabled, registers execute mode's API keys as fallback providers in the router so rate-limited chat keys automatically fall back to execute keys.
+- `handleExecuteFallbackGet/Put` — REST endpoints for the toggle
+- `RestoreExecuteFallback(ctx)` — called at startup to re-apply if previously enabled
+- `reloadExecuteFallback(ctx)` — loads execute mode keys, registers as `execute-anthropic`, `execute-openai`, etc. providers and sets them as router fallbacks
 
 ### `usage.go`
 `handleUsage` — returns usage log (token counts, costs) aggregated from `usage_log` table.
@@ -678,3 +699,23 @@ Opt-in: only runs when `GOSTAFF_AUTOUPDATE` is set. Not appropriate for Docker/R
 
 ### Model routing
 `@modelname` tag in message → extracted, stripped from text → passed as `model` to `runAgent` → `llm.Router.Chat` with `req.Model` set → `ChatWithModel` finds provider by scanning all providers' `Models()` lists
+
+### Skill install (API)
+`POST /api/skills/install` with `{"name": "..."}` → normalize GitHub URLs → if `owner/repo` shorthand: `skill.DownloadGitHub` → else try ClawHub, on 404 fall back to `skill.DownloadNPM` → `skill.ImportSkill` → hot-reload into registry
+
+---
+
+## `web/src/` — React frontend
+
+Vite + React 18 + Tailwind CSS v4. Embedded in the Go binary via `embed.FS`.
+
+### Pages
+- **`ChatPage`** — SSE streaming chat with conversation history
+- **`SkillsPage`** — two tabs: "Custom" (user-created T1 markdown skills with inline create/edit) and "ClawHub" (browse/install from ClawHub catalog)
+- **`PluginsPage`** — two tabs: "Custom" (T2 native Go plugins) and "OpenClaw" (T3 external plugins). OpenClaw tab has an install bar styled as `openclaw plugins install [input]` that accepts bare names (npm), `owner/repo` (GitHub), or full GitHub URLs. Success message auto-dismisses after 5s.
+- **`SettingsPage`** — dark mode toggle, execute key fallback toggle (default off), default/summarization model selects, mode switcher with per-mode API keys
+- **`PeoplePage`** — CRUD for people/personas with avatar upload, tags, prompt editing
+- **`AutomationsPage`** — CRUD for scheduled automations with RRULE, manual trigger, run history
+- **`DashboardPage`** — health status, recent runs
+- **`CostsPage`** — usage/credits dashboard
+- **`MemoryPage`** — key-value memory store viewer/editor

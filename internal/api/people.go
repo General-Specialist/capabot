@@ -164,6 +164,15 @@ func (s *Server) handlePeopleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Fetch existing person to diff against so we only call Discord when
+	// something role-relevant (username or tags) actually changed.
+	var oldPerson memory.Person
+	if s.discordRoles != nil {
+		if p, err := s.store.GetPersonByID(r.Context(), id); err == nil {
+			oldPerson = p
+		}
+	}
+
 	if err := s.store.UpdatePerson(r.Context(), memory.Person{
 		ID:             id,
 		Name:           body.Name,
@@ -177,20 +186,24 @@ func (s *Server) handlePeopleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync Discord roles on update.
+	// Only sync Discord roles when username or tags actually changed.
 	if s.discordRoles != nil {
-		if body.Username != "" {
-			existing, err := s.store.GetPersonByName(r.Context(), body.Name)
-			if err == nil && existing.DiscordRoleID != "" {
-				_ = s.discordRoles.UpdateRole(r.Context(), existing.DiscordRoleID, body.Username)
-			} else if err == nil && existing.DiscordRoleID == "" {
+		usernameChanged := body.Username != oldPerson.Username
+		tagsChanged := !slicesEqual(body.Tags, oldPerson.Tags)
+
+		if usernameChanged && body.Username != "" {
+			if oldPerson.DiscordRoleID != "" {
+				_ = s.discordRoles.UpdateRole(r.Context(), oldPerson.DiscordRoleID, body.Username)
+			} else {
 				roleID, err := s.discordRoles.CreateRole(r.Context(), body.Username)
 				if err == nil {
 					_ = s.store.SetPersonDiscordRoleID(r.Context(), id, roleID)
 				}
 			}
 		}
-		s.syncTagRoles(r.Context(), body.Tags)
+		if tagsChanged {
+			s.syncTagRoles(r.Context(), body.Tags)
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

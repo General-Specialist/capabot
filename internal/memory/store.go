@@ -588,6 +588,19 @@ func (s *Store) ListPeople(ctx context.Context) ([]Person, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) GetPersonByID(ctx context.Context, id int64) (Person, error) {
+	var p Person
+	var tags pgStringArray
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT id, name, prompt, username, avatar_url, avatar_position, tags, discord_role_id, created_at, updated_at FROM people WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Name, &p.Prompt, &p.Username, &p.AvatarURL, &p.AvatarPosition, &tags, &p.DiscordRoleID, &p.CreatedAt, &p.UpdatedAt)
+	p.Tags = []string(tags)
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+	return p, err
+}
+
 func (s *Store) GetPersonByName(ctx context.Context, name string) (Person, error) {
 	var p Person
 	var tags pgStringArray
