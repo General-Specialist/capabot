@@ -35,11 +35,12 @@ cd web && bun install && bun run dev  # frontend HMR on :5173
 ```bash
 capabot skill search "code review"      # search ClawHub
 capabot skill install code-reviewer     # install from ClawHub
+capabot skill install owner/repo        # install from GitHub
 capabot skill create my-skill           # scaffold a new skill
 capabot skill init --plugin my-plugin   # scaffold a TS plugin
 ```
 
-Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, commands, and services. OpenClaw's `definePluginEntry` import works out of the box.
+Plugins can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, commands, and services. OpenClaw's `definePluginEntry` import works out of the box. Dependencies are auto-installed (`bun install` or `npm install`) on import. New skills are hot-reloaded into the running server — no restart needed.
 
 **Built-in tools** — file read/write/edit, shell exec (allowlisted), browser automation via Playwright, web search, web fetch, persistent memory, and more.
 

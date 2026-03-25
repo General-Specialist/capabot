@@ -103,7 +103,7 @@ The main wiring function. Startup sequence:
 5. Init LLM router
 6. Init tool registry (built-in tools + memory tool if store available)
 7. Init skill registry (loads dirs); spawn plugin processes and register tools/hooks/routes/providers; register native skills as tools
-8. Register `skill_create` and `skill_edit` as _extended_ tools
+8. Register `skill_create` and `skill_edit` as _extended_ tools; start skill hot-reload poller (1s interval — detects newly installed skills and registers their plugin tools/hooks/providers without restart)
 9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach plugin hooks to each agent)
 10. `syncDiscordRoles` — creates Discord roles for personas/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
@@ -144,7 +144,7 @@ CLI skill subcommands:
 - `runSkillCreate` — scaffolds `<name>/SKILL.md` in current dir
 - `runSkillInit` — like create, but with `--plugin` flag creates `index.ts` for plugin tier
 - `runSkillSearch` — calls ClawHub API to search registry
-- `runSkillInstall` — downloads URL (tar.gz or zip) or ClawHub name, extracts, calls `ImportSkill`
+- `runSkillInstall` — downloads URL (tar.gz or zip), ClawHub name, or GitHub shorthand (`owner/repo`), extracts, calls `ImportSkill`
 - `extractZip` / `extractTarGz` — archive extraction with path traversal protection
 
 `defaultSkillsDir()` — `~/.capabot/skills`
@@ -366,6 +366,8 @@ Repository pattern. All DB access goes through this.
 
 `LoadDir(dir)` — scans subdirectories for `SKILL.md`. Earlier dirs take precedence (workspace > user > bundled). Silently skips non-skill dirs.
 
+`LoadNewSkills()` — re-scans all previously loaded directories and registers any skills that weren't present before. Returns names of newly loaded skills. Used by the hot-reload poller in `serve.go`.
+
 Skill tiers are auto-detected at load time by presence of plugin entry points or `main.go`.
 
 ### `inject.go`
@@ -402,7 +404,7 @@ Skill subprocess reads JSON params from stdin, writes `{"content":"...","is_erro
 Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
 
 ### `importer.go`
-`ImportSkill(srcDir, destRoot)` — copies an OpenClaw skill directory into `destRoot/<skillName>/`. Validates SKILL.md, checks binary dependencies, detects tier (Markdown/Native/Plugin), translates tool names.
+`ImportSkill(srcDir, destRoot)` — copies an OpenClaw skill directory into `destRoot/<skillName>/`. Validates SKILL.md, checks binary dependencies, detects tier (Markdown/Native/Plugin), translates tool names. For plugin-only repos (no SKILL.md), auto-generates one from `package.json`. After copying, auto-installs npm dependencies if `package.json` exists (`bun install` preferred, falls back to `npm install`).
 
 `ImportResult` contains `{SkillName, Tier, Warnings, Errors, MappedTools, InstallHints, DestPath}`.
 
@@ -642,7 +644,7 @@ Opt-in: only runs when `CAPABOT_AUTOUPDATE` is set. Not appropriate for Docker/R
 `cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence
 
 ### Skill loading
-`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: plugins spawned as long-running subprocesses (tools/hooks/routes/providers registered), native skills compiled and registered as `agent.Tool`
+`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: plugins spawned as long-running subprocesses (tools/hooks/routes/providers registered), native skills compiled and registered as `agent.Tool`. Hot-reload poller (1s) calls `LoadNewSkills()` to detect skills installed via CLI while server is running.
 
 ### Model routing
 `@modelname` tag in message → extracted, stripped from text → passed as `model` to `runAgent` → `llm.Router.Chat` with `req.Model` set → `ChatWithModel` finds provider by scanning all providers' `Models()` lists

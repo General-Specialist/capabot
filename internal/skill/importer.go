@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,11 +48,20 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 		InstallHints: make([]string, 0),
 	}
 
-	// 1. Read and parse SKILL.md
+	// 1. Read and parse SKILL.md (or auto-generate for plugin-only repos)
 	skillPath := filepath.Join(srcDir, "SKILL.md")
 	source, err := os.ReadFile(skillPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read SKILL.md: %w", err)
+		// No SKILL.md — check if this is a plugin-only directory
+		if detectTier(srcDir) != TierPlugin {
+			return nil, fmt.Errorf("cannot read SKILL.md: %w", err)
+		}
+		// Auto-generate a minimal SKILL.md for plugin repos
+		name, desc := inferPluginMeta(srcDir)
+		source = []byte(fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\nPlugin skill (auto-generated).\n", name, desc))
+		// Write it so the imported skill has one
+		_ = os.WriteFile(skillPath, source, 0o644)
+		result.Warnings = append(result.Warnings, "no SKILL.md found — auto-generated from package.json/directory name")
 	}
 
 	parsed, err := ParseSkillMD(source)
@@ -67,13 +77,9 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 	// 2. Determine skill name
 	result.SkillName = parsed.Manifest.Name
 	if result.SkillName == "" {
-		// YAML unmarshal may have failed entirely. Try extracting name from raw
-		// frontmatter with a simple line scan — this is the "forgiving parser"
-		// fallback for the 5,700+ wild ClawHub skills.
 		result.SkillName = extractNameFallback(source)
 	}
 	if result.SkillName == "" {
-		// Last resort: use directory name
 		result.SkillName = filepath.Base(srcDir)
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("no name in frontmatter, using directory name: %s", result.SkillName))
@@ -123,6 +129,13 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 	}
 	result.DestPath = destDir
 
+	// 7b. Auto-install npm dependencies for plugin skills
+	if result.Tier == TierPlugin {
+		if warn := installNodeDeps(destDir); warn != "" {
+			result.Warnings = append(result.Warnings, warn)
+		}
+	}
+
 	// 8. Run lint and propagate any issues
 	lintReport := LintSkill(source)
 	for _, e := range lintReport.Errors {
@@ -140,7 +153,8 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 func detectTier(srcDir string) int {
 	codeFiles := []string{
 		"index.ts", "index.js", "index.py", "index.go",
-		"package.json", "clawdbot.plugin.json",
+		"src/index.ts", "src/index.js", "src/index.py",
+		"package.json", "clawdbot.plugin.json", "openclaw.plugin.json",
 	}
 	for _, name := range codeFiles {
 		if _, err := os.Stat(filepath.Join(srcDir, name)); err == nil {
@@ -281,6 +295,41 @@ func isWordChar(b byte) bool {
 		(b >= '0' && b <= '9') || b == '_'
 }
 
+// inferPluginMeta extracts name and description from package.json if present,
+// otherwise falls back to the directory name.
+func inferPluginMeta(srcDir string) (name, description string) {
+	name = filepath.Base(srcDir)
+	description = "Plugin installed from GitHub"
+
+	pkgPath := filepath.Join(srcDir, "package.json")
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return name, description
+	}
+
+	// Minimal JSON extraction — avoid importing encoding/json just for this
+	// (it's already imported, but keep it simple)
+	type pkgJSON struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var pkg pkgJSON
+	if json.Unmarshal(data, &pkg) == nil {
+		if pkg.Name != "" {
+			// Strip npm scope prefix (@org/name -> name)
+			n := pkg.Name
+			if idx := strings.LastIndex(n, "/"); idx >= 0 {
+				n = n[idx+1:]
+			}
+			name = n
+		}
+		if pkg.Description != "" {
+			description = pkg.Description
+		}
+	}
+	return name, description
+}
+
 // extractNameFallback does a simple line-by-line scan for "name: <value>"
 // in raw source bytes. Used when YAML unmarshal fails entirely but the name
 // field is still recoverable as a plain string.
@@ -299,7 +348,14 @@ func extractNameFallback(source []byte) string {
 	return ""
 }
 
-// copySkillDir copies all files from src to dest, creating dest.
+// skipDirs are directories that should never be copied during skill import.
+var skipDirs = map[string]bool{
+	"node_modules": true, ".git": true, ".github": true,
+	"dist": true, "build": true, "__pycache__": true,
+}
+
+// copySkillDir recursively copies files from src to dest, creating dest.
+// Skips node_modules, .git, and other build artifacts.
 func copySkillDir(src, dest string) error {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
@@ -315,7 +371,12 @@ func copySkillDir(src, dest string) error {
 		destPath := filepath.Join(dest, entry.Name())
 
 		if entry.IsDir() {
-			// Skip subdirectories (node_modules, .git, etc.)
+			if skipDirs[entry.Name()] {
+				continue
+			}
+			if err := copySkillDir(srcPath, destPath); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -325,6 +386,31 @@ func copySkillDir(src, dest string) error {
 	}
 
 	return nil
+}
+
+// installNodeDeps runs `bun install` (preferred) or `npm install` in dir if a
+// package.json exists. Returns a warning string on failure, empty on success.
+func installNodeDeps(dir string) string {
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+		return ""
+	}
+
+	// Prefer bun, fall back to npm
+	var cmd *exec.Cmd
+	if bunPath, err := exec.LookPath("bun"); err == nil {
+		cmd = exec.Command(bunPath, "install", "--no-save")
+	} else if npmPath, err := exec.LookPath("npm"); err == nil {
+		cmd = exec.Command(npmPath, "install", "--no-save")
+	} else {
+		return "package.json found but neither bun nor npm is on PATH — dependencies not installed"
+	}
+
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "NODE_ENV=production")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Sprintf("dependency install failed: %s (%s)", err, strings.TrimSpace(string(output)))
+	}
+	return ""
 }
 
 func copyFile(src, dest string) error {

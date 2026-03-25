@@ -175,6 +175,11 @@ func runSkillInstall(args []string) error {
 		destDir = args[1]
 	}
 
+	// GitHub shorthand: owner/repo or owner/repo@ref
+	if isGitHubShorthand(target) {
+		return runSkillInstallFromGitHub(target, destDir)
+	}
+
 	// If target looks like a ClawHub skill name (no "://"), use the registry client
 	if !strings.Contains(target, "://") {
 		return runSkillInstallFromClawHub(target, destDir)
@@ -257,6 +262,89 @@ func runSkillInstallFromClawHub(name, destDir string) error {
 	result, err := skill.ImportSkill(skillPath, destDir)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
+	}
+
+	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)
+	for _, w := range result.Warnings {
+		fmt.Printf("  WARN: %s\n", w)
+	}
+	for _, h := range result.InstallHints {
+		fmt.Printf("  INSTALL: %s\n", h)
+	}
+	if !result.Success {
+		return fmt.Errorf("install completed with errors")
+	}
+	return nil
+}
+
+// isGitHubShorthand returns true for "owner/repo" or "owner/repo@ref" patterns.
+func isGitHubShorthand(s string) bool {
+	if strings.Contains(s, "://") {
+		return false
+	}
+	// Must have exactly one slash (owner/repo), optionally followed by @ref
+	base := s
+	if idx := strings.Index(s, "@"); idx > 0 {
+		base = s[:idx]
+	}
+	parts := strings.Split(base, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
+
+// runSkillInstallFromGitHub downloads a plugin from a GitHub repo.
+// Accepts "owner/repo" or "owner/repo@ref" (branch/tag).
+func runSkillInstallFromGitHub(target, destDir string) error {
+	repo := target
+	ref := "HEAD"
+	if idx := strings.Index(target, "@"); idx > 0 {
+		repo = target[:idx]
+		ref = target[idx+1:]
+	}
+
+	tarURL := fmt.Sprintf("https://github.com/%s/archive/%s.tar.gz", repo, ref)
+	fmt.Printf("downloading %s...\n", repo)
+
+	resp, err := http.Get(tarURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("downloading from GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GitHub download failed: HTTP %d (check that %s exists)", resp.StatusCode, repo)
+	}
+
+	tmp, err := os.CreateTemp("", "capabot-gh-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing download: %w", err)
+	}
+	tmp.Close()
+
+	extractDir, err := extractTarGz(tmpPath)
+	if err != nil {
+		return fmt.Errorf("extracting archive: %w", err)
+	}
+	defer os.RemoveAll(extractDir)
+
+	// GitHub tarballs extract to <repo>-<ref>/ — find the actual directory
+	entries, err := os.ReadDir(extractDir)
+	if err != nil {
+		return fmt.Errorf("reading extract dir: %w", err)
+	}
+	srcDir := extractDir
+	if len(entries) == 1 && entries[0].IsDir() {
+		srcDir = filepath.Join(extractDir, entries[0].Name())
+	}
+
+	result, importErr := skill.ImportSkill(srcDir, destDir)
+	if importErr != nil {
+		return fmt.Errorf("import failed: %w", importErr)
 	}
 
 	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)

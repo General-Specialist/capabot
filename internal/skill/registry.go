@@ -104,6 +104,70 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 	return loaded, nil
 }
 
+// LoadNewSkills re-scans all previously loaded directories and registers any
+// skills that weren't present before. Returns the names of newly loaded skills.
+func (r *Registry) LoadNewSkills() []string {
+	r.mu.Lock()
+	dirs := append([]string{}, r.dirs...)
+	r.mu.Unlock()
+
+	var added []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			skillDir := filepath.Join(dir, entry.Name())
+			skillMDPath := filepath.Join(skillDir, "SKILL.md")
+			data, err := os.ReadFile(skillMDPath)
+			if err != nil {
+				continue
+			}
+
+			parsed, err := ParseSkillMD(data)
+			if err != nil {
+				continue
+			}
+
+			name := parsed.Manifest.Name
+			if name == "" {
+				name = entry.Name()
+				parsed.Manifest.Name = name
+			}
+
+			r.mu.Lock()
+			if _, exists := r.skills[name]; exists {
+				r.mu.Unlock()
+				continue
+			}
+
+			r.skills[name] = parsed
+			r.skillPaths[name] = skillDir
+
+			for _, ep := range pluginEntryPoints {
+				if _, err := os.Stat(filepath.Join(skillDir, ep)); err == nil {
+					r.pluginPaths[name] = skillDir
+					break
+				}
+			}
+
+			mainGoPath := filepath.Join(skillDir, "main.go")
+			if _, err := os.Stat(mainGoPath); err == nil {
+				r.nativePaths[name] = skillDir
+			}
+
+			r.mu.Unlock()
+			added = append(added, name)
+		}
+	}
+	return added
+}
+
 // SkillPath returns the on-disk directory of the named skill, or ("", false).
 func (r *Registry) SkillPath(name string) (string, bool) {
 	r.mu.RLock()

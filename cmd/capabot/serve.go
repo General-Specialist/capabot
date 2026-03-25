@@ -110,6 +110,53 @@ func runServe(configPath string) error {
 	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
 
+	// 7e. Hot-reload: poll skill directories every 10s for newly installed skills
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				newSkills := skillRegistry.LoadNewSkills()
+				if len(newSkills) == 0 {
+					continue
+				}
+				logger.Info().Strs("skills", newSkills).Msg("hot-reload: new skills detected")
+
+				// Register any new plugin skills
+				for _, name := range newSkills {
+					pluginDir, ok := skillRegistry.PluginPath(name)
+					if !ok {
+						continue
+					}
+					proc, err := skill.NewPluginProcess(ctx, pluginDir)
+					if err != nil {
+						logger.Error().Err(err).Str("skill", name).Msg("hot-reload: failed to start plugin")
+						continue
+					}
+					for _, rt := range proc.Tools() {
+						pluginTool := skill.NewPluginTool(rt, proc)
+						if err := toolRegistry.Register(&pluginAgentTool{inner: pluginTool}); err != nil {
+							logger.Error().Err(err).Str("skill", name).Str("tool", rt.Name).Msg("hot-reload: failed to register tool")
+							continue
+						}
+						logger.Info().Str("skill", name).Str("tool", rt.Name).Msg("hot-reload: plugin tool registered")
+					}
+					for _, rh := range proc.Hooks() {
+						pluginRegs.hooks = append(pluginRegs.hooks, &pluginHook{proc: proc, event: rh.Event})
+						logger.Info().Str("skill", name).Str("event", rh.Event).Msg("hot-reload: plugin hook registered")
+					}
+					for _, rp := range proc.Providers() {
+						router.SetProvider(rp.Name, &pluginProvider{proc: proc, name: rp.Name, models: rp.Models})
+						logger.Info().Str("skill", name).Str("provider", rp.Name).Msg("hot-reload: plugin provider registered")
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.
 	basePrompt := `You are a helpful AI assistant with access to tools for browsing the web, controlling the desktop, reading/writing files, searching the web, and running shell commands.

@@ -19,13 +19,20 @@ import (
 var shimFS embed.FS
 
 // pluginEntryPoints is the probe order for detecting a plugin's entry point.
-var pluginEntryPoints = []string{"index.ts", "index.js", "index.py"}
+// Checks root first, then src/ subdirectory.
+var pluginEntryPoints = []string{
+	"index.ts", "index.js", "index.py",
+	"src/index.ts", "src/index.js", "src/index.py",
+}
 
-// pluginRuntimes maps entry-point extensions to their runtime binary.
+// pluginRuntimes maps entry-point file names to their runtime binary.
 var pluginRuntimes = map[string]string{
-	"index.ts": "bun",
-	"index.js": "node",
-	"index.py": "python3",
+	"index.ts":     "bun",
+	"index.js":     "node",
+	"index.py":     "python3",
+	"src/index.ts": "bun",
+	"src/index.js": "node",
+	"src/index.py": "python3",
 }
 
 // RegisteredTool describes a tool registered by a plugin during init.
