@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, Trash2, Check, X, Camera, Search, ScrollText } from 'lucide-react'
 import { api, type Person } from '@/lib/api'
 import TagPicker from '@/components/TagPicker'
@@ -544,15 +545,22 @@ export function PeoplePage() {
       <div className="max-w-4xl mx-auto">
         {showSystemPrompt && <SystemPromptModal onClose={() => setShowSystemPrompt(false)} />}
         <div className="flex items-center justify-between mb-6">
-          {!creating && (
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
-            >
-              <Plus className="w-3.5 h-3.5" /> New
-            </button>
-          )}
+          <AnimatePresence mode="wait">
+            {!creating ? (
+              <motion.button
+                key="people-btn"
+                type="button"
+                onClick={() => setCreating(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+              >
+                <Plus className="w-3.5 h-3.5" /> New
+              </motion.button>
+            ) : null}
+          </AnimatePresence>
           <div className="flex items-center gap-2">
           <button
             type="button"
@@ -607,11 +615,20 @@ export function PeoplePage() {
           </div>
         </div>
 
-        {creating && (
-          <div className="border border-border-white rounded-xl p-4 mb-4">
-            <PersonForm allTags={allTags} onSave={handleCreate} onCancel={() => setCreating(false)} />
-          </div>
-        )}
+        <AnimatePresence>
+          {creating && (
+            <motion.div
+              key="people-form"
+              initial={{ opacity: 0, scale: 0.96, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -4 }}
+              transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+              className="border border-border-white rounded-xl p-4 mb-4"
+            >
+              <PersonForm allTags={allTags} onSave={handleCreate} onCancel={() => setCreating(false)} />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {!loading && filtered.length === 0 && !creating ? (
           <p className="text-sm text-normal-black">{filterTag ? `No people with tag "${filterTag}".` : 'No people yet. Create one and tag them with @PersonName to get started.'}</p>

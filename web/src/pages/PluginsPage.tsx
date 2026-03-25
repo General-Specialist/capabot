@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Trash2, Plus, X, Download } from 'lucide-react'
 import { api, type Skill } from '@/lib/api'
 
@@ -137,8 +138,16 @@ export function PluginsPage() {
 
         <p className="text-xs text-normal-black mb-5">Executable scripts the agent can run as tools. Written in Go and compiled on save.</p>
 
+        <AnimatePresence>
         {tab === 'custom' && showCreate && (
-          <div className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white">
+          <motion.div
+            key="plugin-create"
+            initial={{ opacity: 0, scale: 0.96, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white"
+          >
             <input
               value={createName}
               onChange={e => setCreateName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
@@ -167,8 +176,9 @@ export function PluginsPage() {
             >
               {creating ? 'Creating…' : 'Create'}
             </button>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {tab === 'custom' && !showCreate && (
           <PluginList plugins={custom} loading={loading} removing={removing} onRemove={uninstall} empty="No plugins yet. Plugins are tool calls — have an agent create one for you, or click New to upload a Go script." />

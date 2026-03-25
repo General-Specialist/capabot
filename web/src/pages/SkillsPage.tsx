@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
@@ -159,8 +160,16 @@ export function SkillsPage() {
 
         <p className="text-xs text-normal-black mb-5">Markdown instructions injected into the agent's context to guide its behaviour. No code required.</p>
 
+        <AnimatePresence>
         {tab === 'custom' && showCreate && (
-          <div className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white">
+          <motion.div
+            key="skill-create"
+            initial={{ opacity: 0, scale: 0.96, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white"
+          >
             <input
               value={createName}
               onChange={e => setCreateName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
@@ -189,8 +198,9 @@ export function SkillsPage() {
             >
               {creating ? 'Creating…' : 'Create'}
             </button>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {tab === 'custom' && !showCreate && (
           <SkillList skills={custom} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No custom skills yet. Skills are instructions for how your agent interacts with something — have an agent create one for you, or click New to create one." />

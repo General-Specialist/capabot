@@ -90,7 +90,7 @@ export function MemoryPage() {
             rows={3}
             className="w-full bg-transparent text-sm text-hover-black outline-none placeholder:text-normal-black resize-none font-mono"
           />
-          <div className="flex gap-2">
+          <div className="flex justify-end gap-2">
             <button
               onClick={addEntry}
               className="flex items-center gap-1 text-xs text-terminal-green cursor-pointer"
@@ -123,7 +123,7 @@ export function MemoryPage() {
                     rows={4}
                     className="w-full bg-transparent text-sm text-hover-black outline-none resize-none font-mono"
                   />
-                  <div className="flex gap-2">
+                  <div className="flex justify-end gap-2">
                     <button onClick={saveEdit} className="flex items-center gap-1 text-xs text-terminal-green cursor-pointer">
                       <Check size={13} /> Save
                     </button>

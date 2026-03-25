@@ -268,6 +268,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
   const { x, y, strategy, refs } = useFloating({
@@ -299,7 +300,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
   }, [isOpen]);
 
   useEffect(() => {
-    if (triggerRef.current) refs.setReference(triggerRef.current);
+    if (containerRef.current) refs.setReference(containerRef.current);
   }, [refs]);
 
   const isStartToday = state.start.offset === "P0D";
@@ -355,8 +356,8 @@ const DatePicker: React.FC<DatePickerProps> = ({
   };
 
   return (
-    <div className="w-full flex-shrink-0 relative">
-      <div className="flex items-center">
+    <div ref={containerRef} className="w-full flex-shrink-0 relative">
+      <div className="flex items-center pl-3">
         <CalendarIcon className="w-4 h-4 text-hover-black mr-2" />
         <button
           ref={triggerRef}

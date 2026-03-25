@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, Play, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Automation, type AutomationRun, type Skill } from '@/lib/api'
@@ -120,7 +121,7 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
 
         {error && <p className="text-xs text-red">{error}</p>}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-2">
           <button onClick={onSave} disabled={saving} className="px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 disabled:opacity-40 transition-opacity">
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -231,6 +232,9 @@ export function AutomationsPage() {
         setAutomations(prev => [...prev, created])
         setIsNew(false)
         setSelected(null)
+        if (form.start_at && new Date(form.start_at) <= new Date()) {
+          api.automationTrigger(created.id).catch(() => {})
+        }
       } else if (selected) {
         const updated = await api.automationUpdate(selected.id, {
           name: form.name,
@@ -287,19 +291,37 @@ export function AutomationsPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center mb-6">
-          <button
-            onClick={startNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
-          >
-            <Plus size={13} />
-            New
-          </button>
-        </div>
-
         <div className="flex flex-col gap-1">
-          {/* New automation form — appears above the list */}
-          {isNew && <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={false} deleting={false} selected={null} onSave={() => void save()} onTrigger={() => {}} onDelete={() => {}} onClose={() => setIsNew(false)} onScheduleChange={handleScheduleChange} skills={skills} />}
+          <AnimatePresence mode="wait">
+            {isNew ? (
+              <motion.div
+                key="form"
+                initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: -4 }}
+                transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+              >
+                <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={false} deleting={false} selected={null} onSave={() => void save()} onTrigger={() => {}} onDelete={() => {}} onClose={() => setIsNew(false)} onScheduleChange={handleScheduleChange} skills={skills} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="btn"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+                className="flex"
+              >
+                <button
+                  onClick={startNew}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 transition-opacity"
+                >
+                  <Plus size={13} />
+                  New
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* List */}
           {!loading && automations.length === 0 && !isNew ? (
