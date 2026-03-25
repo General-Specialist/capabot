@@ -56,12 +56,18 @@ func (g *GeminiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	contents := convertMessages(req.Messages)
 	config := buildConfig(req)
 
-	result, err := g.client.Models.GenerateContent(ctx, g.resolveModel(req.Model), contents, config)
+	model := g.resolveModel(req.Model)
+	result, err := g.client.Models.GenerateContent(ctx, model, contents, config)
 	if err != nil {
 		return nil, fmt.Errorf("gemini generate content: %w", err)
 	}
 
-	return extractResponse(result)
+	resp, err := extractResponse(result)
+	if err != nil {
+		return nil, err
+	}
+	resp.Model = model
+	return resp, nil
 }
 
 // Stream sends a streaming request to Gemini and returns a channel of chunks.

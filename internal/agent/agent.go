@@ -83,10 +83,11 @@ type Agent struct {
 	provider llm.Provider
 	tools    *Registry
 	ctxMgr   *ContextManager
-	store    StoreWriter // nil = no persistence
-	logger   zerolog.Logger
-	onEvent  func(AgentEvent) // nil = no streaming
-	hooks    []ToolHook       // plugin hooks (pre/post tool execution)
+	store     StoreWriter // nil = no persistence
+	usageOnly bool        // if true, only persist usage (not messages)
+	logger    zerolog.Logger
+	onEvent   func(AgentEvent) // nil = no streaming
+	hooks     []ToolHook       // plugin hooks (pre/post tool execution)
 }
 
 // New creates a new Agent with the given dependencies.
@@ -123,6 +124,11 @@ func (a *Agent) emit(e AgentEvent) {
 // SetStore attaches a persistence layer for message and tool execution logging.
 func (a *Agent) SetStore(store StoreWriter) {
 	a.store = store
+}
+
+// SetUsageOnly makes the agent only persist usage records, not messages or tool executions.
+func (a *Agent) SetUsageOnly(v bool) {
+	a.usageOnly = v
 }
 
 // AddHook adds a tool hook that will be called before/after tool execution.
@@ -451,7 +457,7 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 
 // persistMessage saves a message to the store if available.
 func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content string, usage llm.Usage) {
-	if a.store == nil || sessionID == "" {
+	if a.store == nil || a.usageOnly || sessionID == "" {
 		return
 	}
 
@@ -470,7 +476,7 @@ func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content str
 // persistToolMessage saves a tool result as a message so conversation history
 // can reconstruct which tools were called and what they returned.
 func (a *Agent) persistToolMessage(ctx context.Context, sessionID, toolCallID, toolName, toolInput, content string) {
-	if a.store == nil || sessionID == "" {
+	if a.store == nil || a.usageOnly || sessionID == "" {
 		return
 	}
 	msg := memory.Message{
@@ -488,7 +494,7 @@ func (a *Agent) persistToolMessage(ctx context.Context, sessionID, toolCallID, t
 
 // persistToolExecution saves a tool execution record to the store.
 func (a *Agent) persistToolExecution(ctx context.Context, sessionID string, tc llm.ToolCall, result ToolResult, duration time.Duration) {
-	if a.store == nil || sessionID == "" {
+	if a.store == nil || a.usageOnly || sessionID == "" {
 		return
 	}
 
@@ -506,8 +512,61 @@ func (a *Agent) persistToolExecution(ctx context.Context, sessionID string, tc l
 	}
 }
 
+// tokenPricing stores per-million-token costs [input, output] in USD.
+var tokenPricing = map[string][2]float64{
+	// Anthropic
+	"claude-sonnet-4-20250514":  {3, 15},
+	"claude-sonnet-4-6":         {3, 15},
+	"claude-haiku-4-20250414":   {0.80, 4},
+	"claude-haiku-4-5-20251001": {0.80, 4},
+	"claude-opus-4-20250514":    {15, 75},
+	"claude-opus-4-6":           {15, 75},
+	// OpenAI
+	"gpt-4o":       {2.50, 10},
+	"gpt-4o-mini":  {0.15, 0.60},
+	"gpt-4.1":      {2, 8},
+	"gpt-4.1-mini": {0.40, 1.60},
+	"gpt-4.1-nano": {0.10, 0.40},
+	"o3":           {2, 8},
+	"o3-mini":      {1.10, 4.40},
+	"o4-mini":      {1.10, 4.40},
+	// Gemini
+	"gemini-2.5-pro":                  {1.25, 10},
+	"gemini-2.5-pro-preview-05-06":    {1.25, 10},
+	"gemini-2.5-flash":                {0.15, 0.60},
+	"gemini-2.5-flash-preview-04-17":  {0.15, 0.60},
+	"gemini-2.0-flash":                {0.10, 0.40},
+	"gemini-2.0-flash-001":            {0.10, 0.40},
+	"gemini-3-flash-preview":          {0.10, 0.40},
+	// OpenRouter
+	"anthropic/claude-sonnet-4-6": {3, 15},
+	"anthropic/claude-opus-4-6":   {15, 75},
+	"openai/gpt-4o":               {2.50, 10},
+	"openai/gpt-4o-mini":          {0.15, 0.60},
+	"google/gemini-2.0-flash-001": {0.10, 0.40},
+}
+
+func estimateCost(model string, inputTokens, outputTokens int) float64 {
+	p, ok := tokenPricing[model]
+	if !ok {
+		return 0
+	}
+	return (float64(inputTokens)*p[0] + float64(outputTokens)*p[1]) / 1_000_000
+}
+
 // persistUsage logs an LLM call for cost tracking.
 func (a *Agent) persistUsage(ctx context.Context, resp *llm.ChatResponse) {
+	cost := estimateCost(resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	logEvt := a.logger.Info().
+		Str("provider", resp.Provider).
+		Str("model", resp.Model).
+		Int("input_tokens", resp.Usage.InputTokens).
+		Int("output_tokens", resp.Usage.OutputTokens)
+	if cost > 0 {
+		logEvt = logEvt.Str("cost", fmt.Sprintf("$%.4f", cost))
+	}
+	logEvt.Msg("llm call")
+
 	if a.store == nil {
 		return
 	}

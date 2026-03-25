@@ -296,6 +296,10 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		customCfg = applyMode(customCfg, ms, runCtx)
 		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
 		addPluginHooks(a)
+		if store != nil {
+			a.SetStore(store)
+			a.SetUsageOnly(true)
+		}
 		return a.Run(runCtx, sessionID, messages)
 	}
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { api, type UsageSummary, type CreditEntry, type ProviderKeys } from '@/lib/api'
 
 // Pricing per million tokens (USD): [input, output]
@@ -73,6 +74,11 @@ export function CostsPage() {
   const [mode, setMode] = useState<ModeFilter>('total')
   const [loading, setLoading] = useState(true)
 
+  const refresh = () => {
+    api.usage(sinceFor(period)).then(setRows).catch(() => {})
+    api.credits().then(setCredits).catch(() => {})
+  }
+
   useEffect(() => {
     api.usage(sinceFor(period)).then(setRows).catch(() => {})
   }, [period])
@@ -107,7 +113,7 @@ export function CostsPage() {
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto space-y-6">
         {/* Period + Mode selectors */}
-        <div className="flex gap-6">
+        <div className="flex gap-6 items-center">
           <div className="flex gap-2">
             {(['24h', '7d', '30d', 'all'] as Period[]).map(p => (
               <button
@@ -138,6 +144,13 @@ export function CostsPage() {
               </button>
             ))}
           </div>
+          <button
+            onClick={refresh}
+            className="ml-auto p-1.5 rounded-lg bg-sidebar-white text-normal-black hover:bg-sidebar-hover-white transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
 
         {/* Total */}
