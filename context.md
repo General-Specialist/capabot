@@ -66,7 +66,7 @@ The canonical config reference. Copy to `~/.gostaff/config.yaml`. Key sections:
 - `providers.*` — LLM provider keys + default models
 - `agent.*` — `max_iterations`, `context_budget_pct`, `max_tool_output_tokens`
 - `skills.dirs` — list of directories scanned for `SKILL.md` subdirs
-- `security.*` — API key, rate limit RPM, content filtering, session TTL, `shell_allowlist`
+- `security.*` — API key, rate limit RPM, content filtering, session TTL, `shell_allowlist` (shell execution mode is a DB setting, not config)
 - `transports.*` — Telegram, Discord, Slack tokens
 
 ### `go.mod`
@@ -101,7 +101,7 @@ The main wiring function. Startup sequence:
 3. Signal handling (SIGINT/SIGTERM → context cancel)
 4. Init Postgres pool + store; call `store.MarkStaleRunsAsFailed` on startup
 5. Init LLM router
-6. Init tool registry (built-in tools + memory tool if store available)
+6. Init tool registry via `initToolRegistry` — returns `(*agent.Registry, *tools.ShellExecTool)`. Shell tool returned separately so `makeMessageHandler` can handle pending approvals for stateless transports.
 7. Init skill registry (loads dirs); register SDK plugins via `registerSDKPlugins` (compiled-in Go plugins + OpenClaw adapters for installed TS/JS/Python plugins); register native skills as tools
 8. Register skill/plugin management tools as _extended_ tools: `skill_create_markdown`, `skill_edit`, `skill_delete` (T1 markdown), `plugin_create`, `plugin_edit`, `plugin_delete` (T2 Go), `skill_search` (ClawHub). Base system prompt includes a Skills vs Plugins explanation so the agent picks the right tool. Start skill hot-reload poller (1s interval — detects newly installed skills)
 9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach SDK plugin hooks to each agent)
@@ -119,13 +119,17 @@ Key closures defined in `serve.go`:
 - `runAgentWithPrompt` — same but with custom system prompt + optional model override
 - `runAgentEphemeral` — same but no store set (no message persistence); used by transports
 
-`makeMessageHandler` — returns the handler for transport messages. Handles:
+`makeMessageHandler` — returns the handler for transport messages. Handles (in order):
 - Content filter check
+- **Pending shell approval interception**: if `shell_mode=prompt` and a command is awaiting approval for this channel, checks if the message is a yes/no response (`isApprovalResponse`). On yes: approves (session or permanent) and executes the command directly via `shellTool.RunCommand`, bypassing the LLM. On no: sends denial. Non-approval messages put the pending command back and fall through normally.
 - `/default_role`, `/chat`, `/execute`, `/mode` commands
 - `@model-id` tag extraction
+- Channel ID injected into context via `tools.WithSessionID` so `shell_exec` can key pending state
 - `@PersonName` or channel binding person routing
 - Single person: runs agent with person's prompt
 - Multiple people (e.g. `@tag` targeting many): runs all in parallel goroutines
+
+`isApprovalResponse(text)` — returns `(approved, permanent, isResponse)`. "yes"/"allow"/"ok" etc. → session approve. "yes always"/"always"/"allow permanently" etc. → permanent approve. "no"/"deny" etc. → deny.
 
 `avatarToDataURI` — reads a local avatar file from `~/.gostaff/avatars/` and returns a base64 data URI for Discord webhook avatar display.
 
@@ -171,7 +175,7 @@ Calls `initStore` (which runs migrations as a side effect). Prints "migrations a
 - `ProvidersConfig` — `Anthropic`, `OpenAI`, `Gemini`, `OpenRouter`
 - `AgentConfig` — `MaxIterations`, `ContextBudgetPct`, `MaxToolOutputTokens`
 - `SkillsConfig` — `Dirs []string`
-- `SecurityConfig` — `ShellAllowlist`, `APIKey`, `RateLimitRPM`, `ContentFiltering`, `SessionTTLDays`, `DrainTimeout`
+- `SecurityConfig` — `ShellAllowlist`, `APIKey`, `RateLimitRPM`, `ContentFiltering`, `SessionTTLDays`, `DrainTimeout`. Shell execution **mode** is NOT in config — it's stored as a DB setting (`shell_mode`) so it can be changed at runtime from the UI.
 - `TransportsConfig` — `Telegram`, `Discord`, `Slack`
 
 `LoadFromFile(path)`:
@@ -506,6 +510,8 @@ Helpers for sending messages via Discord REST API (regular messages and webhook-
 - `GET/PUT /api/people/system-prompt` — global system prompt prepended to all people
 - `GET/PUT /api/modes/active`, `PUT/DELETE /api/modes/{name}`
 - `GET/PUT /api/settings/default-model`, `GET/PUT /api/settings/summarization-model`, `GET/PUT /api/settings/execute-fallback`
+- `GET/PUT /api/settings/shell-mode` — shell execution mode (`allowlist`/`prompt`/`allow_all`); validated server-side; takes effect immediately (no restart)
+- `GET/PUT /api/settings/shell-approved` — permanently approved commands list (JSON array); UI can remove individual entries
 - `GET /api/usage`, `GET /api/credits`
 - `POST /api/avatars`, `GET /api/avatars/*` — avatar file upload/serve
 - SPA static files at `/` if `StaticFS` is provided
@@ -529,6 +535,8 @@ Handlers for mode CRUD. Built-in modes (`default`, `chat`, `execute`) cannot be 
 
 ### `people.go`
 CRUD for people. On create, syncs Discord role if Discord is configured. On update, diffs against the existing person and only calls Discord API when username or tags actually changed (not on prompt/avatar edits) to avoid unnecessary API calls.
+
+Also contains simple settings handlers: `handleDefaultModelGet/Put`, `handleSummarizationModelGet/Put`, `handleShellModeGet/Put` (validates against `allowlist`/`prompt`/`allow_all`), `handleShellApprovedGet/Put`.
 
 ### `skills_create.go`
 `handleSkillsCreate` — creates a Tier 2 native Go skill. Writes `SKILL.md` + `main.go`, compiles, hot-reloads into registries.
@@ -618,9 +626,25 @@ Manual trigger via `Trigger(automationID)` sends to `triggerC` channel.
 All tools implement `agent.Tool`. Each is in its own file.
 
 ### `shellexec.go`
-`ShellExecTool` — allowlist-based shell execution. Supports both single command and batched `commands` array. Each command is `{command, args, cwd}`. Timeout defaults to 30s.
+`ShellExecTool` — shell execution with three configurable modes (read from DB at runtime via `modeFunc func() string`):
+- `allowlist` (default) — only commands in the static allowlist run
+- `prompt` — non-allowlisted commands are denied and stored as **pending** for the channel; the LLM asks the user, who replies yes/no in the next message; `makeMessageHandler` intercepts the reply and runs the command directly without re-invoking the LLM
+- `allow_all` — no restrictions
 
-Only the first token (binary name) is checked against the allowlist.
+Supports both single command shorthand and batched `commands` array. Each command is `{command, args, cwd, approved, always_allow}`. Timeout defaults to 30s. Only the binary name is checked.
+
+**Two approval scopes in prompt mode**:
+- `approved: true` — approved for current session (process lifetime), stored in `sessionApproved map` (in-memory, thread-safe)
+- `always_allow: true` — approved permanently, stored in `settings` table under key `shell_approved_commands` (JSON array) via `ShellApprovalStore` interface
+
+**Pending approval system** (for stateless transports like Discord/Slack):
+- When a command is denied, `SetPending(channelID, cmd)` stores it in a per-channel map
+- `TakePending(channelID)` removes and returns it (consumed once)
+- `makeMessageHandler` checks for pending before running the agent, handles the yes/no directly
+- Non-approval messages put the pending back via `SetPending` and fall through to normal agent handling
+- `WithSessionID(ctx, id)` / `sessionIDFromCtx(ctx)` — context key used to thread channel ID into tool execution
+
+**Public methods for message handler**: `SetPending`, `TakePending`, `RunCommand`, `ApproveSession`, `ApprovePermanent`, `Mode`.
 
 ### `fileops.go`
 - `FileReadTool` — reads text (with optional line range), images (JPEG/PNG/GIF/WEBP as multimodal `Parts`), PDFs (as multimodal `Parts`). Max 1MB text, 32MB PDFs.
@@ -696,7 +720,9 @@ Opt-in: only runs when `GOSTAFF_AUTOUPDATE` is set. Not appropriate for Docker/R
 `POST /api/chat` or `/api/chat/stream` → `prepareChatRequest` (resolves session, sys prompt, model tag, person) → single person: `agentWithPrompt`; no person: `defaultAgent`; multi-person (stream only): `streamMultiAgent` → `agent.Run` → ReAct loop → returns `RunResult`
 
 ### Transport message (e.g. Discord)
-`DiscordTransport` receives message → `makeMessageHandler` → resolve people/channel binding → `runAgentEphemeral` (no store) → send response via transport
+`DiscordTransport` receives message → `makeMessageHandler` → **pending shell approval check** (if prompt mode and pending exists: handle yes/no directly, skip LLM) → inject channel ID into context → resolve people/channel binding → `runAgentEphemeral` (no store) → send response via transport
+
+**Shell prompt mode on stateless transports**: when `shell_exec` denies a command, it stores the pending command keyed by channel. The user's next message ("yes"/"no") is caught by `makeMessageHandler` before the LLM runs — the approval is handled synchronously and the command is executed or denied immediately.
 
 ### Automation run
 `cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence
@@ -720,7 +746,7 @@ Vite + React 18 + Tailwind CSS v4. Embedded in the Go binary via `embed.FS`.
 - **`ChatPage`** — SSE streaming chat with conversation history
 - **`SkillsPage`** — two tabs: "Custom" (user-created T1 markdown skills with inline create/edit) and "ClawHub" (browse/install from ClawHub catalog)
 - **`PluginsPage`** — two tabs: "Custom" (T2 native Go plugins) and "OpenClaw" (T3 external plugins). OpenClaw tab has an install bar styled as `openclaw plugins install [input]` that accepts bare names (npm), `owner/repo` (GitHub), or full GitHub URLs. Success message auto-dismisses after 5s.
-- **`SettingsPage`** — dark mode toggle, execute key fallback toggle (default off), default/summarization model selects, mode switcher with per-mode API keys
+- **`SettingsPage`** — dark mode toggle, execute key fallback toggle, shell command mode dropdown (`allowlist`/`prompt`/`allow all`), permanently approved commands list (shown when mode=prompt; click × to revoke), default/summarization model selects, mode switcher with per-mode API keys
 - **`PeoplePage`** — CRUD for people/personas with avatar upload, tags, prompt editing
 - **`AutomationsPage`** — CRUD for scheduled automations with RRULE, manual trigger, run history. DatePicker supports time-of-day via `BYHOUR`/`BYMINUTE` (e.g. "every day at 9:00 AM")
 - **`DashboardPage`** — health status, recent runs

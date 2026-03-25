@@ -30,7 +30,7 @@ func runChat(configPath string) error {
 	}
 
 	// 4. Initialize tool registry (no store in CLI chat mode)
-	toolRegistry := initToolRegistry(cfg, nil)
+	toolRegistry, _ := initToolRegistry(cfg, nil)
 
 	// 5. Initialize skill registry
 	_ = initSkillRegistry(cfg)

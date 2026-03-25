@@ -28,6 +28,8 @@ const EMPTY: ProviderKeys = { anthropic: '', openai: '', gemini: '', openrouter:
 export function SettingsPage() {
   const [keys, setKeys] = useState<ProviderKeys>(EMPTY)
   const [executeFallback, setExecuteFallback] = useState(false)
+  const [shellMode, setShellMode] = useState('allowlist')
+  const [shellApproved, setShellApproved] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [defaultModel, setDefaultModel] = useState('')
@@ -46,6 +48,8 @@ export function SettingsPage() {
   useEffect(() => {
     api.configKeys().then(setKeys).catch(() => {})
     api.executeFallbackGet().then(r => setExecuteFallback(r.enabled)).catch(() => {})
+    api.shellModeGet().then(r => setShellMode(r.shell_mode)).catch(() => {})
+    api.shellApprovedGet().then(r => setShellApproved(r.commands)).catch(() => {})
     api.providers().then(setProviders).catch(() => {})
     api.defaultModelGet().then(r => setDefaultModel(r.default_model)).catch(() => {})
     api.summarizationModelGet().then(r => setSummarizationModel(r.summarization_model)).catch(() => {})
@@ -152,6 +156,42 @@ export function SettingsPage() {
           >
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${executeFallback ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
+        </div>
+
+        <div>
+          <label className="block text-xs text-normal-black mb-1">Shell command mode</label>
+          <select
+            value={shellMode}
+            onChange={e => { setShellMode(e.target.value); api.shellModeSet(e.target.value).catch(() => {}) }}
+            className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+          >
+            <option value="allowlist">Allowlist only</option>
+            <option value="prompt">Prompt for approval</option>
+            <option value="allow_all">Allow all commands</option>
+          </select>
+          <p className="text-xs text-normal-black mt-1 opacity-60">
+            Controls how non-allowlisted shell commands are handled
+          </p>
+          {shellMode === 'prompt' && shellApproved.length > 0 && (
+            <div className="mt-2">
+              <span className="text-xs text-normal-black opacity-60">Permanently approved commands:</span>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {shellApproved.map(cmd => (
+                  <span key={cmd} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sidebar-white text-xs text-hover-black border border-border-white">
+                    <code>{cmd}</code>
+                    <button
+                      onClick={() => {
+                        const next = shellApproved.filter(c => c !== cmd)
+                        setShellApproved(next)
+                        api.shellApprovedSet(next).catch(() => {})
+                      }}
+                      className="text-normal-black opacity-40 hover:opacity-100"
+                    >&times;</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {allModels.length > 0 && (

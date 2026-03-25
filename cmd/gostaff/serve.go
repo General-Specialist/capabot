@@ -83,7 +83,7 @@ func runServe(configPath string) error {
 	}
 
 	// 6. Initialize built-in tools (pass store for memory tools)
-	toolRegistry := initToolRegistry(cfg, store)
+	toolRegistry, shellTool := initToolRegistry(cfg, store)
 
 	// Log which providers were configured (key presence only, not values)
 	logger.Info().
@@ -376,7 +376,7 @@ Skills vs plugins:
 	}
 
 	// 10. Start bot transports
-	messageHandler := makeMessageHandler(runAgentEphemeral, store, router, contentFilter, logger)
+	messageHandler := makeMessageHandler(runAgentEphemeral, store, router, contentFilter, shellTool, logger)
 
 	// HTTP bot transport (always started)
 	httpTransport := transport.NewHTTPTransport(transport.HTTPConfig{
@@ -522,11 +522,28 @@ func avatarToDataURI(avatarURL string) string {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
+// isApprovalResponse checks if a message is a yes/no response to a pending shell command approval.
+func isApprovalResponse(text string) (approved bool, permanent bool, isResponse bool) {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	switch {
+	case lower == "yes" || lower == "y" || lower == "allow" || lower == "approve" || lower == "ok" || lower == "sure" || lower == "go ahead":
+		return true, false, true
+	case strings.HasPrefix(lower, "yes always") || strings.HasPrefix(lower, "always") ||
+		strings.HasPrefix(lower, "allow permanently") || strings.HasPrefix(lower, "approve permanently") ||
+		strings.HasPrefix(lower, "yes permanently") || lower == "always allow":
+		return true, true, true
+	case lower == "no" || lower == "n" || lower == "deny" || lower == "cancel" || lower == "nope":
+		return false, false, true
+	}
+	return false, false, false
+}
+
 func makeMessageHandler(
 	runAgent func(context.Context, string, string, string, []llm.ChatMessage) (*agent.RunResult, error),
 	store *memory.Store,
 	router *llm.Router,
 	filter *agent.ContentFilter,
+	shellTool *tools.ShellExecTool,
 	logger zerolog.Logger,
 ) func(t transport.Transport) func(context.Context, transport.InboundMessage) {
 	return func(t transport.Transport) func(context.Context, transport.InboundMessage) {
@@ -538,6 +555,47 @@ func makeMessageHandler(
 					Text:      "Sorry, I can't process that message.",
 				})
 				return
+			}
+
+			// Check for pending shell command approval before anything else.
+			if shellTool != nil && shellTool.Mode() == tools.ShellModePrompt {
+				if pending, ok := shellTool.TakePending(msg.ChannelID); ok {
+					approved, permanent, isResponse := isApprovalResponse(msg.Text)
+					if isResponse {
+						if !approved {
+							_ = t.Send(msgCtx, transport.OutboundMessage{
+								ChannelID: msg.ChannelID,
+								Text:      fmt.Sprintf("Denied `%s`.", pending.Command),
+							})
+							return
+						}
+						// Approve and execute.
+						if permanent {
+							shellTool.ApprovePermanent(msgCtx, pending.Command)
+						} else {
+							shellTool.ApproveSession(pending.Command)
+						}
+						output, err := shellTool.RunCommand(msgCtx, pending)
+						if err != nil {
+							_ = t.Send(msgCtx, transport.OutboundMessage{
+								ChannelID: msg.ChannelID,
+								Text:      fmt.Sprintf("Error: %v", err),
+							})
+							return
+						}
+						scope := "this session"
+						if permanent {
+							scope = "permanently"
+						}
+						_ = t.Send(msgCtx, transport.OutboundMessage{
+							ChannelID: msg.ChannelID,
+							Text:      fmt.Sprintf("Approved `%s` (%s).\n```\n%s\n```", pending.Command, scope, output),
+						})
+						return
+					}
+					// Not a yes/no — put the pending command back so it's not lost.
+					shellTool.SetPending(msg.ChannelID, pending)
+				}
 			}
 
 			// Handle bot commands.
@@ -581,6 +639,9 @@ func makeMessageHandler(
 				}
 			}
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
+
+			// Attach channel ID to context so tools (e.g. shell_exec) can key pending state per channel.
+			msgCtx = tools.WithSessionID(msgCtx, msg.ChannelID)
 
 			// Load global system prompt (prepended to every person's prompt).
 			globalSysPrompt, _ := store.GetSystemPrompt(msgCtx)
@@ -956,7 +1017,8 @@ func initRouter(ctx context.Context, cfg config.Config) (*llm.Router, error) {
 }
 
 // initToolRegistry creates and registers all built-in tools.
-func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
+// Returns the registry and the shell_exec tool (for pending-approval handling in transports).
+func initToolRegistry(cfg config.Config, store *memory.Store) (*agent.Registry, *tools.ShellExecTool) {
 	registry := agent.NewRegistry()
 
 	// Core tools — always sent to the LLM.
@@ -964,7 +1026,18 @@ func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	_ = registry.Register(tools.NewFileWriteTool(nil))
 	_ = registry.Register(tools.NewFileEditTool(nil))
 	_ = registry.Register(&tools.SearchTool{})
-	_ = registry.Register(tools.NewShellExecTool(cfg.Security.ShellAllowlist, cfg.Security.DrainTimeout))
+	shellModeFunc := func() string {
+		if store == nil {
+			return tools.ShellModeAllowlist
+		}
+		v, _ := store.GetSetting(context.Background(), "shell_mode")
+		if v == "" {
+			return tools.ShellModeAllowlist
+		}
+		return v
+	}
+	shellTool := tools.NewShellExecTool(cfg.Security.ShellAllowlist, cfg.Security.DrainTimeout, shellModeFunc, store)
+	_ = registry.Register(shellTool)
 	_ = registry.Register(tools.NewWebSearchTool(tools.WebSearchConfig{}))
 	_ = registry.Register(tools.NewWebFetchTool())
 
@@ -980,7 +1053,7 @@ func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	// Meta-tool that proxies to extended tools (must be registered after them).
 	_ = registry.Register(tools.NewUseToolTool(registry))
 
-	return registry
+	return registry, shellTool
 }
 
 // initSkillRegistry loads skills from configured directories.

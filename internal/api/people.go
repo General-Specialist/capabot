@@ -56,6 +56,63 @@ func (s *Server) handleSummarizationModelPut(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+var validShellModes = map[string]bool{"allowlist": true, "prompt": true, "allow_all": true}
+
+func (s *Server) handleShellModeGet(w http.ResponseWriter, r *http.Request) {
+	v, _ := s.store.GetSetting(r.Context(), "shell_mode")
+	if v == "" {
+		v = "allowlist"
+	}
+	writeJSON(w, map[string]string{"shell_mode": v})
+}
+
+func (s *Server) handleShellModePut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ShellMode string `json:"shell_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if !validShellModes[body.ShellMode] {
+		writeError(w, "shell_mode must be one of: allowlist, prompt, allow_all", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetSetting(r.Context(), "shell_mode", body.ShellMode); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleShellApprovedGet(w http.ResponseWriter, r *http.Request) {
+	raw, _ := s.store.GetSetting(r.Context(), "shell_approved_commands")
+	var cmds []string
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cmds)
+	}
+	if cmds == nil {
+		cmds = []string{}
+	}
+	writeJSON(w, map[string][]string{"commands": cmds})
+}
+
+func (s *Server) handleShellApprovedPut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Commands []string `json:"commands"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	data, _ := json.Marshal(body.Commands)
+	if err := s.store.SetSetting(r.Context(), "shell_approved_commands", string(data)); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleSystemPromptGet(w http.ResponseWriter, r *http.Request) {
 	v, err := s.store.GetSystemPrompt(r.Context())
 	if err != nil {

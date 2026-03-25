@@ -211,7 +211,7 @@ func TestFileWrite_PathTraversal(t *testing.T) {
 // ---- shell_exec ----
 
 func TestShellExec_AllowedCommand(t *testing.T) {
-	tool := tools.NewShellExecTool([]string{"echo"}, 10)
+	tool := tools.NewShellExecTool([]string{"echo"}, 10, nil, nil)
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo","args":["hello"]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestShellExec_AllowedCommand(t *testing.T) {
 }
 
 func TestShellExec_DisallowedCommand(t *testing.T) {
-	tool := tools.NewShellExecTool([]string{"echo"}, 10)
+	tool := tools.NewShellExecTool([]string{"echo"}, 10, nil, nil)
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"rm","args":["-rf","/"]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestShellExec_DisallowedCommand(t *testing.T) {
 }
 
 func TestShellExec_EmptyAllowlist(t *testing.T) {
-	tool := tools.NewShellExecTool([]string{}, 10)
+	tool := tools.NewShellExecTool([]string{}, 10, nil, nil)
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestShellExec_EmptyAllowlist(t *testing.T) {
 }
 
 func TestShellExec_Timeout(t *testing.T) {
-	tool := tools.NewShellExecTool([]string{"sleep"}, 1)
+	tool := tools.NewShellExecTool([]string{"sleep"}, 1, nil, nil)
 	ctx := context.Background()
 	result, err := tool.Execute(ctx, json.RawMessage(`{"command":"sleep","args":["10"]}`))
 	if err != nil {

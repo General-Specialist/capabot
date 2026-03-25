@@ -314,6 +314,18 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ summarization_model: model }),
   }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
+  shellModeGet: () => get<{ shell_mode: string }>('/settings/shell-mode'),
+  shellModeSet: (shell_mode: string) => fetch(BASE + '/settings/shell-mode', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shell_mode }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
+  shellApprovedGet: () => get<{ commands: string[] }>('/settings/shell-approved'),
+  shellApprovedSet: (commands: string[]) => fetch(BASE + '/settings/shell-approved', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   systemPromptGet: () => get<{ system_prompt: string }>('/people/system-prompt'),
   systemPromptSet: (prompt: string) => fetch(BASE + '/people/system-prompt', {
     method: 'PUT',
