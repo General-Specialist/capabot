@@ -1,6 +1,9 @@
 package skill
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // InstallSpec describes how to install a required dependency.
 type InstallSpec struct {
@@ -71,7 +74,7 @@ type SkillManifest struct {
 	CommandTool            string `yaml:"command-tool"`
 	CommandArgMode         string `yaml:"command-arg-mode"`
 
-	// Parameters is the JSON Schema for WASM skills (Tier 3).
+	// Parameters is the JSON Schema for executable skills (Tier 2/3).
 	// Declares the input parameters the LLM should supply when calling the skill.
 	Parameters json.RawMessage `yaml:"parameters,omitempty"`
 }
@@ -87,4 +90,20 @@ type ParsedSkill struct {
 	Manifest     SkillManifest
 	Instructions string
 	Warnings     []ParseWarning
+}
+
+// SkillResult is the JSON envelope that executable skills (native and plugin)
+// must write to stdout.
+type SkillResult struct {
+	Content string `json:"content"`
+	IsError bool   `json:"is_error,omitempty"`
+}
+
+// ParseSkillResult decodes raw bytes into a SkillResult.
+func ParseSkillResult(raw []byte) (SkillResult, error) {
+	var r SkillResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return SkillResult{}, fmt.Errorf("parsing skill result: %w", err)
+	}
+	return r, nil
 }

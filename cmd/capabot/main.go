@@ -149,7 +149,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  skill lint [path...]              Lint SKILL.md files for compatibility")
 	fmt.Fprintln(os.Stderr, "  skill import <src> [dest]         Import an OpenClaw skill")
 	fmt.Fprintln(os.Stderr, "  skill create <name>               Scaffold a new skill directory")
-	fmt.Fprintln(os.Stderr, "  skill init [--wasm] <name>        Scaffold a skill (--wasm adds Go+Makefile)")
+	fmt.Fprintln(os.Stderr, "  skill init [--plugin] <name>      Scaffold a skill (--plugin adds index.ts)")
 	fmt.Fprintln(os.Stderr, "  skill install <name-or-url> [dest] Download and install a skill from ClawHub or URL")
 	fmt.Fprintln(os.Stderr, "  skill search <query>              Search the ClawHub skill registry")
 	fmt.Fprintln(os.Stderr, "  agent list [--config <path>]      List configured agents")

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// NativeTool wraps a NativeExecutor and adapts it to the same interface as WASMTool.
+// NativeTool wraps a NativeExecutor and adapts it to the agent.Tool interface.
 // It is registered in the tool registry like any other tool, but delegates
 // execution to a compiled Go binary subprocess.
 type NativeTool struct {
@@ -42,7 +42,7 @@ func (n *NativeTool) Run(ctx context.Context, params json.RawMessage) (NativeToo
 	if err != nil {
 		return NativeToolResult{Content: fmt.Sprintf("skill error: %v", err), IsError: true}, nil
 	}
-	result, err := ParseWASMResult(raw) // same JSON envelope
+	result, err := ParseSkillResult(raw)
 	if err != nil {
 		return NativeToolResult{Content: fmt.Sprintf("skill result parse error: %v", err), IsError: true}, nil
 	}
@@ -50,7 +50,6 @@ func (n *NativeTool) Run(ctx context.Context, params json.RawMessage) (NativeToo
 }
 
 // NativeToolResult holds the outcome of a native skill execution.
-// Same shape as WASMToolResult to keep the adapter pattern consistent.
 type NativeToolResult struct {
 	Content string
 	IsError bool

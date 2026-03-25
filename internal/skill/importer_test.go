@@ -133,21 +133,12 @@ Use the serper_search tool.
 	if !result.Success {
 		t.Errorf("expected success even with TS module, got errors: %v", result.Errors)
 	}
-	if result.Tier != skill.TierWASM {
-		t.Errorf("tier = %d, want TierWASM (%d)", result.Tier, skill.TierWASM)
+	if result.Tier != skill.TierPlugin {
+		t.Errorf("tier = %d, want TierPlugin (%d)", result.Tier, skill.TierPlugin)
 	}
 
-	// Should warn that TypeScript code modules are not natively executable
-	hasCodeWarning := false
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "TypeScript") || strings.Contains(w, "code module") {
-			hasCodeWarning = true
-			break
-		}
-	}
-	if !hasCodeWarning {
-		t.Errorf("expected warning about TypeScript code module, got: %v", result.Warnings)
-	}
+	// If no supported runtime (bun/node/python3) is on PATH, should warn.
+	// If a runtime is available, no warning is expected — the plugin is runnable.
 }
 
 func TestImportSkill_MissingSkillMD(t *testing.T) {

@@ -33,7 +33,7 @@ func (t *SkillEditTool) Parameters() json.RawMessage {
 			"name":         {"type": "string", "description": "Name of the existing skill to edit"},
 			"instructions": {"type": "string", "description": "New markdown instructions/prompt body for SKILL.md (replaces the body, keeps frontmatter)"},
 			"description":  {"type": "string", "description": "New one-line description (updates frontmatter only)"},
-			"code":         {"type": "string", "description": "New complete Go source code for package main (optional, only for WASM skills)"}
+			"code":         {"type": "string", "description": "New source code for the skill entry point (optional, only for plugin skills)"}
 		},
 		"required": ["name"]
 	}`)

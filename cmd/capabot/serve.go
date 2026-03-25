@@ -100,8 +100,8 @@ func runServe(configPath string) error {
 	skillRegistry := initSkillRegistry(cfg)
 	logger.Info().Int("skills", skillRegistry.Len()).Msg("skills loaded")
 
-	// 7b. Register Tier 3 WASM skills as callable tools
-	registerWASMSkills(ctx, skillRegistry, toolRegistry, logger)
+	// 7b. Register Tier 3 plugin skills (TS/JS/Python) as callable tools
+	pluginRegs := registerPluginSkills(ctx, skillRegistry, toolRegistry, router, logger)
 
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
@@ -190,11 +190,19 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		return cfg
 	}
 
+	// addPluginHooks attaches any registered plugin hooks to an agent.
+	addPluginHooks := func(a *agent.Agent) {
+		for _, h := range pluginRegs.hooks {
+			a.AddHook(h)
+		}
+	}
+
 	runAgent := func(runCtx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
 		ms := resolveMode(runCtx)
 		cfg := applyMode(agentCfg, ms, runCtx)
 		a := agent.New(cfg, router, ms.Tools, ctxMgr, logger)
+		addPluginHooks(a)
 		if onEvent != nil {
 			a.SetOnEvent(onEvent)
 		}
@@ -217,6 +225,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		ms := resolveMode(runCtx)
 		customCfg = applyMode(customCfg, ms, runCtx)
 		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
+		addPluginHooks(a)
 		if onEvent != nil {
 			a.SetOnEvent(onEvent)
 		}
@@ -239,6 +248,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		ms := resolveMode(runCtx)
 		customCfg = applyMode(customCfg, ms, runCtx)
 		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
+		addPluginHooks(a)
 		return a.Run(runCtx, sessionID, messages)
 	}
 
@@ -273,7 +283,43 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		Router:          router,
 		DiscordRoles:    discordRoles,
 	})
-	apiSrv := &http.Server{Addr: apiAddr, Handler: apiServer.Handler()}
+	// Wire plugin HTTP routes onto a wrapper mux that falls through to the API server.
+	apiHandler := apiServer.Handler()
+	if len(pluginRegs.routes) > 0 {
+		pluginMux := http.NewServeMux()
+		for _, pr := range pluginRegs.routes {
+			proc := pr.proc
+			pluginMux.HandleFunc(pr.method+" "+pr.path, func(w http.ResponseWriter, r *http.Request) {
+				headers := make(map[string]string)
+				for k := range r.Header {
+					headers[k] = r.Header.Get(k)
+				}
+				query := make(map[string]string)
+				for k := range r.URL.Query() {
+					query[k] = r.URL.Query().Get(k)
+				}
+				body, _ := io.ReadAll(r.Body)
+				resp, err := proc.InvokeHTTP(r.Context(), skill.HTTPRequest{
+					Method:  r.Method,
+					Path:    r.URL.Path,
+					Headers: headers,
+					Query:   query,
+					Body:    string(body),
+				})
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadGateway)
+					return
+				}
+				w.WriteHeader(resp.Status)
+				fmt.Fprint(w, resp.Body)
+			})
+			logger.Info().Str("method", pr.method).Str("path", pr.path).Msg("plugin HTTP route wired")
+		}
+		// Fall through to API server for non-plugin routes
+		pluginMux.Handle("/", apiHandler)
+		apiHandler = pluginMux
+	}
+	apiSrv := &http.Server{Addr: apiAddr, Handler: apiHandler}
 	go func() {
 		logger.Info().Str("addr", apiAddr).Msg("API server listening")
 		if err := apiSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -944,21 +990,105 @@ func initSkillRegistry(cfg config.Config) *skill.Registry {
 	return registry
 }
 
-// wasmAgentTool adapts a skill.WASMTool to the agent.Tool interface.
+// pluginAgentTool adapts a skill.PluginTool to the agent.Tool interface.
 // It lives in the main package to avoid an import cycle between internal/skill
 // and internal/agent.
-type wasmAgentTool struct {
-	inner *skill.WASMTool
+type pluginAgentTool struct {
+	inner *skill.PluginTool
 }
 
-func (w *wasmAgentTool) Name() string                { return w.inner.Name() }
-func (w *wasmAgentTool) Description() string         { return w.inner.Description() }
-func (w *wasmAgentTool) Parameters() json.RawMessage { return w.inner.Parameters() }
-func (w *wasmAgentTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
-	res, err := w.inner.Run(ctx, params)
+func (p *pluginAgentTool) Name() string                { return p.inner.Name() }
+func (p *pluginAgentTool) Description() string         { return p.inner.Description() }
+func (p *pluginAgentTool) Parameters() json.RawMessage { return p.inner.Parameters() }
+func (p *pluginAgentTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
+	res, err := p.inner.Run(ctx, params)
 	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
 }
 
+// pluginHook adapts a skill.PluginProcess hook to the agent.ToolHook interface.
+type pluginHook struct {
+	proc  *skill.PluginProcess
+	event string // "pre_tool_use" or "post_tool_use"
+}
+
+func (h *pluginHook) BeforeToolUse(ctx context.Context, toolName string, params json.RawMessage) (bool, json.RawMessage, error) {
+	if h.event != "pre_tool_use" {
+		return true, nil, nil
+	}
+	result, err := h.proc.InvokeHook(ctx, "pre_tool_use", toolName, params, nil)
+	if err != nil {
+		return true, nil, err
+	}
+	if !result.Allow {
+		return false, nil, nil
+	}
+	return true, result.Params, nil
+}
+
+func (h *pluginHook) AfterToolUse(ctx context.Context, toolName string, params json.RawMessage, result json.RawMessage) (json.RawMessage, error) {
+	if h.event != "post_tool_use" {
+		return nil, nil
+	}
+	hookResult, err := h.proc.InvokeHook(ctx, "post_tool_use", toolName, params, result)
+	if err != nil {
+		return nil, err
+	}
+	return hookResult.Result, nil
+}
+
+// pluginProvider adapts a skill.PluginProcess LLM provider to the llm.Provider interface.
+type pluginProvider struct {
+	proc   *skill.PluginProcess
+	name   string
+	models json.RawMessage
+}
+
+func (p *pluginProvider) Name() string { return p.name }
+
+func (p *pluginProvider) Models() []llm.ModelInfo {
+	var ids []string
+	_ = json.Unmarshal(p.models, &ids)
+	out := make([]llm.ModelInfo, len(ids))
+	for i, id := range ids {
+		out[i] = llm.ModelInfo{ID: id, Name: id}
+	}
+	return out
+}
+
+func (p *pluginProvider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	msgsJSON, _ := json.Marshal(req.Messages)
+	toolsJSON, _ := json.Marshal(req.Tools)
+	resp, err := p.proc.InvokeChat(ctx, skill.ChatRequest{
+		Provider: p.name,
+		Model:    req.Model,
+		Messages: msgsJSON,
+		System:   req.System,
+		Tools:    toolsJSON,
+		MaxTok:   req.MaxTokens,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("plugin provider %s: %s", p.name, resp.Error)
+	}
+	return &llm.ChatResponse{
+		Content:  resp.Content,
+		Model:    resp.Model,
+		Provider: p.name,
+	}, nil
+}
+
+func (p *pluginProvider) Stream(_ context.Context, _ llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	return nil, fmt.Errorf("plugin provider %q does not support streaming", p.name)
+}
+
+// pluginHTTPRoute holds a plugin route handler for deferred registration on the API mux.
+type pluginHTTPRoute struct {
+	method string
+	path   string
+	proc   *skill.PluginProcess
+}
 
 // nativeAgentTool adapts a skill.NativeTool to the agent.Tool interface.
 type nativeAgentTool struct {
@@ -1002,33 +1132,63 @@ func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg
 	}
 }
 
-// registerWASMSkills compiles and registers all Tier 3 WASM skills found in
-// the skill registry into the tool registry. Compilation errors are logged but
-// do not prevent other skills from loading.
-func registerWASMSkills(ctx context.Context, skillReg *skill.Registry, toolReg *agent.Registry, logger zerolog.Logger) {
-	for _, name := range skillReg.WASMSkillNames() {
-		wasmPath, ok := skillReg.WASMPath(name)
+// pluginRegistrations holds everything plugins registered during init.
+type pluginRegistrations struct {
+	hooks  []agent.ToolHook
+	routes []pluginHTTPRoute
+}
+
+// registerPluginSkills spawns plugin processes and registers all tools, hooks,
+// HTTP routes, and LLM providers they provide. A single plugin can register
+// multiple of each. Runtime errors are logged but don't prevent other plugins.
+func registerPluginSkills(ctx context.Context, skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, logger zerolog.Logger) pluginRegistrations {
+	var reg pluginRegistrations
+
+	for _, name := range skillReg.PluginSkillNames() {
+		pluginDir, ok := skillReg.PluginPath(name)
 		if !ok {
 			continue
 		}
-		parsed := skillReg.Get(name)
-		if parsed == nil {
-			continue
-		}
 
-		exec, err := skill.NewWASMExecutorFromFile(ctx, wasmPath)
+		proc, err := skill.NewPluginProcess(ctx, pluginDir)
 		if err != nil {
-			logger.Error().Err(err).Str("skill", name).Str("wasm", wasmPath).Msg("failed to compile WASM skill")
+			logger.Error().Err(err).Str("skill", name).Str("dir", pluginDir).Msg("failed to start plugin")
 			continue
 		}
 
-		wasmTool := skill.NewWASMTool(parsed, exec)
-		if err := toolReg.Register(&wasmAgentTool{inner: wasmTool}); err != nil {
-			logger.Error().Err(err).Str("skill", name).Msg("failed to register WASM skill tool")
-			exec.Close(ctx) //nolint:errcheck
-			continue
+		// Register tools
+		for _, rt := range proc.Tools() {
+			pluginTool := skill.NewPluginTool(rt, proc)
+			if err := toolReg.Register(&pluginAgentTool{inner: pluginTool}); err != nil {
+				logger.Error().Err(err).Str("skill", name).Str("tool", rt.Name).Msg("failed to register plugin tool")
+				continue
+			}
+			logger.Info().Str("skill", name).Str("tool", rt.Name).Str("runtime", proc.Runtime()).Msg("plugin tool registered")
 		}
 
-		logger.Info().Str("skill", name).Str("wasm", wasmPath).Msg("WASM skill registered (Tier 3)")
+		// Collect hooks
+		for _, rh := range proc.Hooks() {
+			reg.hooks = append(reg.hooks, &pluginHook{proc: proc, event: rh.Event})
+			logger.Info().Str("skill", name).Str("event", rh.Event).Str("hook", rh.Name).Msg("plugin hook registered")
+		}
+
+		// Collect HTTP routes (wired to mux later)
+		for _, rr := range proc.Routes() {
+			reg.routes = append(reg.routes, pluginHTTPRoute{method: rr.Method, path: rr.Path, proc: proc})
+			logger.Info().Str("skill", name).Str("method", rr.Method).Str("path", rr.Path).Msg("plugin route registered")
+		}
+
+		// Register LLM providers on the router
+		for _, rp := range proc.Providers() {
+			router.SetProvider(rp.Name, &pluginProvider{proc: proc, name: rp.Name, models: rp.Models})
+			logger.Info().Str("skill", name).Str("provider", rp.Name).Msg("plugin provider registered")
+		}
+
+		if len(proc.Tools()) == 0 && len(proc.Hooks()) == 0 && len(proc.Routes()) == 0 && len(proc.Providers()) == 0 {
+			logger.Warn().Str("skill", name).Msg("plugin registered nothing")
+			proc.Close() //nolint:errcheck
+		}
 	}
+
+	return reg
 }

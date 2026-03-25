@@ -307,7 +307,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		Version      string `json:"version"`
 		Instructions string `json:"instructions"`
 		Removable    bool   `json:"removable"`
-		Tier         int    `json:"tier"` // 1=prompt-only, 2=native Go, 3=WASM
+		Tier         int    `json:"tier"` // 1=prompt-only, 2=native Go, 3=plugin (TS/JS/Python)
 	}
 	out := make([]skillDTO, len(all))
 	for i, sk := range all {
@@ -317,7 +317,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		tier := 1
 		if _, ok := s.skillReg.NativePath(name); ok {
 			tier = 2
-		} else if _, ok := s.skillReg.WASMPath(name); ok {
+		} else if _, ok := s.skillReg.PluginPath(name); ok {
 			tier = 3
 		}
 		out[i] = skillDTO{

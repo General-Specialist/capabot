@@ -8,7 +8,6 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/rs/zerolog v1.34.0
-	github.com/tetratelabs/wazero v1.11.0
 	google.golang.org/genai v1.51.0
 	gopkg.in/yaml.v3 v3.0.1
 )

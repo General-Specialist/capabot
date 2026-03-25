@@ -12,7 +12,7 @@ import (
 
 // NativeExecutor compiles and runs a Go-based skill as a subprocess.
 // The skill reads JSON input from stdin and writes a JSON result to stdout
-// using the same envelope as WASM skills: {"content":"...","is_error":false}.
+// using the envelope: {"content":"...","is_error":false}.
 type NativeExecutor struct {
 	binPath string // path to compiled binary
 	mu      sync.Mutex

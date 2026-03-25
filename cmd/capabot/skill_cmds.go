@@ -388,20 +388,20 @@ func extractTarGz(src string) (string, error) {
 	return dir, nil
 }
 
-// runSkillInit scaffolds a new skill directory. Passing --wasm creates a
-// Tier 3 WASM skill template instead of a plain Markdown skill.
+// runSkillInit scaffolds a new skill directory. Passing --plugin creates a
+// Tier 3 plugin skill template (TypeScript) instead of a plain Markdown skill.
 func runSkillInit(args []string) error {
-	wasm := false
+	plugin := false
 	filtered := args[:0]
 	for _, a := range args {
-		if a == "--wasm" {
-			wasm = true
+		if a == "--plugin" {
+			plugin = true
 		} else {
 			filtered = append(filtered, a)
 		}
 	}
 	if len(filtered) == 0 {
-		return fmt.Errorf("usage: capabot skill init [--wasm] <name>")
+		return fmt.Errorf("usage: capabot skill init [--plugin] <name>")
 	}
 
 	name := filtered[0]
@@ -412,42 +412,33 @@ func runSkillInit(args []string) error {
 	}
 
 	// Always write SKILL.md
-	skillMD := buildWASMSkillTemplate(name, wasm)
+	skillMD := buildInitSkillTemplate(name, plugin)
 	if err := os.WriteFile(filepath.Join(dirPath, "SKILL.md"), []byte(skillMD), 0o644); err != nil {
 		return fmt.Errorf("writing SKILL.md: %w", err)
 	}
 	fmt.Printf("created %s/SKILL.md\n", name)
 
-	if wasm {
-		// Write the Go WASM source stub
-		mainGo := buildWASMSourceTemplate(name)
-		if err := os.WriteFile(filepath.Join(dirPath, "main.go"), []byte(mainGo), 0o644); err != nil {
-			return fmt.Errorf("writing main.go: %w", err)
+	if plugin {
+		indexTS := buildPluginSourceTemplate(name)
+		if err := os.WriteFile(filepath.Join(dirPath, "index.ts"), []byte(indexTS), 0o644); err != nil {
+			return fmt.Errorf("writing index.ts: %w", err)
 		}
-		fmt.Printf("created %s/main.go\n", name)
-
-		// Write a Makefile for building the .wasm binary
-		mk := buildWASMMakefile(name)
-		if err := os.WriteFile(filepath.Join(dirPath, "Makefile"), []byte(mk), 0o644); err != nil {
-			return fmt.Errorf("writing Makefile: %w", err)
-		}
-		fmt.Printf("created %s/Makefile\n", name)
-
-		fmt.Printf("\nTo build: cd %s && make\n", name)
-		fmt.Printf("Then load it with: capabot skill import ./%s\n", name)
+		fmt.Printf("created %s/index.ts\n", name)
+		fmt.Printf("\nLoad it with: capabot skill import ./%s\n", name)
+		fmt.Println("Requires: bun (or node with tsx)")
 	}
 
 	return nil
 }
 
-// buildWASMSkillTemplate returns a SKILL.md for a WASM skill with the parameters schema.
-func buildWASMSkillTemplate(name string, wasm bool) string {
+// buildInitSkillTemplate returns a SKILL.md for `skill init`, with optional plugin parameters.
+func buildInitSkillTemplate(name string, plugin bool) string {
 	var sb strings.Builder
 	sb.WriteString("---\n")
 	sb.WriteString("name: " + name + "\n")
 	sb.WriteString("description: A brief description of what this skill does.\n")
 	sb.WriteString("version: \"1.0.0\"\n")
-	if wasm {
+	if plugin {
 		sb.WriteString("parameters:\n")
 		sb.WriteString("  type: object\n")
 		sb.WriteString("  properties:\n")
@@ -458,86 +449,27 @@ func buildWASMSkillTemplate(name string, wasm bool) string {
 	}
 	sb.WriteString("---\n\n")
 	sb.WriteString("# " + name + "\n\n")
-	if wasm {
-		sb.WriteString("This is a Tier 3 WASM skill. Build `skill.wasm` with `make` before loading.\n")
+	if plugin {
+		sb.WriteString("This is a Tier 3 plugin skill. It runs via `bun run index.ts`.\n")
 	} else {
 		sb.WriteString("<!-- Instructions for the LLM go here. -->\n")
 	}
 	return sb.String()
 }
 
-// buildWASMSourceTemplate returns a Go WASM skill source stub.
-// The skill receives JSON input from the host and writes JSON output back.
-func buildWASMSourceTemplate(name string) string {
-	return `//go:build js && wasm
+// buildPluginSourceTemplate returns a TypeScript plugin skill stub.
+// The skill reads JSON input from stdin and writes JSON output to stdout.
+func buildPluginSourceTemplate(name string) string {
+	return `// ` + name + ` — Tier 3 plugin skill
+// Reads JSON params from stdin, writes {"content":"...","is_error":false} to stdout.
 
-package main
+const input = await Bun.stdin.text();
+const params = JSON.parse(input);
 
-import (
-	"encoding/json"
-	"unsafe"
-)
+// TODO: implement skill logic here
+const result = "processed: " + (params.input ?? "");
 
-// inputBuf holds the JSON input written by the host via capabot_write_input.
-var inputBuf []byte
-
-// capabot_write_input allocates inputBuf and returns a pointer so the host
-// can write the JSON parameters directly into WASM linear memory.
-//
-//go:export capabot_write_input
-func writeInput(length uint32) uint32 {
-	inputBuf = make([]byte, length)
-	return uint32(uintptr(unsafe.Pointer(&inputBuf[0])))
-}
-
-// run is the skill entry point. Called by the host after writing input.
-//
-//go:export run
-func run() {
-	var params struct {
-		Input string ` + "`" + `json:"input"` + "`" + `
-	}
-	if err := json.Unmarshal(inputBuf, &params); err != nil {
-		setOutput(map[string]any{"content": "parse error: " + err.Error(), "is_error": true})
-		return
-	}
-
-	// TODO: implement skill logic here
-	result := "processed: " + params.Input
-
-	setOutput(map[string]any{"content": result})
-}
-
-// setOutput serialises result to JSON and calls the host import capabot.set_output.
-func setOutput(v any) {
-	b, _ := json.Marshal(v)
-	hostSetOutput(&b[0], uint32(len(b)))
-}
-
-// hostSetOutput is the host import: capabot.set_output(ptr, len).
-//
-//go:wasmimport capabot set_output
-func hostSetOutput(ptr *byte, length uint32)
-
-func main() {}
-`
-}
-
-// buildWASMMakefile returns a Makefile for compiling a Go WASM skill.
-func buildWASMMakefile(name string) string {
-	return `SKILL := skill.wasm
-
-.PHONY: all clean
-
-## all: compile the WASM skill binary
-all: $(SKILL)
-
-$(SKILL): main.go
-	GOOS=wasip1 GOARCH=wasm go build -o $(SKILL) .
-
-## clean: remove build artifacts
-clean:
-	rm -f $(SKILL)
+console.log(JSON.stringify({ content: result }));
 `
 }
 

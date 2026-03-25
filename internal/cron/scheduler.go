@@ -210,7 +210,7 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 	log.Info().Int("iterations", result.Iterations).Msg("automation complete")
 }
 
-// fireSkill runs a native or WASM skill directly, bypassing the LLM entirely.
+// fireSkill runs a native or plugin skill directly, bypassing the LLM entirely.
 func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID int64, log zerolog.Logger) {
 	skillName := auto.SkillNames[0]
 	log.Info().Str("skill", skillName).Msg("running skill directly (no LLM)")
@@ -219,7 +219,7 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 	input := map[string]string{"prompt": auto.Prompt}
 	inputJSON, _ := json.Marshal(input)
 
-	// Try native skill first, then WASM
+	// Try native skill first, then plugin
 	if skillDir, ok := s.skillReg.NativePath(skillName); ok {
 		exec, err := skill.NewNativeExecutor(ctx, skillDir)
 		if err != nil {
@@ -233,7 +233,7 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("execute: %v", err))
 			return
 		}
-		result, err := skill.ParseWASMResult(raw)
+		result, err := skill.ParseSkillResult(raw)
 		if err != nil {
 			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("parse: %v", err))
 			return
@@ -247,23 +247,25 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 		return
 	}
 
-	if wasmPath, ok := s.skillReg.WASMPath(skillName); ok {
-		exec, err := skill.NewWASMExecutorFromFile(ctx, wasmPath)
+	if pluginDir, ok := s.skillReg.PluginPath(skillName); ok {
+		proc, err := skill.NewPluginProcess(ctx, pluginDir)
 		if err != nil {
-			log.Error().Err(err).Msg("loading WASM skill")
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("wasm load: %v", err))
+			log.Error().Err(err).Msg("loading plugin skill")
+			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin load: %v", err))
 			return
 		}
-		defer exec.Close(ctx)
-		raw, err := exec.Execute(ctx, inputJSON)
-		if err != nil {
-			log.Error().Err(err).Msg("executing WASM skill")
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("wasm execute: %v", err))
+		defer proc.Close() //nolint:errcheck
+
+		// Use the first registered tool for direct automation invocation.
+		tools := proc.Tools()
+		if len(tools) == 0 {
+			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", "plugin registered no tools")
 			return
 		}
-		result, err := skill.ParseWASMResult(raw)
+		result, err := proc.Invoke(ctx, tools[0].Name, inputJSON)
 		if err != nil {
-			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("wasm parse: %v", err))
+			log.Error().Err(err).Msg("executing plugin skill")
+			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin execute: %v", err))
 			return
 		}
 		status := "success"
@@ -271,7 +273,7 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 			status = "error"
 		}
 		_ = s.store.FinishAutomationRun(ctx, runID, status, result.Content, "")
-		log.Info().Str("skill", skillName).Msg("WASM skill automation complete")
+		log.Info().Str("skill", skillName).Msg("plugin skill automation complete")
 		return
 	}
 

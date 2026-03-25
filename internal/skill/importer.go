@@ -13,7 +13,7 @@ import (
 const (
 	TierMarkdown = 1 // Pure instruction injection (OpenClaw compatible)
 	TierNative   = 2 // Native Go tool implementation
-	TierWASM     = 3 // WASM sandboxed execution (for code module skills)
+	TierPlugin   = 3 // Script-based execution (TS/JS/Python code module skills)
 )
 
 // ToolMapping records a single OpenClaw→Capabot tool name translation.
@@ -87,11 +87,26 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 
 	// 4. Detect tier based on code modules
 	result.Tier = detectTier(srcDir)
-	if result.Tier == TierWASM {
-		result.Warnings = append(result.Warnings,
-			"skill contains TypeScript/Python code module — "+
-				"markdown instructions will be imported but code execution "+
-				"requires WASM compilation (not yet supported)")
+	if result.Tier == TierPlugin {
+		// Check that at least one supported runtime is available.
+		runtimeFound := false
+		for _, entry := range pluginEntryPoints {
+			if _, err := os.Stat(filepath.Join(srcDir, entry)); err != nil {
+				continue
+			}
+			rt, ok := pluginRuntimes[entry]
+			if !ok {
+				continue
+			}
+			if _, err := exec.LookPath(rt); err == nil {
+				runtimeFound = true
+				break
+			}
+		}
+		if !runtimeFound {
+			result.Warnings = append(result.Warnings,
+				"skill contains a code module but no supported runtime (bun, node, python3) was found on PATH")
+		}
 	}
 
 	// 5. Check runtime dependencies
@@ -129,7 +144,7 @@ func detectTier(srcDir string) int {
 	}
 	for _, name := range codeFiles {
 		if _, err := os.Stat(filepath.Join(srcDir, name)); err == nil {
-			return TierWASM
+			return TierPlugin
 		}
 	}
 	return TierMarkdown

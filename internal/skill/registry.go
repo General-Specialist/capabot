@@ -16,7 +16,7 @@ type Registry struct {
 	mu          sync.RWMutex
 	skills      map[string]*ParsedSkill // keyed by skill name
 	skillPaths  map[string]string       // skill name → directory path on disk
-	wasmPaths   map[string]string       // skill name → absolute path to .wasm file (Tier 3)
+	pluginPaths map[string]string       // skill name → directory with script entry point (Tier 3)
 	nativePaths map[string]string       // skill name → directory containing main.go (Tier 2)
 	dirs        []string                // directories loaded in precedence order
 }
@@ -26,7 +26,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		skills:      make(map[string]*ParsedSkill),
 		skillPaths:  make(map[string]string),
-		wasmPaths:   make(map[string]string),
+		pluginPaths: make(map[string]string),
 		nativePaths: make(map[string]string),
 	}
 }
@@ -84,10 +84,12 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 		r.skills[name] = parsed
 		r.skillPaths[name] = skillDir
 
-		// Detect Tier 3: companion skill.wasm alongside the SKILL.md
-		wasmPath := filepath.Join(skillDir, "skill.wasm")
-		if _, err := os.Stat(wasmPath); err == nil {
-			r.wasmPaths[name] = wasmPath
+		// Detect Tier 3: script entry point alongside the SKILL.md (plugin skill)
+		for _, entry := range pluginEntryPoints {
+			if _, err := os.Stat(filepath.Join(skillDir, entry)); err == nil {
+				r.pluginPaths[name] = skillDir
+				break
+			}
 		}
 
 		// Detect Tier 2: companion main.go alongside the SKILL.md (native Go skill)
@@ -117,25 +119,24 @@ func (r *Registry) Unregister(name string) {
 	defer r.mu.Unlock()
 	delete(r.skills, name)
 	delete(r.skillPaths, name)
-	delete(r.wasmPaths, name)
+	delete(r.pluginPaths, name)
 	delete(r.nativePaths, name)
 }
 
-// WASMPath returns the path to the compiled WASM module for the skill with
-// the given name. Returns ("", false) if the skill has no WASM companion.
-func (r *Registry) WASMPath(name string) (string, bool) {
+// PluginPath returns the directory of the named plugin skill, or ("", false).
+func (r *Registry) PluginPath(name string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	p, ok := r.wasmPaths[name]
+	p, ok := r.pluginPaths[name]
 	return p, ok
 }
 
-// WASMSkillNames returns the names of all skills that have a companion .wasm file.
-func (r *Registry) WASMSkillNames() []string {
+// PluginSkillNames returns the names of all skills that have a script entry point.
+func (r *Registry) PluginSkillNames() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.wasmPaths))
-	for name := range r.wasmPaths {
+	names := make([]string, 0, len(r.pluginPaths))
+	for name := range r.pluginPaths {
 		names = append(names, name)
 	}
 	return names

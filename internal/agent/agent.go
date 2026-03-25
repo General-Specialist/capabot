@@ -65,6 +65,18 @@ type RunResult struct {
 	History    []llm.ChatMessage `json:"-"`
 }
 
+// ToolHook intercepts tool execution. Plugins can register pre/post hooks
+// to modify parameters, block execution, or transform results.
+type ToolHook interface {
+	// BeforeToolUse is called before a tool executes. Return allow=false to
+	// block execution. Modified params (if non-nil) replace the original.
+	BeforeToolUse(ctx context.Context, toolName string, params json.RawMessage) (allow bool, modifiedParams json.RawMessage, err error)
+
+	// AfterToolUse is called after a tool executes. Modified result (if non-nil)
+	// replaces the original.
+	AfterToolUse(ctx context.Context, toolName string, params json.RawMessage, result json.RawMessage) (modifiedResult json.RawMessage, err error)
+}
+
 // Agent implements the ReAct loop: Observe -> Think -> Act -> Observe.
 type Agent struct {
 	config   AgentConfig
@@ -74,6 +86,7 @@ type Agent struct {
 	store    StoreWriter // nil = no persistence
 	logger   zerolog.Logger
 	onEvent  func(AgentEvent) // nil = no streaming
+	hooks    []ToolHook       // plugin hooks (pre/post tool execution)
 }
 
 // New creates a new Agent with the given dependencies.
@@ -110,6 +123,11 @@ func (a *Agent) emit(e AgentEvent) {
 // SetStore attaches a persistence layer for message and tool execution logging.
 func (a *Agent) SetStore(store StoreWriter) {
 	a.store = store
+}
+
+// AddHook adds a tool hook that will be called before/after tool execution.
+func (a *Agent) AddHook(h ToolHook) {
+	a.hooks = append(a.hooks, h)
 }
 
 // Run executes the ReAct loop for the given session and input messages.
@@ -358,15 +376,35 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 		}
 	}
 
+	// Run pre-hooks — any hook can block execution or modify params.
+	params := tc.Input
+	for _, h := range a.hooks {
+		allow, modified, err := h.BeforeToolUse(ctx, tc.Name, params)
+		if err != nil {
+			a.logger.Warn().Err(err).Str("tool", tc.Name).Msg("pre-hook error")
+			continue
+		}
+		if !allow {
+			a.logger.Info().Str("tool", tc.Name).Msg("tool blocked by hook")
+			return ToolResult{
+				Content: fmt.Sprintf("tool %q was blocked by a plugin hook", tc.Name),
+				IsError: true,
+			}
+		}
+		if modified != nil {
+			params = modified
+		}
+	}
+
 	a.logger.Debug().
 		Str("tool", tc.Name).
 		Str("id", tc.ID).
 		Msg("executing tool")
 
-	a.emit(AgentEvent{Kind: EventToolStart, ToolName: tc.Name, ToolID: tc.ID, ToolInput: tc.Input})
+	a.emit(AgentEvent{Kind: EventToolStart, ToolName: tc.Name, ToolID: tc.ID, ToolInput: params})
 
 	start := time.Now()
-	result, err := tool.Execute(ctx, tc.Input)
+	result, err := tool.Execute(ctx, params)
 	duration := time.Since(start)
 
 	if err != nil {
@@ -385,6 +423,22 @@ func (a *Agent) executeTool(ctx context.Context, sessionID string, tc llm.ToolCa
 			Dur("duration", duration).
 			Int("output_len", len(result.Content)).
 			Msg("tool execution complete")
+	}
+
+	// Run post-hooks — can modify the result.
+	for _, h := range a.hooks {
+		resultJSON, _ := json.Marshal(result)
+		modified, err := h.AfterToolUse(ctx, tc.Name, params, resultJSON)
+		if err != nil {
+			a.logger.Warn().Err(err).Str("tool", tc.Name).Msg("post-hook error")
+			continue
+		}
+		if modified != nil {
+			var modResult ToolResult
+			if json.Unmarshal(modified, &modResult) == nil {
+				result = modResult
+			}
+		}
 	}
 
 	a.emit(AgentEvent{Kind: EventToolEnd, ToolName: tc.Name, ToolID: tc.ID, Content: result.Content, IsError: result.IsError})
