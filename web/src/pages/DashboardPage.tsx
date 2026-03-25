@@ -48,7 +48,7 @@ function AgentTrace({ messages }: { messages: TraceMessage[] }) {
                 onClick={() => setOpenTool(o => o === msg.id ? null : msg.id)}
                 className="w-full text-left flex items-center gap-2 px-3 py-1.5"
               >
-                <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${failed ? 'bg-red-500' : 'bg-green-500'}`} />
+                <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${failed ? 'bg-terminal-red' : 'bg-terminal-green'}`} />
                 <span className="font-mono text-hover-black">{msg.tool_name || 'tool'}</span>
                 {msg.tool_input && <span className="text-normal-black truncate max-w-48">{msg.tool_input}</span>}
                 <ChevronRight size={11} className={`ml-auto text-normal-black shrink-0 transition-transform ${openTool === msg.id ? 'rotate-90' : ''}`} />
@@ -110,7 +110,7 @@ function LiveStream({ runID, onDone }: { runID: number; onDone?: () => void }) {
           const failed = ev.is_error
           return (
             <div key={i} className="flex items-center gap-2 text-xs px-3 py-1">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${failed ? 'bg-red-500' : 'bg-green-500'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${failed ? 'bg-terminal-red' : 'bg-terminal-green'}`} />
               <span className="font-mono text-hover-black">{ev.tool_name}</span>
               {ev.content && <span className="text-normal-black truncate max-w-64">{ev.content.slice(0, 80)}</span>}
             </div>
@@ -155,20 +155,20 @@ function RunCard({ run, automationName }: { run: AutomationRun; automationName: 
         className={`w-full text-left flex items-center gap-3 px-4 py-3 ${hasContent ? 'cursor-pointer' : ''}`}
       >
         <span className={`shrink-0 w-2 h-2 rounded-full ${
-          status === 'success' ? 'bg-green-500' :
-          status === 'error' ? 'bg-red-500' :
-          status === 'stopped' ? 'bg-yellow-500' : 'bg-normal-black animate-pulse'
+          status === 'success' ? 'bg-terminal-green' :
+          status === 'error' ? 'bg-terminal-red' :
+          status === 'stopped' ? 'bg-terminal-yellow' : 'bg-normal-black animate-pulse'
         }`} />
         <span className="text-sm font-medium text-hover-black truncate">{automationName}</span>
         <span className="text-xs text-normal-black shrink-0">{formatTime(run.started_at)}</span>
         <span className={`text-xs font-medium shrink-0 ${
-          isError ? 'text-red-500' : status === 'success' ? 'text-green-600' : status === 'stopped' ? 'text-yellow-600' : 'text-normal-black'
+          isError ? 'text-terminal-red' : status === 'success' ? 'text-terminal-green' : status === 'stopped' ? 'text-terminal-yellow' : 'text-normal-black'
         }`}>{status}</span>
         {isRunning && (
           <button
             type="button"
             onClick={e => { e.stopPropagation(); api.runStop(run.id).then(() => setStatus('stopped')) }}
-            className="ml-auto shrink-0 p-1 rounded hover:bg-red-100 text-red-500"
+            className="ml-auto shrink-0 p-1 rounded hover:bg-border-white text-red"
             title="Stop run"
           >
             <Square size={12} fill="currentColor" />
@@ -187,7 +187,7 @@ function RunCard({ run, automationName }: { run: AutomationRun; automationName: 
                 {trace && trace.length > 0 && <AgentTrace messages={trace} />}
                 {body && (
                   isError
-                    ? <p className="font-mono text-xs text-red-500 whitespace-pre-wrap">{body}</p>
+                    ? <p className="font-mono text-xs text-terminal-red whitespace-pre-wrap">{body}</p>
                     : (
                       <div className="text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
                         <Markdown>{body}</Markdown>

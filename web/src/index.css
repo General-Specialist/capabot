@@ -97,6 +97,7 @@
     --color-border-white: var(--color-dark-border);
     --color-sidebar-hover-white: var(--color-dark-sidebar-hover);
     --color-text-hover-black: var(--color-dark-text-hover);
+    --color-brand-primary: var(--color-dark-text-hover); /* white in dark mode */
 }
 
 /* When dark mode is active, also flip the base html/body colors */
@@ -340,6 +341,28 @@ body::-webkit-scrollbar {
     }
     .border-bronze {
         border-color: var(--color-bronze);
+    }
+
+    /* Terminal status colors */
+    .bg-terminal-green {
+        background-color: var(--color-terminal-green);
+    }
+    .bg-terminal-red {
+        background-color: var(--color-terminal-red);
+    }
+    .bg-terminal-yellow {
+        background-color: var(--color-terminal-yellow);
+    }
+    .text-terminal-yellow {
+        color: var(--color-terminal-yellow);
+    }
+
+    /* Modal overlays */
+    .bg-overlay {
+        background-color: rgba(0, 0, 0, 0.5);
+    }
+    .bg-overlay-light {
+        background-color: rgba(0, 0, 0, 0.3);
     }
 
     .bg-contact-yellow {

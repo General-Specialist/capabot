@@ -29,13 +29,13 @@ function SystemPromptModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-light" onClick={onClose}>
       <div className="bg-white rounded-2xl p-5 w-[480px] flex flex-col gap-3 shadow-lg" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-hover-black">System Prompt</p>
           <div className="flex items-center gap-2">
             {saveStatus === 'saving' && <span className="text-[10px] text-normal-black animate-pulse">Saving…</span>}
-            {saveStatus === 'saved' && <span className="text-[10px] text-green-500">Saved</span>}
+            {saveStatus === 'saved' && <span className="text-[10px] text-terminal-green">Saved</span>}
             <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black transition-colors">
               <X className="w-3.5 h-3.5" />
             </button>
@@ -313,12 +313,12 @@ function AvatarCropModal({ initialSrc, onSave, onCancel }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay" onClick={onCancel}>
       <div className="bg-white rounded-2xl p-6 flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
         <p className="text-sm font-medium text-hover-black">Adjust avatar</p>
         <div
           className="relative overflow-hidden cursor-grab active:cursor-grabbing rounded-xl"
-          style={{ width: BOX, height: BOX, background: '#f0f0f0' }}
+          style={{ width: BOX, height: BOX, background: 'var(--color-icon-hover-white)' }}
           onMouseDown={handleMouseDown}
           onWheel={handleWheel}
         >
@@ -476,7 +476,7 @@ function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {saveStatus === 'saving' && <span className="text-[10px] text-normal-black animate-pulse">Saving…</span>}
-              {saveStatus === 'saved' && <span className="text-[10px] text-green-500">Saved</span>}
+              {saveStatus === 'saved' && <span className="text-[10px] text-terminal-green">Saved</span>}
               <button type="button" onClick={onDelete} disabled={deleting} className="p-1 rounded-lg hover:bg-sidebar-white text-normal-black hover:text-red disabled:opacity-50 transition-colors">
                 <Trash2 className="w-3 h-3" />
               </button>

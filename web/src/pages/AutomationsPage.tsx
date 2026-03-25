@@ -38,17 +38,17 @@ function RunRow({ run }: { run: AutomationRun }) {
         onClick={() => { if (body) setExpanded(e => !e) }}
       >
         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
-          run.status === 'success' ? 'bg-green-500' :
-          run.status === 'error' ? 'bg-red-500' : 'bg-normal-black animate-pulse'
+          run.status === 'success' ? 'bg-terminal-green' :
+          run.status === 'error' ? 'bg-terminal-red' : 'bg-normal-black animate-pulse'
         }`} />
-        <span className={`shrink-0 font-medium ${isError ? 'text-red-500' : run.status === 'success' ? 'text-green-500' : 'text-normal-black'}`}>
+        <span className={`shrink-0 font-medium ${isError ? 'text-terminal-red' : run.status === 'success' ? 'text-terminal-green' : 'text-normal-black'}`}>
           {run.status}
         </span>
         <span className="text-normal-black">{formatRelative(run.started_at)}</span>
         {body && <ChevronRight size={12} className={`ml-auto text-normal-black shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />}
       </div>
       {expanded && body && (
-        <div className={`pl-4 pt-1 pb-2 ${isError ? 'text-red-400' : 'text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0'}`}>
+        <div className={`pl-4 pt-1 pb-2 ${isError ? 'text-terminal-red' : 'text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0'}`}>
           {isError
             ? <p className="font-mono text-xs whitespace-pre-wrap">{body}</p>
             : <Markdown>{body}</Markdown>
