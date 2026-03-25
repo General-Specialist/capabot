@@ -2,6 +2,59 @@
 
 Capabot is a self-hosted AI agent platform. Users configure LLM providers and skills; the server runs a ReAct loop and exposes a REST API + web UI. It also connects to Telegram, Discord, and Slack. Skills are markdown instruction files (or Go/WASM executables) that extend the agent's behavior.
 
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      cmd/capabot                        │
+│  main.go → serve.go (wires everything together)         │
+└────────────────────────┬────────────────────────────────┘
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+   ┌──────▼──────┐ ┌─────▼──────┐ ┌────▼────────┐
+   │ internal/api│ │ transports │ │ cron        │
+   │ REST + SSE  │ │ Discord    │ │ scheduler   │
+   │ web UI      │ │ Slack      │ │             │
+   └──────┬──────┘ │ Telegram   │ └────┬────────┘
+          │        │ HTTP       │      │
+          │        └─────┬──────┘      │
+          └──────────────▼─────────────┘
+                  ┌──────────────┐
+                  │internal/agent│
+                  │  ReAct loop  │
+                  └──┬───────┬───┘
+                     │       │
+          ┌──────────▼─┐  ┌──▼──────────────┐
+          │internal/llm│  │internal/tools + │
+          │Router →    │  │internal/skill   │
+          │Anthropic   │  │(shell, file,    │
+          │OpenAI      │  │browser, memory, │
+          │Gemini      │  │WASM skills...)  │
+          │OpenRouter  │  └─────────────────┘
+          └────────────┘
+                  ┌──────────────┐
+                  │internal/     │
+                  │memory        │
+                  │Postgres store│
+                  └──────────────┘
+```
+
+**Request path (simplified)**:
+1. Message arrives via API (`POST /api/chat/stream`) or transport (Discord/Telegram/Slack)
+2. `serve.go` closures (`runAgent` / `runAgentWithPrompt`) create a fresh `agent.Agent` per request
+3. Agent runs the ReAct loop: call LLM → execute tools → call LLM → ... → return
+4. LLM calls go through `llm.Router` which picks a provider and handles retries
+5. Tool calls hit `internal/tools` (built-ins) or compiled skills (WASM/native)
+6. Messages and tool executions are persisted to Postgres via `internal/memory`
+
+**Skill tiers**:
+- **Tier 1** (Markdown): SKILL.md instructions injected into the system prompt — no code
+- **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess
+- **Tier 3** (WASM): `skill.wasm` run in wazero sandbox — portable, sandboxed
+
+**Deployment**: Docker (`CMD ["capabot", "serve"]`) or direct binary. Config at `~/.capabot/config.yaml`. Database: Postgres (optional — most features work without it). `CAPABOT_AUTOUPDATE=1` enables self-update via git pull.
+
 ---
 
 ## Top-Level Config
