@@ -294,3 +294,16 @@ func (s *Server) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	url := fmt.Sprintf("/api/avatars/%s", filename)
 	writeJSON(w, map[string]string{"url": url})
 }
+
+// slicesEqual returns true if two string slices have the same elements in order.
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
