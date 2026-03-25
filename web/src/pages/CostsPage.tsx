@@ -71,14 +71,17 @@ export function CostsPage() {
   const [keys, setKeys] = useState<ProviderKeys | null>(null)
   const [period, setPeriod] = useState<Period>('30d')
   const [mode, setMode] = useState<ModeFilter>('total')
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     api.usage(sinceFor(period)).then(setRows).catch(() => {})
   }, [period])
 
   useEffect(() => {
-    api.credits().then(setCredits).catch(() => {})
-    api.configKeys().then(setKeys).catch(() => {})
+    Promise.all([
+      api.credits().then(setCredits).catch(() => {}),
+      api.configKeys().then(setKeys).catch(() => {}),
+    ]).finally(() => setLoading(false))
   }, [])
 
   // Filter by mode
@@ -146,7 +149,7 @@ export function CostsPage() {
         </div>
 
         {/* Per-key breakdown */}
-        {configured.length === 0 && rows.length === 0 && (
+        {!loading && configured.length === 0 && rows.length === 0 && (
           <p className="text-sm text-normal-black opacity-60">No API keys configured. Add keys in Settings to start tracking costs.</p>
         )}
 

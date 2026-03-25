@@ -207,6 +207,7 @@ export function DashboardPage() {
   const [allRuns, setAllRuns] = useState<AutomationRun[]>([])
   const [automations, setAutomations] = useState<Automation[]>([])
   const [showAll, setShowAll] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const nameMap = new Map(automations.map(a => [a.id, a.name]))
 
@@ -217,7 +218,7 @@ export function DashboardPage() {
     ]).then(([runs, autos]) => {
       setTodayRuns(runs)
       setAutomations(autos)
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   const loadAll = () => {
@@ -228,7 +229,7 @@ export function DashboardPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        {todayRuns.length === 0 ? (
+        {!loading && todayRuns.length === 0 ? (
           <h2 className="text-sm font-medium text-hover-black mb-3">No runs today.</h2>
         ) : (
           <>

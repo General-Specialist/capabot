@@ -500,6 +500,7 @@ function PersonaCard({ persona: p, allTags, deleting, onSave, onDelete }: {
 
 export function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([])
+  const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<number | null>(null)
   const [filterTag, setFilterTag] = useState<string | null>(null)
@@ -513,7 +514,7 @@ export function PersonasPage() {
 
   const load = () => api.personas().then(setPersonas).catch(() => {})
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load().finally(() => setLoading(false)) }, [])
 
   const handleCreate = async (data: { name: string; prompt: string; username: string; avatar_url: string; tags: string[] }) => {
     await api.personaCreate(data)
@@ -609,7 +610,7 @@ export function PersonasPage() {
           </div>
         )}
 
-        {filtered.length === 0 && !creating ? (
+        {!loading && filtered.length === 0 && !creating ? (
           <p className="text-sm text-normal-black">{filterTag ? `No personas with tag "${filterTag}".` : 'No personas yet. Create one and tag them with @PersonaName to get started.'}</p>
         ) : (
           <div className="grid grid-cols-2 gap-4">

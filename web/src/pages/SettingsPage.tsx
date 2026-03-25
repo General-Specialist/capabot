@@ -4,16 +4,15 @@ import { api, type ProviderKeys, type ProviderInfo } from '@/lib/api'
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
     const stored = localStorage.getItem('darkMode')
-    if (stored !== null) return stored === 'true'
-    document.documentElement.classList.add('dark')
-    return true
+    return stored !== null ? stored === 'true' : window.matchMedia('(prefers-color-scheme: dark)').matches
   })
-  const toggle = () => {
-    const next = !dark
-    setDark(next)
-    document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem('darkMode', String(next))
-  }
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+    localStorage.setItem('darkMode', String(dark))
+  }, [dark])
+
+  const toggle = () => setDark(d => !d)
   return { dark, toggle }
 }
 

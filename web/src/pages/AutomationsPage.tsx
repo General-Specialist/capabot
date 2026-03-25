@@ -167,11 +167,12 @@ export function AutomationsPage() {
   const [triggering, setTriggering] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const load = () => api.automations().then(setAutomations).catch(() => {})
 
   useEffect(() => {
-    load()
+    load().finally(() => setLoading(false))
     api.skills().then(setSkills).catch(() => {})
   }, [])
 
@@ -301,7 +302,7 @@ export function AutomationsPage() {
           {isNew && <AutomationForm form={form} setForm={setForm} error={error} saving={saving} triggering={false} deleting={false} selected={null} onSave={() => void save()} onTrigger={() => {}} onDelete={() => {}} onClose={() => setIsNew(false)} onScheduleChange={handleScheduleChange} skills={skills} />}
 
           {/* List */}
-          {automations.length === 0 && !isNew ? (
+          {!loading && automations.length === 0 && !isNew ? (
             <p className="text-sm text-normal-black">No automations yet. Click <strong>New</strong> to create one.</p>
           ) : (
             <div className="space-y-0">

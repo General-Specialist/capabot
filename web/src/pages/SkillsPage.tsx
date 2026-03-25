@@ -26,6 +26,7 @@ export function SkillsPage() {
   const [removing, setRemoving] = useState<Record<string, boolean>>({})
   const [installResults, setInstallResults] = useState<Record<string, { success: boolean; message: string }>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [loading, setLoading] = useState(true)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadInstalled = () =>
@@ -34,7 +35,10 @@ export function SkillsPage() {
   // Load installed skills immediately
   useEffect(() => {
     let cancelled = false
-    api.skills().then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
+    api.skills()
+      .then(res => { if (!cancelled) setInstalled(res as InstalledSkill[]) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
 
@@ -195,7 +199,7 @@ export function SkillsPage() {
 
         {tab === 'installed' && (
           <>
-            {installed.length === 0 ? (
+            {!loading && installed.length === 0 ? (
               <p className="text-sm text-normal-black">No skills installed yet. Browse and install some.</p>
             ) : (
               <div className="space-y-2">
