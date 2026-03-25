@@ -158,7 +158,7 @@ export function SkillsPage() {
           )}
         </div>
 
-        <p className="text-xs text-normal-black mb-5">Markdown instructions injected into the agent's context to guide its behaviour. No code required.</p>
+        <p className="text-xs text-normal-black mb-5">Markdown instructions injected into the agent's context to guide its behavior. No code required.</p>
 
         <AnimatePresence>
         {tab === 'custom' && showCreate && (

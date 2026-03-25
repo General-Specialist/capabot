@@ -86,27 +86,23 @@ function AutomationForm({ form, setForm, error, saving, triggering, deleting, se
 }) {
   return (
     <div className="rounded-2xl border border-border-white p-5 mt-1">
-      <div className="flex gap-2">
+      <div className="flex items-start gap-2">
         <div className="flex-1 flex flex-col gap-2">
-        <div className="flex items-center gap-4">
-          <input
-            value={form.name}
-            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="Name"
-            className="flex-1 min-w-0 text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
-          />
-          <div className="shrink-0">
-            <DatePicker
-              rrule={form.rrule || null}
-              start_at={form.start_at}
-              start_offset={form.start_offset}
-              end_at={form.end_at}
-              end_offset={form.end_offset}
-              showRepeat={true}
-              onChange={onScheduleChange}
-            />
-          </div>
-        </div>
+        <input
+          value={form.name}
+          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          placeholder="Name"
+          className="w-full text-sm px-3 py-2 rounded-xl border border-border-white bg-sidebar-white text-hover-black outline-none"
+        />
+        <DatePicker
+          rrule={form.rrule || null}
+          start_at={form.start_at}
+          start_offset={form.start_offset}
+          end_at={form.end_at}
+          end_offset={form.end_offset}
+          showRepeat={true}
+          onChange={onScheduleChange}
+        />
         <SkillPicker skills={skills} value={form.skill_names} onChange={names => setForm(f => ({ ...f, skill_names: names }))} />
         <textarea
           value={form.prompt}
@@ -291,7 +287,7 @@ export function AutomationsPage() {
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-4">
           <AnimatePresence mode="wait">
             {isNew ? (
               <motion.div
