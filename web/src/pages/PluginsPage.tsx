@@ -135,6 +135,8 @@ export function PluginsPage() {
           )}
         </div>
 
+        <p className="text-xs text-normal-black mb-5">Executable scripts the agent can run as tools. Written in Go and compiled on save.</p>
+
         {tab === 'custom' && showCreate && (
           <div className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white">
             <input

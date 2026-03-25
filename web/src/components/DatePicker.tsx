@@ -16,6 +16,7 @@ import {
   SunMoon,
   Moon,
   CalendarRange,
+  Clock,
 } from "lucide-react";
 import Calendar from "./Calendar";
 import PillSwitch from "./PillSwitch";
@@ -51,6 +52,7 @@ interface PickerState {
   rrule: string | null;
   interval: string;
   byWeekday: string[];
+  byTime: string | null; // "HH:MM" or null
 }
 
 const parseISO = (iso?: string | null): { value: number; unit: RelativeUnit } | "today" | null => {
@@ -210,21 +212,30 @@ const getInitialState = (props: {
   end_offset?: string | null;
   rrule?: string | null;
 }): PickerState => {
-  const parseRRule = (rrule: string | null | undefined): { freq: string | null; interval: string; byWeekday: string[] } => {
-    if (!rrule) return { freq: null, interval: "1", byWeekday: [] };
+  const parseRRule = (rrule: string | null | undefined): { freq: string | null; interval: string; byWeekday: string[]; byTime: string | null } => {
+    if (!rrule) return { freq: null, interval: "1", byWeekday: [], byTime: null };
     const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
     const freqMatch = rrule.match(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/);
     const byDayMatch = rrule.match(/BYDAY=([A-Z,]+)/);
+    const byHourMatch = rrule.match(/BYHOUR=(\d+)/);
+    const byMinuteMatch = rrule.match(/BYMINUTE=(\d+)/);
+    let byTime: string | null = null;
+    if (byHourMatch) {
+      const h = byHourMatch[1].padStart(2, "0");
+      const m = byMinuteMatch ? byMinuteMatch[1].padStart(2, "0") : "00";
+      byTime = `${h}:${m}`;
+    }
     return {
       freq: freqMatch?.[1] || null,
       interval: intervalMatch?.[1] || "1",
       byWeekday: byDayMatch ? byDayMatch[1].split(",") : [],
+      byTime,
     };
   };
 
   const startParsed = parseISO(props.start_offset);
   const endParsed = parseISO(props.end_offset);
-  const { freq, interval, byWeekday } = parseRRule(props.rrule);
+  const { freq, interval, byWeekday, byTime } = parseRRule(props.rrule);
 
   return {
     start: {
@@ -242,6 +253,7 @@ const getInitialState = (props: {
     rrule: freq,
     interval,
     byWeekday,
+    byTime,
   };
 };
 
@@ -296,21 +308,27 @@ const DatePicker: React.FC<DatePickerProps> = ({
   const displayStartAbs = state.start.abs && !state.start.offset ? state.start.abs.toISOString() : null;
   const displayEndAbs = state.end.abs && !state.end.offset ? state.end.abs.toISOString() : null;
 
-  const formatRRule = (freq: string | null, int: string, byWeekday: string[]): string => {
+  const formatRRule = (freq: string | null, int: string, byWeekday: string[], byTime: string | null): string => {
     if (!freq) return "";
     const freqMap: Record<string, string> = { DAILY: "day", WEEKLY: "week", MONTHLY: "month", YEARLY: "year" };
     const unit = freqMap[freq] || freq.toLowerCase();
     const n = parseInt(int);
-    const baseText = n === 1 ? unit : `${n} ${unit}s`;
+    let baseText = n === 1 ? unit : `${n} ${unit}s`;
     if (freq === "WEEKLY" && byWeekday.length > 0) {
       const dayMap: Record<string, string> = { SU: "Sun", MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat" };
-      return `${baseText} on ${byWeekday.map((d) => dayMap[d]).join(", ")}`;
+      baseText = `${baseText} on ${byWeekday.map((d) => dayMap[d]).join(", ")}`;
+    }
+    if (byTime) {
+      const [h, m] = byTime.split(":").map(Number);
+      const ampm = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      baseText = `${baseText} at ${h12}:${String(m).padStart(2, "0")} ${ampm}`;
     }
     return baseText;
   };
 
   const displayText = state.rrule
-    ? `${formatDate(displayStartAbs, state.start.offset)} - ${displayEndAbs || state.end.offset ? formatDate(displayEndAbs, state.end.offset) : "∞"} (every ${formatRRule(state.rrule, state.interval, state.byWeekday)})`
+    ? `${formatDate(displayStartAbs, state.start.offset)} - ${displayEndAbs || state.end.offset ? formatDate(displayEndAbs, state.end.offset) : "∞"} (every ${formatRRule(state.rrule, state.interval, state.byWeekday, state.byTime)})`
     : `${formatDate(displayStartAbs, state.start.offset)}${displayEndAbs || state.end.offset ? ` - ${formatDate(displayEndAbs, state.end.offset)}` : isNoEnd ? " - ∞" : ""}`;
 
   const handleApply = () => {
@@ -319,6 +337,11 @@ const DatePicker: React.FC<DatePickerProps> = ({
       const parts = [`FREQ=${state.rrule}`];
       if (state.interval !== "1") parts.push(`INTERVAL=${state.interval}`);
       if (state.rrule === "WEEKLY" && state.byWeekday.length > 0) parts.push(`BYDAY=${state.byWeekday.join(",")}`);
+      if (state.byTime) {
+        const [h, m] = state.byTime.split(":").map(Number);
+        parts.push(`BYHOUR=${h}`);
+        parts.push(`BYMINUTE=${m}`);
+      }
       finalRRule = parts.join(";");
     }
     onChange?.({
@@ -473,6 +496,30 @@ const DatePicker: React.FC<DatePickerProps> = ({
                             </button>
                           );
                         })}
+                      </div>
+                    </div>
+                  )}
+                  {state.rrule && (
+                    <div className="mt-3 pt-3 border-t border-border-white">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Clock className="w-3.5 h-3.5 text-brand-primary" />
+                        <span className="text-xs text-hover-black">Time of day</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={state.byTime || ""}
+                          onChange={(e) => setState((prev) => ({ ...prev, byTime: e.target.value || null }))}
+                          className="px-2 py-1.5 bg-white border border-border-white rounded-lg text-14 text-hover-black w-full"
+                        />
+                        {state.byTime && (
+                          <button
+                            onClick={() => setState((prev) => ({ ...prev, byTime: null }))}
+                            className="text-xs text-normal-black hover:text-hover-black whitespace-nowrap"
+                          >
+                            Clear
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

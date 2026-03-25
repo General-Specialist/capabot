@@ -24,8 +24,11 @@ func NewSkillCreateMarkdownTool(skillsDir string, skillReg *skill.Registry) *Ski
 
 func (t *SkillCreateMarkdownTool) Name() string { return "skill_create_markdown" }
 func (t *SkillCreateMarkdownTool) Description() string {
-	return "Create a new markdown skill (Tier 1). These are prompt-only skills — " +
-		"markdown instructions injected into the system prompt. No code required."
+	return "Create a new markdown skill. These are prompt-only skills — " +
+		"markdown instructions injected into the system prompt. No code required. " +
+		"This is the DEFAULT choice for creating skills: it appears on the Skills page and works for " +
+		"any task the agent can accomplish with its existing tools (browsing, shell, files, etc.). " +
+		"Only use skill_create (Go code) when the skill itself needs to compile and run code as a standalone binary."
 }
 func (t *SkillCreateMarkdownTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{

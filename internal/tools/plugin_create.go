@@ -26,10 +26,13 @@ func NewSkillCreateTool(skillsDir string, skillReg *skill.Registry, toolReg *age
 	return &SkillCreateTool{skillsDir: skillsDir, skillReg: skillReg, toolReg: toolReg}
 }
 
-func (t *SkillCreateTool) Name() string { return "skill_create" }
+func (t *SkillCreateTool) Name() string { return "plugin_create" }
 func (t *SkillCreateTool) Description() string {
 	return "Create a new executable skill from Go source code. The skill is immediately available as a tool. " +
-		"The Go program must read JSON params from stdin and write {\"content\":\"...\",\"is_error\":false} to stdout."
+		"The Go program must read JSON params from stdin and write {\"content\":\"...\",\"is_error\":false} to stdout. " +
+		"NOTE: this creates a Plugin (shown on the Plugins page), not a Skill. " +
+		"Only use this when the task genuinely requires compiled Go code (e.g. calling an API, processing data). " +
+		"For prompt-based or instruction-based skills that appear on the Skills page, use skill_create_markdown instead."
 }
 func (t *SkillCreateTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{

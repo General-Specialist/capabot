@@ -157,6 +157,8 @@ export function SkillsPage() {
           )}
         </div>
 
+        <p className="text-xs text-normal-black mb-5">Markdown instructions injected into the agent's context to guide its behaviour. No code required.</p>
+
         {tab === 'custom' && showCreate && (
           <div className="mb-6 space-y-3 p-4 rounded-2xl border border-border-white bg-sidebar-white">
             <input

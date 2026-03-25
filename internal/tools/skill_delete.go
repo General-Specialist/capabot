@@ -12,21 +12,21 @@ import (
 	"github.com/polymath/gostaff/internal/skill"
 )
 
-// SkillDeleteTool lets the agent remove an installed skill.
-type SkillDeleteTool struct {
+// SkillDeleteMarkdownTool lets the agent remove a Tier 1 markdown skill.
+type SkillDeleteMarkdownTool struct {
 	skillsDir string
 	skillReg  *skill.Registry
 }
 
-func NewSkillDeleteTool(skillsDir string, skillReg *skill.Registry) *SkillDeleteTool {
-	return &SkillDeleteTool{skillsDir: skillsDir, skillReg: skillReg}
+func NewSkillDeleteMarkdownTool(skillsDir string, skillReg *skill.Registry) *SkillDeleteMarkdownTool {
+	return &SkillDeleteMarkdownTool{skillsDir: skillsDir, skillReg: skillReg}
 }
 
-func (t *SkillDeleteTool) Name() string { return "skill_delete" }
-func (t *SkillDeleteTool) Description() string {
-	return "Delete an installed skill or plugin by name. Only skills in the managed skills directory can be removed."
+func (t *SkillDeleteMarkdownTool) Name() string { return "skill_delete" }
+func (t *SkillDeleteMarkdownTool) Description() string {
+	return "Delete a markdown skill by name. Only removes Tier 1 skills created with skill_create_markdown."
 }
-func (t *SkillDeleteTool) Parameters() json.RawMessage {
+func (t *SkillDeleteMarkdownTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -36,7 +36,7 @@ func (t *SkillDeleteTool) Parameters() json.RawMessage {
 	}`)
 }
 
-func (t *SkillDeleteTool) Execute(_ context.Context, params json.RawMessage) (agent.ToolResult, error) {
+func (t *SkillDeleteMarkdownTool) Execute(_ context.Context, params json.RawMessage) (agent.ToolResult, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
@@ -49,27 +49,30 @@ func (t *SkillDeleteTool) Execute(_ context.Context, params json.RawMessage) (ag
 		return agent.ToolResult{Content: "name is required", IsError: true}, nil
 	}
 
-	if t.skillReg == nil {
-		return agent.ToolResult{Content: "skill registry not available", IsError: true}, nil
-	}
+	skillDir := filepath.Join(t.skillsDir, p.Name)
 
-	skillPath, ok := t.skillReg.SkillPath(p.Name)
-	if !ok {
+	// Ensure it's a T1 markdown skill (has SKILL.md, no main.go)
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); os.IsNotExist(err) {
 		return agent.ToolResult{Content: fmt.Sprintf("skill %q not found", p.Name), IsError: true}, nil
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "main.go")); err == nil {
+		return agent.ToolResult{Content: fmt.Sprintf("%q is a plugin, not a skill — use plugin_delete instead", p.Name), IsError: true}, nil
 	}
 
 	// Only allow removing skills inside the managed skills directory.
 	absSkillsDir, _ := filepath.Abs(t.skillsDir)
-	absSkillPath, _ := filepath.Abs(skillPath)
-	if !strings.HasPrefix(absSkillPath, absSkillsDir) {
-		return agent.ToolResult{Content: fmt.Sprintf("skill %q is not removable (system or workspace skill)", p.Name), IsError: true}, nil
+	absSkillDir, _ := filepath.Abs(skillDir)
+	if !strings.HasPrefix(absSkillDir, absSkillsDir) {
+		return agent.ToolResult{Content: fmt.Sprintf("skill %q is not removable (system skill)", p.Name), IsError: true}, nil
 	}
 
-	if err := os.RemoveAll(skillPath); err != nil {
+	if err := os.RemoveAll(skillDir); err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("removing skill: %v", err), IsError: true}, nil
 	}
 
-	t.skillReg.Unregister(p.Name)
+	if t.skillReg != nil {
+		t.skillReg.Unregister(p.Name)
+	}
 
 	return agent.ToolResult{Content: fmt.Sprintf("skill %q deleted", p.Name)}, nil
 }

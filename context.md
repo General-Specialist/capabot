@@ -103,7 +103,7 @@ The main wiring function. Startup sequence:
 5. Init LLM router
 6. Init tool registry (built-in tools + memory tool if store available)
 7. Init skill registry (loads dirs); register SDK plugins via `registerSDKPlugins` (compiled-in Go plugins + OpenClaw adapters for installed TS/JS/Python plugins); register native skills as tools
-8. Register `skill_create` and `skill_edit` as _extended_ tools; start skill hot-reload poller (1s interval — detects newly installed skills)
+8. Register skill/plugin management tools as _extended_ tools: `skill_create_markdown`, `skill_edit`, `skill_delete` (T1 markdown), `plugin_create`, `plugin_edit`, `plugin_delete` (T2 Go), `skill_search` (ClawHub). Base system prompt includes a Skills vs Plugins explanation so the agent picks the right tool. Start skill hot-reload poller (1s interval — detects newly installed skills)
 9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach SDK plugin hooks to each agent)
 10. `syncDiscordPeopleRoles` — creates Discord roles for people/tags that don't have one yet (startup helper, extracted from `runServe`)
 11. Start cron scheduler
@@ -338,6 +338,7 @@ Repository pattern. All DB access goes through this.
 - `GetActiveMode` / `SetActiveMode` — stored in the `settings` table under key `active_mode`; returns `"default"` if unset
 - `GetSystemPrompt` / `SetSystemPrompt` — stored in `settings` as `system_prompt`
 - `GetChannelBinding` / `SetChannelBinding` / `DeleteChannelBinding` — `channel_bindings` table maps channel ID to `persona:<username>` (person binding) or a tag name
+- `GetPersonByID` / `GetPersonByName` / `GetPersonByUsername` — person lookup by different keys
 - `SaveUsage` — writes to `usage_log` table for cost tracking
 
 ---
@@ -527,7 +528,7 @@ CRUD handlers for automations. `handleAutomationsCreate` / `handleAutomationsUpd
 Handlers for mode CRUD. Built-in modes (`default`, `chat`, `execute`) cannot be deleted.
 
 ### `people.go`
-CRUD for people. On create/update, syncs Discord role if Discord is configured.
+CRUD for people. On create, syncs Discord role if Discord is configured. On update, diffs against the existing person and only calls Discord API when username or tags actually changed (not on prompt/avatar edits) to avoid unnecessary API calls.
 
 ### `skills_create.go`
 `handleSkillsCreate` — creates a Tier 2 native Go skill. Writes `SKILL.md` + `main.go`, compiles, hot-reloads into registries.
@@ -657,17 +658,23 @@ Auto-installs Playwright helper script to `~/.gostaff/browser/` on first use. If
 ### `usetool.go`
 `UseToolTool` (`use_tool`) — meta-tool proxy for extended tools. Takes `{tool, input}` and dispatches to the named extended tool. Description dynamically includes all extended tool names and descriptions.
 
-### `skill_create.go`
-`SkillCreateTool` (`skill_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.gostaff/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Skill is immediately usable.
-
 ### `skill_create_markdown.go`
-`SkillCreateMarkdownTool` (`skill_create_markdown`) — extended tool. Creates a Tier 1 markdown skill. Takes `{name, instructions, description?}`. Writes `SKILL.md` with frontmatter + instructions. No code, no compilation. Hot-reloads into skill registry.
+`SkillCreateMarkdownTool` (`skill_create_markdown`) — extended tool. Creates a Tier 1 markdown skill. Takes `{name, instructions, description?}`. Writes `SKILL.md` with frontmatter + instructions. No code, no compilation. Hot-reloads into skill registry. Shows on Skills page.
 
 ### `skill_edit.go`
-`SkillEditTool` (`skill_edit`) — extended tool. Edits an existing skill's instructions, description, or Go source code. Preserves fields not provided. Recompiles if code is updated.
+`SkillEditMarkdownTool` (`skill_edit`) — extended tool. Updates a Tier 1 markdown skill's `instructions` and/or `description`. Preserves fields not provided. Errors if skill has a `main.go` (use `plugin_edit` for those).
 
 ### `skill_delete.go`
-`SkillDeleteTool` (`skill_delete`) — extended tool. Removes an installed skill by name. Only skills inside the managed `~/.gostaff/skills/` directory can be deleted. Unregisters from skill registry.
+`SkillDeleteMarkdownTool` (`skill_delete`) — extended tool. Removes a Tier 1 markdown skill by name. Errors if the target has a `main.go` (use `plugin_delete` for plugins). Only removes skills inside the managed skills directory.
+
+### `plugin_create.go`
+`SkillCreateTool` (`plugin_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.gostaff/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Plugin is immediately usable. Shows on Plugins page.
+
+### `plugin_edit.go`
+`SkillEditTool` (`plugin_edit`) — extended tool. Edits an existing plugin's instructions, description, or Go source code. Preserves fields not provided. Recompiles if code is updated.
+
+### `plugin_delete.go`
+`SkillDeleteTool` (`plugin_delete`) — extended tool. Removes an installed plugin or skill by name. Only items inside the managed `~/.gostaff/skills/` directory can be deleted. Unregisters from skill registry.
 
 ### `skill_search.go`
 `SkillSearchTool` (`skill_search`) — extended tool. Searches the ClawHub catalog via `ClawHubClient.BrowseSkills`. Takes `{query, limit?}`. Returns formatted list of matching skills with name, slug, description, and download count.
@@ -715,7 +722,7 @@ Vite + React 18 + Tailwind CSS v4. Embedded in the Go binary via `embed.FS`.
 - **`PluginsPage`** — two tabs: "Custom" (T2 native Go plugins) and "OpenClaw" (T3 external plugins). OpenClaw tab has an install bar styled as `openclaw plugins install [input]` that accepts bare names (npm), `owner/repo` (GitHub), or full GitHub URLs. Success message auto-dismisses after 5s.
 - **`SettingsPage`** — dark mode toggle, execute key fallback toggle (default off), default/summarization model selects, mode switcher with per-mode API keys
 - **`PeoplePage`** — CRUD for people/personas with avatar upload, tags, prompt editing
-- **`AutomationsPage`** — CRUD for scheduled automations with RRULE, manual trigger, run history
+- **`AutomationsPage`** — CRUD for scheduled automations with RRULE, manual trigger, run history. DatePicker supports time-of-day via `BYHOUR`/`BYMINUTE` (e.g. "every day at 9:00 AM")
 - **`DashboardPage`** — health status, recent runs
 - **`CostsPage`** — usage/credits dashboard
 - **`MemoryPage`** — key-value memory store viewer/editor

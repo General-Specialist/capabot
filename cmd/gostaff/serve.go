@@ -108,8 +108,10 @@ func runServe(configPath string) error {
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
 	// 7d. Register skill management tools
-	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateMarkdownTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillEditMarkdownTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteMarkdownTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteTool(defaultSkillsDir(), skillRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillSearchTool(skill.NewClawHubClient(skill.ClawHubConfig{})))
@@ -142,7 +144,11 @@ Key tools:
 - shell_exec: Run shell commands (allowlisted binaries only).
 - file_read / file_write / file_edit / glob / grep: Work with files.
 
-When a tool is available for a task, use it directly. Do not do manual discovery or verification steps before using a tool.`
+When a tool is available for a task, use it directly. Do not do manual discovery or verification steps before using a tool.
+
+Skills vs plugins:
+- skill_create_markdown: creates a SKILL — a markdown file with instructions injected into the agent's context. Use this by default when asked to "make a skill". No code needed.
+- plugin_create: creates a PLUGIN — a compiled Go binary the agent can invoke as a tool. Only use this when the task genuinely requires running standalone executable code that cannot be done with existing tools.`
 	allSkills := skillRegistry.List()
 	defaultSystemPrompt := skill.BuildSystemPrompt(basePrompt, allSkills)
 	agentCfg := agent.AgentConfig{
