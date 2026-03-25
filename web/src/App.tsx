@@ -6,6 +6,7 @@ import { SettingsPage } from '@/pages/SettingsPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { PersonasPage } from '@/pages/PersonasPage'
+import { CostsPage } from '@/pages/CostsPage'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/automations" element={<AutomationsPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/personas" element={<PersonasPage />} />
+            <Route path="/costs" element={<CostsPage />} />
           </Routes>
         </main>
       </div>

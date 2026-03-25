@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/polymath/capabot/internal/llm"
@@ -35,18 +36,31 @@ type AgentEvent struct {
 
 // AgentConfig holds configuration for an Agent instance.
 type AgentConfig struct {
-	ID            string
-	Model         string
-	SystemPrompt  string
-	MaxIterations int
-	MaxTokens     int
-	Temperature   *float64
+	ID                  string
+	Model               string
+	SystemPrompt        string
+	MaxIterations       int
+	MaxTokens           int
+	Temperature         *float64
+	DisableThinking     bool
+	SummarizationModel  string // cheap model for condensing tool outputs (empty = dumb truncation)
+	Mode                string // active mode name for usage tracking
+}
+
+// StoreUsage mirrors memory.UsageRecord fields the agent writes.
+type StoreUsage struct {
+	Provider     string
+	Model        string
+	Mode         string
+	InputTokens  int
+	OutputTokens int
 }
 
 // StoreWriter is the subset of memory.Store the agent needs for audit logging.
 type StoreWriter interface {
 	SaveMessage(ctx context.Context, msg StoreMessage) (int64, error)
 	SaveToolExecution(ctx context.Context, exec StoreToolExecution) error
+	SaveUsage(ctx context.Context, usage StoreUsage) error
 }
 
 // StoreMessage mirrors memory.Message fields the agent writes.
@@ -72,11 +86,11 @@ type StoreToolExecution struct {
 
 // RunResult is the final outcome of an agent run.
 type RunResult struct {
-	Response   string         `json:"response"`
-	ToolCalls  int            `json:"tool_calls"`
-	Iterations int            `json:"iterations"`
-	Usage      llm.Usage      `json:"usage"`
-	StopReason string         `json:"stop_reason"`
+	Response   string            `json:"response"`
+	ToolCalls  int               `json:"tool_calls"`
+	Iterations int               `json:"iterations"`
+	Usage      llm.Usage         `json:"usage"`
+	StopReason string            `json:"stop_reason"`
 	History    []llm.ChatMessage `json:"-"`
 }
 
@@ -146,16 +160,23 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 
 		result.Iterations = iteration + 1
 
+		// Compress old tool outputs before sending to LLM.
+		// Current iteration's results stay full; older ones get condensed.
+		if iteration > 0 {
+			a.compressOldToolOutputs(ctx, history)
+		}
+
 		// Build the windowed message slice for the LLM
 		windowedMsgs := BuildMessages(history, 50)
 
 		req := llm.ChatRequest{
-			Model:     a.config.Model,
-			Messages:  windowedMsgs,
-			System:    a.config.SystemPrompt,
-			Tools:     toolDefs,
-			MaxTokens: a.config.MaxTokens,
-			Temperature: a.config.Temperature,
+			Model:           a.config.Model,
+			Messages:        windowedMsgs,
+			System:          a.config.SystemPrompt,
+			Tools:           toolDefs,
+			MaxTokens:       a.config.MaxTokens,
+			Temperature:     a.config.Temperature,
+			DisableThinking: a.config.DisableThinking,
 		}
 
 		a.logger.Debug().
@@ -179,6 +200,9 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 		a.ctxMgr.RecordUsage(resp.Usage)
 		result.Usage.InputTokens += resp.Usage.InputTokens
 		result.Usage.OutputTokens += resp.Usage.OutputTokens
+
+		// Log usage for cost tracking
+		a.persistUsage(ctx, resp)
 		result.StopReason = resp.StopReason
 
 		// Persist assistant message
@@ -213,7 +237,10 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 
 			toolResult := a.executeTool(ctx, sessionID, tc)
 
-			// Truncate large outputs
+			// Persist full output before any truncation
+			a.persistToolMessage(ctx, sessionID, tc.ID, tc.Name, string(tc.Input), toolResult.Content)
+
+			// Truncate extremely large outputs (hard cap)
 			truncated, wasTruncated := a.ctxMgr.TruncateToolOutput(toolResult.Content)
 			if wasTruncated {
 				a.logger.Warn().
@@ -223,10 +250,8 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 				toolResult.Content = truncated
 			}
 
-			// Persist tool result as a message so history can reconstruct tool calls
-			a.persistToolMessage(ctx, sessionID, tc.ID, tc.Name, string(tc.Input), toolResult.Content)
-
-			// Append tool result to history
+			// Append tool result to history (full output for current iteration —
+			// will be compressed on the next iteration before sending to LLM)
 			toolMsg := llm.ChatMessage{
 				Role: "tool",
 				ToolResult: &llm.ToolResult{
@@ -238,14 +263,6 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 			}
 			history = append(history, toolMsg)
 		}
-
-		// Check if we need summarization
-		if a.ctxMgr.NeedsSummarization() {
-			a.logger.Warn().
-				Int("input_tokens", a.ctxMgr.totalInputTokens).
-				Int("budget", a.ctxMgr.Budget()).
-				Msg("approaching context budget")
-		}
 	}
 
 	// Max iterations reached — return whatever we have
@@ -256,6 +273,89 @@ func (a *Agent) Run(ctx context.Context, sessionID string, messages []llm.ChatMe
 		Int("max_iterations", a.config.MaxIterations).
 		Msg("agent hit iteration limit")
 	return result, nil
+}
+
+// compressThreshold is the minimum content length before compression kicks in.
+// Short outputs like "edited /path/to/file" are already compact.
+const compressThreshold = 300
+
+// compressOldToolOutputs replaces tool result content in history with compact
+// summaries, except for the most recent batch of tool results (from the last
+// assistant message with tool calls). Uses a cheap model if configured,
+// otherwise falls back to simple truncation.
+func (a *Agent) compressOldToolOutputs(ctx context.Context, history []llm.ChatMessage) {
+	// Find the index of the last assistant message with tool calls.
+	// Everything after it is "current" tool results — keep those full.
+	lastAssistantIdx := -1
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "assistant" && len(history[i].ToolCalls) > 0 {
+			lastAssistantIdx = i
+			break
+		}
+	}
+
+	for i := 0; i < lastAssistantIdx; i++ {
+		tr := history[i].ToolResult
+		if tr == nil || len(tr.Content) <= compressThreshold {
+			continue
+		}
+		tr.Content = a.summarizeOutput(ctx, tr.Content)
+		tr.Parts = nil // drop media from old results
+	}
+}
+
+// summarizeOutput condenses a tool output. Uses the summarization model if
+// configured, otherwise falls back to simple truncation.
+func (a *Agent) summarizeOutput(ctx context.Context, content string) string {
+	if a.config.SummarizationModel != "" {
+		summary, err := a.llmSummarize(ctx, content)
+		if err == nil && summary != "" {
+			return summary
+		}
+		a.logger.Debug().Err(err).Msg("summarization model failed, falling back to truncation")
+	}
+	return truncateOutput(content)
+}
+
+// llmSummarize calls the cheap model to produce a concise summary.
+func (a *Agent) llmSummarize(ctx context.Context, content string) (string, error) {
+	// Cap what we send to the summarizer to avoid blowing its context
+	input := content
+	if len(input) > 8000 {
+		input = input[:8000]
+	}
+
+	resp, err := a.provider.Chat(ctx, llm.ChatRequest{
+		Model:           a.config.SummarizationModel,
+		System:          "Summarize this tool output in 1-3 sentences. Focus on the key result: success/failure, what was found/changed, important data. Be terse.",
+		Messages:        []llm.ChatMessage{{Role: "user", Content: input}},
+		MaxTokens:       256,
+		DisableThinking: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// truncateOutput is the dumb fallback: first 2 lines + stats.
+func truncateOutput(content string) string {
+	lines := strings.Count(content, "\n") + 1
+	chars := len(content)
+
+	preview := content
+	if idx := strings.Index(content, "\n"); idx >= 0 {
+		if idx2 := strings.Index(content[idx+1:], "\n"); idx2 >= 0 {
+			preview = content[:idx+1+idx2]
+		} else {
+			preview = content[:idx]
+		}
+	}
+	if len(preview) > 200 {
+		preview = preview[:200]
+	}
+
+	return fmt.Sprintf("%s\n[condensed: %d lines, %d chars — re-run tool for full output]", preview, lines, chars)
 }
 
 // buildToolDefs converts registered tools to LLM ToolDefinitions.
@@ -378,5 +478,25 @@ func (a *Agent) persistToolExecution(ctx context.Context, sessionID string, tc l
 
 	if err := a.store.SaveToolExecution(ctx, exec); err != nil {
 		a.logger.Error().Err(err).Msg("failed to persist tool execution")
+	}
+}
+
+// persistUsage logs an LLM call for cost tracking.
+func (a *Agent) persistUsage(ctx context.Context, resp *llm.ChatResponse) {
+	if a.store == nil {
+		return
+	}
+	mode := a.config.Mode
+	if mode == "" {
+		mode = "default"
+	}
+	if err := a.store.SaveUsage(ctx, StoreUsage{
+		Provider:     resp.Provider,
+		Model:        resp.Model,
+		Mode:         mode,
+		InputTokens:  resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens,
+	}); err != nil {
+		a.logger.Error().Err(err).Msg("failed to persist usage")
 	}
 }

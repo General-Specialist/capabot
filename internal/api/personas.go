@@ -36,6 +36,26 @@ func (s *Server) handleDefaultModelPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleSummarizationModelGet(w http.ResponseWriter, r *http.Request) {
+	v, _ := s.store.GetSetting(r.Context(), "summarization_model")
+	writeJSON(w, map[string]string{"summarization_model": v})
+}
+
+func (s *Server) handleSummarizationModelPut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SummarizationModel string `json:"summarization_model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetSetting(r.Context(), "summarization_model", body.SummarizationModel); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleSystemPromptGet(w http.ResponseWriter, r *http.Request) {
 	v, err := s.store.GetSystemPrompt(r.Context())
 	if err != nil {

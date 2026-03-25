@@ -14,31 +14,41 @@ import (
 	"github.com/polymath/capabot/internal/agent"
 )
 
-// GlobTool implements the glob tool — find files matching a pattern.
-type GlobTool struct{}
+// SearchTool combines file finding (glob) and content searching (grep) into one tool.
+type SearchTool struct{}
 
-func (t *GlobTool) Name() string { return "glob" }
-func (t *GlobTool) Description() string {
-	return "Find files matching a glob pattern (e.g. **/*.go). Returns matching paths sorted by modification time, newest first."
+func (t *SearchTool) Name() string { return "search" }
+func (t *SearchTool) Description() string {
+	return "Find files or search content. Use mode=glob to find files by pattern (e.g. **/*.go), mode=grep to search file contents with regex."
 }
 
-func (t *GlobTool) Parameters() json.RawMessage {
+func (t *SearchTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"pattern": {"type": "string", "description": "Glob pattern, e.g. \"**/*.go\" or \"src/**/*.ts\""},
-			"path":    {"type": "string", "description": "Base directory to search (default: current working directory)"},
-			"limit":   {"type": "integer", "description": "Max results to return (default 200)"}
+			"mode":             {"type": "string", "enum": ["glob", "grep"], "description": "glob=find files by pattern, grep=search file contents"},
+			"pattern":          {"type": "string", "description": "Glob pattern (glob mode) or regex (grep mode)"},
+			"path":             {"type": "string", "description": "Base directory to search (default: cwd)"},
+			"glob":             {"type": "string", "description": "File name filter for grep mode, e.g. \"*.go\""},
+			"output_mode":      {"type": "string", "enum": ["content", "files", "count"], "description": "Grep output: content=matching lines, files=paths only, count=match counts (default: files)"},
+			"case_insensitive": {"type": "boolean", "description": "Case-insensitive grep (default false)"},
+			"context_lines":    {"type": "integer", "description": "Lines of context around grep matches (content mode only)"},
+			"limit":            {"type": "integer", "description": "Max results (default 200)"}
 		},
 		"required": ["pattern"]
 	}`)
 }
 
-func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
+func (t *SearchTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
 	var p struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
-		Limit   int    `json:"limit"`
+		Mode            string `json:"mode"`
+		Pattern         string `json:"pattern"`
+		Path            string `json:"path"`
+		Glob            string `json:"glob"`
+		OutputMode      string `json:"output_mode"`
+		CaseInsensitive bool   `json:"case_insensitive"`
+		ContextLines    int    `json:"context_lines"`
+		Limit           int    `json:"limit"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return agent.ToolResult{Content: "invalid parameters", IsError: true}, nil
@@ -50,19 +60,29 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.T
 		p.Limit = 200
 	}
 
-	base := p.Path
-	if base == "" {
-		var err error
-		base, err = os.Getwd()
-		if err != nil {
-			return agent.ToolResult{Content: fmt.Sprintf("getwd: %v", err), IsError: true}, nil
+	// Default to glob if mode is empty and pattern looks like a glob
+	if p.Mode == "" {
+		if strings.ContainsAny(p.Pattern, "*?[") {
+			p.Mode = "glob"
+		} else {
+			p.Mode = "grep"
 		}
-	} else {
-		abs, err := resolvePath(base)
-		if err != nil {
-			return agent.ToolResult{Content: fmt.Sprintf("path error: %v", err), IsError: true}, nil
-		}
-		base = abs
+	}
+
+	switch p.Mode {
+	case "glob":
+		return executeGlob(p.Pattern, p.Path, p.Limit)
+	case "grep":
+		return executeGrep(p.Pattern, p.Path, p.Glob, p.OutputMode, p.CaseInsensitive, p.ContextLines, p.Limit)
+	default:
+		return agent.ToolResult{Content: fmt.Sprintf("unknown mode %q (use glob or grep)", p.Mode), IsError: true}, nil
+	}
+}
+
+func executeGlob(pattern, basePath string, limit int) (agent.ToolResult, error) {
+	base, err := resolveSearchBase(basePath)
+	if err != nil {
+		return agent.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
 	type fileEntry struct {
@@ -71,7 +91,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.T
 	}
 	var matches []fileEntry
 
-	err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -79,7 +99,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.T
 		if err != nil {
 			return nil
 		}
-		matched, err := matchGlob(p.Pattern, rel)
+		matched, err := matchGlob(pattern, rel)
 		if err != nil || !matched {
 			return nil
 		}
@@ -95,14 +115,12 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.T
 		return agent.ToolResult{Content: fmt.Sprintf("walk error: %v", err), IsError: true}, nil
 	}
 
-	// Sort by mtime descending (newest first)
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].modTime > matches[j].modTime
 	})
-	if len(matches) > p.Limit {
-		matches = matches[:p.Limit]
+	if len(matches) > limit {
+		matches = matches[:limit]
 	}
-
 	if len(matches) == 0 {
 		return agent.ToolResult{Content: "no files found"}, nil
 	}
@@ -114,17 +132,87 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (agent.T
 	return agent.ToolResult{Content: strings.Join(paths, "\n")}, nil
 }
 
+func executeGrep(pattern, basePath, globFilter, outputMode string, caseInsensitive bool, contextLines, limit int) (agent.ToolResult, error) {
+	if outputMode == "" {
+		outputMode = "files"
+	}
+
+	regexStr := pattern
+	if caseInsensitive {
+		regexStr = "(?i)" + regexStr
+	}
+	re, err := regexp.Compile(regexStr)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("invalid regex: %v", err), IsError: true}, nil
+	}
+
+	base, err := resolveSearchBase(basePath)
+	if err != nil {
+		return agent.ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	var outputLines []string
+
+	info, statErr := os.Stat(base)
+	if statErr == nil && !info.IsDir() {
+		lines, err := grepFile(base, re, outputMode, contextLines)
+		if err == nil && len(lines) > 0 {
+			outputLines = append(outputLines, lines...)
+		}
+	} else {
+		err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if globFilter != "" {
+				matched, err := filepath.Match(globFilter, filepath.Base(path))
+				if err != nil || !matched {
+					return nil
+				}
+			}
+			lines, err := grepFile(path, re, outputMode, contextLines)
+			if err != nil || len(lines) == 0 {
+				return nil
+			}
+			outputLines = append(outputLines, lines...)
+			return nil
+		})
+		if err != nil {
+			return agent.ToolResult{Content: fmt.Sprintf("walk error: %v", err), IsError: true}, nil
+		}
+	}
+
+	if len(outputLines) == 0 {
+		return agent.ToolResult{Content: "no matches found"}, nil
+	}
+	if len(outputLines) > limit {
+		outputLines = outputLines[:limit]
+	}
+	return agent.ToolResult{Content: strings.Join(outputLines, "\n")}, nil
+}
+
+func resolveSearchBase(basePath string) (string, error) {
+	if basePath == "" {
+		base, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("getwd: %v", err)
+		}
+		return base, nil
+	}
+	abs, err := resolvePath(basePath)
+	if err != nil {
+		return "", fmt.Errorf("path error: %v", err)
+	}
+	return abs, nil
+}
+
 // matchGlob handles ** in patterns by splitting on / and matching segment by segment.
 func matchGlob(pattern, path string) (bool, error) {
-	// Normalize separators
 	pattern = filepath.ToSlash(pattern)
 	path = filepath.ToSlash(path)
-
-	// Fast path: no ** — use stdlib
 	if !strings.Contains(pattern, "**") {
 		return filepath.Match(pattern, path)
 	}
-
 	return matchDoublestar(pattern, path), nil
 }
 
@@ -139,9 +227,8 @@ func dsMatch(pp, fp []string) bool {
 		if pp[0] == "**" {
 			pp = pp[1:]
 			if len(pp) == 0 {
-				return true // ** at end matches everything
+				return true
 			}
-			// Try matching ** against 0 or more path segments
 			for i := 0; i <= len(fp); i++ {
 				if dsMatch(pp, fp[i:]) {
 					return true
@@ -162,123 +249,11 @@ func dsMatch(pp, fp []string) bool {
 	return len(fp) == 0
 }
 
-// GrepTool implements the grep tool — search file contents with regex.
-type GrepTool struct{}
-
-func (t *GrepTool) Name() string { return "grep" }
-func (t *GrepTool) Description() string {
-	return "Search file contents using a regular expression. Supports glob file filtering, output modes (content/files/count), and context lines."
-}
-
-func (t *GrepTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"pattern":          {"type": "string", "description": "Regular expression to search for"},
-			"path":             {"type": "string", "description": "File or directory to search (default: current directory)"},
-			"glob":             {"type": "string", "description": "Glob filter for file names, e.g. \"*.go\""},
-			"output_mode":      {"type": "string", "enum": ["content", "files", "count"], "description": "content=matching lines, files=file paths only, count=match counts (default: files)"},
-			"case_insensitive": {"type": "boolean", "description": "Case-insensitive matching (default false)"},
-			"context_lines":    {"type": "integer", "description": "Lines of context before and after each match (content mode only)"},
-			"limit":            {"type": "integer", "description": "Max output lines (default 200)"}
-		},
-		"required": ["pattern"]
-	}`)
-}
-
-func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
-	var p struct {
-		Pattern         string `json:"pattern"`
-		Path            string `json:"path"`
-		Glob            string `json:"glob"`
-		OutputMode      string `json:"output_mode"`
-		CaseInsensitive bool   `json:"case_insensitive"`
-		ContextLines    int    `json:"context_lines"`
-		Limit           int    `json:"limit"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return agent.ToolResult{Content: "invalid parameters", IsError: true}, nil
-	}
-	if p.Pattern == "" {
-		return agent.ToolResult{Content: "pattern is required", IsError: true}, nil
-	}
-	if p.OutputMode == "" {
-		p.OutputMode = "files"
-	}
-	if p.Limit <= 0 {
-		p.Limit = 200
-	}
-
-	regexStr := p.Pattern
-	if p.CaseInsensitive {
-		regexStr = "(?i)" + regexStr
-	}
-	re, err := regexp.Compile(regexStr)
-	if err != nil {
-		return agent.ToolResult{Content: fmt.Sprintf("invalid regex: %v", err), IsError: true}, nil
-	}
-
-	base := p.Path
-	if base == "" {
-		base, err = os.Getwd()
-		if err != nil {
-			return agent.ToolResult{Content: fmt.Sprintf("getwd: %v", err), IsError: true}, nil
-		}
-	} else {
-		base, err = resolvePath(base)
-		if err != nil {
-			return agent.ToolResult{Content: fmt.Sprintf("path error: %v", err), IsError: true}, nil
-		}
-	}
-
-	var outputLines []string
-
-	info, statErr := os.Stat(base)
-	if statErr == nil && !info.IsDir() {
-		// Single file
-		lines, err := grepFile(base, re, p.OutputMode, p.ContextLines)
-		if err == nil && len(lines) > 0 {
-			outputLines = append(outputLines, lines...)
-		}
-	} else {
-		// Directory walk
-		err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			if p.Glob != "" {
-				matched, err := filepath.Match(p.Glob, filepath.Base(path))
-				if err != nil || !matched {
-					return nil
-				}
-			}
-			lines, err := grepFile(path, re, p.OutputMode, p.ContextLines)
-			if err != nil || len(lines) == 0 {
-				return nil
-			}
-			outputLines = append(outputLines, lines...)
-			return nil
-		})
-		if err != nil {
-			return agent.ToolResult{Content: fmt.Sprintf("walk error: %v", err), IsError: true}, nil
-		}
-	}
-
-	if len(outputLines) == 0 {
-		return agent.ToolResult{Content: "no matches found"}, nil
-	}
-	if len(outputLines) > p.Limit {
-		outputLines = outputLines[:p.Limit]
-	}
-	return agent.ToolResult{Content: strings.Join(outputLines, "\n")}, nil
-}
-
 func grepFile(path string, re *regexp.Regexp, outputMode string, contextLines int) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	// Skip binary files (simple heuristic: null bytes in first 8KB)
 	check := data
 	if len(check) > 8192 {
 		check = check[:8192]
@@ -305,7 +280,7 @@ func grepFile(path string, re *regexp.Regexp, outputMode string, contextLines in
 		return []string{path}, nil
 	case "count":
 		return []string{fmt.Sprintf("%s: %d", path, len(matchLines))}, nil
-	default: // "content"
+	default:
 		seen := make(map[int]bool)
 		var out []string
 		for _, mi := range matchLines {

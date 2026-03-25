@@ -57,13 +57,24 @@ func (a *AnthropicProvider) Models() []ModelInfo {
 
 // anthropicRequest is the wire format for the Anthropic Messages API.
 type anthropicRequest struct {
-	Model     string                  `json:"model"`
-	Messages  []anthropicMessage      `json:"messages"`
-	System    string                  `json:"system,omitempty"`
-	MaxTokens int                     `json:"max_tokens"`
-	Tools     []anthropicTool         `json:"tools,omitempty"`
-	Stream    bool                    `json:"stream,omitempty"`
+	Model     string                   `json:"model"`
+	Messages  []anthropicMessage       `json:"messages"`
+	System    any                      `json:"system,omitempty"` // string or []anthropicSystemBlock
+	MaxTokens int                      `json:"max_tokens"`
+	Tools     []anthropicTool          `json:"tools,omitempty"`
+	Stream    bool                     `json:"stream,omitempty"`
 	Thinking  *anthropicThinkingConfig `json:"thinking,omitempty"`
+}
+
+// anthropicSystemBlock is a structured system prompt block with optional cache control.
+type anthropicSystemBlock struct {
+	Type         string                  `json:"type"`
+	Text         string                  `json:"text"`
+	CacheControl *anthropicCacheControl  `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
 }
 
 type anthropicThinkingConfig struct {
@@ -96,9 +107,10 @@ type anthropicMediaSource struct {
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // anthropicResponse is the wire format for the Anthropic Messages API response.
@@ -185,6 +197,7 @@ func (a *AnthropicProvider) resolveModel(requestModel string) string {
 func (a *AnthropicProvider) setHeaders(req *http.Request) {
 	req.Header.Set("x-api-key", a.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 	req.Header.Set("content-type", "application/json")
 }
 
@@ -201,24 +214,37 @@ func (a *AnthropicProvider) buildRequest(req ChatRequest, stream bool) anthropic
 		Stream:    stream,
 	}
 	if req.System != "" {
-		apiReq.System = req.System
+		// Send system prompt as a structured block with cache_control.
+		// If tools are present, cache_control goes on the last tool instead (larger cache).
+		if len(req.Tools) > 0 {
+			apiReq.System = []anthropicSystemBlock{{Type: "text", Text: req.System}}
+		} else {
+			apiReq.System = []anthropicSystemBlock{{
+				Type:         "text",
+				Text:         req.System,
+				CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+			}}
+		}
 	}
 	if len(req.Tools) > 0 {
 		apiReq.Tools = convertAnthropicTools(req.Tools)
+		// Mark the last tool with cache_control so system + tools are all cached.
+		apiReq.Tools[len(apiReq.Tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}
 
-	// Enable extended thinking — budget 80% of max_tokens, minimum 1024.
-	budget := maxTokens * 80 / 100
-	if budget < 1024 {
-		budget = 1024
-	}
-	// Ensure max_tokens is large enough for thinking + response.
-	if apiReq.MaxTokens < budget+1024 {
-		apiReq.MaxTokens = budget + 4096
-	}
-	apiReq.Thinking = &anthropicThinkingConfig{
-		Type:         "enabled",
-		BudgetTokens: budget,
+	// Enable extended thinking unless explicitly disabled (e.g. chat mode).
+	if !req.DisableThinking {
+		budget := maxTokens * 80 / 100
+		if budget < 1024 {
+			budget = 1024
+		}
+		if apiReq.MaxTokens < budget+1024 {
+			apiReq.MaxTokens = budget + 4096
+		}
+		apiReq.Thinking = &anthropicThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: budget,
+		}
 	}
 
 	return apiReq

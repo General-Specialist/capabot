@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/polymath/capabot/internal/llm"
@@ -26,25 +27,29 @@ type Tool interface {
 
 // ToolResult is the outcome of a tool execution.
 type ToolResult struct {
-	Content string        `json:"content"`
-	IsError bool          `json:"is_error,omitempty"`
+	Content string          `json:"content"`
+	IsError bool            `json:"is_error,omitempty"`
 	Parts   []llm.MediaPart `json:"-"` // optional multimodal attachments (images, PDFs)
 }
 
 // Registry holds available tools, keyed by name.
-// It is safe for concurrent reads after initial registration.
+// Tools can be marked as "extended" — these are not sent to the LLM directly
+// but are accessible via the use_tool meta-tool.
 type Registry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu       sync.RWMutex
+	tools    map[string]Tool
+	extended map[string]bool // true = extended (lazy-loaded via use_tool)
 }
 
 // NewRegistry creates an empty tool registry.
 func NewRegistry() *Registry {
-	return &Registry{tools: make(map[string]Tool)}
+	return &Registry{
+		tools:    make(map[string]Tool),
+		extended: make(map[string]bool),
+	}
 }
 
-// Register adds a tool to the registry. Returns an error if a tool with
-// the same name is already registered.
+// Register adds a core tool to the registry.
 func (r *Registry) Register(tool Tool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -57,26 +62,88 @@ func (r *Registry) Register(tool Tool) error {
 	return nil
 }
 
-// Get retrieves a tool by name. Returns nil if not found.
+// RegisterExtended adds an extended tool (not sent to LLM, accessed via use_tool).
+func (r *Registry) RegisterExtended(tool Tool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := tool.Name()
+	if _, exists := r.tools[name]; exists {
+		return fmt.Errorf("tool %q already registered", name)
+	}
+	r.tools[name] = tool
+	r.extended[name] = true
+	return nil
+}
+
+// Get retrieves a tool by name (both core and extended). Returns nil if not found.
 func (r *Registry) Get(name string) Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.tools[name]
 }
 
-// List returns all registered tools in no particular order.
+// List returns core tools only (sent to LLM as definitions).
 func (r *Registry) List() []Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	out := make([]Tool, 0, len(r.tools))
-	for _, t := range r.tools {
-		out = append(out, t)
+	for name, t := range r.tools {
+		if !r.extended[name] {
+			out = append(out, t)
+		}
 	}
 	return out
 }
 
-// Names returns sorted tool names for deterministic output.
+// ExtendedNames returns sorted names of extended tools (for use_tool description).
+func (r *Registry) ExtendedNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	names := make([]string, 0, len(r.extended))
+	for name := range r.extended {
+		names = append(names, name)
+	}
+	sortStrings(names)
+	return names
+}
+
+// ExtendedDescriptions returns "name: description" for each extended tool.
+func (r *Registry) ExtendedDescriptions() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	type entry struct {
+		name string
+		desc string
+	}
+	entries := make([]entry, 0, len(r.extended))
+	for name := range r.extended {
+		if t, ok := r.tools[name]; ok {
+			entries = append(entries, entry{name, t.Description()})
+		}
+	}
+	// Sort for deterministic output
+	for i := 1; i < len(entries); i++ {
+		key := entries[i]
+		j := i - 1
+		for j >= 0 && entries[j].name > key.name {
+			entries[j+1] = entries[j]
+			j--
+		}
+		entries[j+1] = key
+	}
+
+	var sb strings.Builder
+	for _, e := range entries {
+		fmt.Fprintf(&sb, "- %s: %s\n", e.name, e.desc)
+	}
+	return sb.String()
+}
+
+// Names returns sorted names of all tools (core + extended).
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -89,7 +156,7 @@ func (r *Registry) Names() []string {
 	return names
 }
 
-// Len returns the number of registered tools.
+// Len returns the total number of registered tools (core + extended).
 func (r *Registry) Len() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

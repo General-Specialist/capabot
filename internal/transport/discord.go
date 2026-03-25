@@ -1,9 +1,11 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -110,7 +112,76 @@ func (t *DiscordTransport) Start(ctx context.Context) error {
 		return fmt.Errorf("discord: connect: %w", err)
 	}
 
+	t.registerSlashCommands(ctx)
+
 	return t.readLoop(ctx, gwURL)
+}
+
+// registerSlashCommands registers global slash commands with Discord.
+// Uses bulk overwrite (PUT) which is idempotent — safe to call on every startup.
+func (t *DiscordTransport) registerSlashCommands(ctx context.Context) {
+	if t.appID == "" {
+		t.logger.Warn().Msg("discord: no app ID configured, skipping slash command registration")
+		return
+	}
+
+	commands := []map[string]any{
+		{
+			"name":        "default_role",
+			"description": "Set the default persona or tag that responds in this channel",
+			"options": []map[string]any{
+				{
+					"name":        "role",
+					"description": "Persona username, tag name, or 'none' to clear",
+					"type":        3, // STRING
+					"required":    false,
+				},
+			},
+		},
+		{
+			"name":        "chat",
+			"description": "Switch to chat mode (no tools — faster & cheaper)",
+		},
+		{
+			"name":        "execute",
+			"description": "Switch to execute mode (full tools enabled)",
+		},
+		{
+			"name":        "mode",
+			"description": "Show or switch the current mode",
+			"options": []map[string]any{
+				{
+					"name":        "name",
+					"description": "Mode name to switch to (omit to show current)",
+					"type":        3, // STRING
+					"required":    false,
+				},
+			},
+		},
+	}
+
+	data, _ := json.Marshal(commands)
+	url := discordAPIBase + "/applications/" + t.appID + "/commands"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		t.logger.Warn().Err(err).Msg("discord: failed to create slash command request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bot "+t.token)
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		t.logger.Warn().Err(err).Msg("discord: failed to register slash commands")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		t.logger.Info().Msg("discord: slash commands registered")
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		t.logger.Warn().Int("status", resp.StatusCode).Str("body", string(body)).Msg("discord: slash command registration failed")
+	}
 }
 
 // Stop gracefully shuts down the transport.
@@ -342,9 +413,15 @@ func (t *DiscordTransport) handlePayload(ctx context.Context, p gatewayPayload, 
 
 // handleDispatch processes OP 0 dispatch events.
 func (t *DiscordTransport) handleDispatch(ctx context.Context, p gatewayPayload) {
-	if p.EventName != "MESSAGE_CREATE" {
-		return
+	switch p.EventName {
+	case "MESSAGE_CREATE":
+		t.handleMessageCreate(ctx, p)
+	case "INTERACTION_CREATE":
+		t.handleInteractionCreate(ctx, p)
 	}
+}
+
+func (t *DiscordTransport) handleMessageCreate(ctx context.Context, p gatewayPayload) {
 	var dm discordMessage
 	if err := json.Unmarshal(p.Data, &dm); err != nil {
 		t.logger.Error().Err(err).Msg("discord: decode MESSAGE_CREATE")
@@ -370,6 +447,85 @@ func (t *DiscordTransport) handleDispatch(ctx context.Context, p gatewayPayload)
 	}
 
 	go t.handler(ctx, msg)
+}
+
+// handleInteractionCreate handles Discord slash command interactions.
+// Converts them into synthetic InboundMessages so the existing handler can process them.
+func (t *DiscordTransport) handleInteractionCreate(ctx context.Context, p gatewayPayload) {
+	var interaction struct {
+		ID        string `json:"id"`
+		Token     string `json:"token"`
+		ChannelID string `json:"channel_id"`
+		Member    *struct {
+			User discordUser `json:"user"`
+		} `json:"member"`
+		User *discordUser `json:"user"` // DM interactions
+		Data struct {
+			Name    string `json:"name"`
+			Options []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"options"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(p.Data, &interaction); err != nil {
+		t.logger.Error().Err(err).Msg("discord: decode INTERACTION_CREATE")
+		return
+	}
+
+	// ACK with deferred response — we'll send the real response via the message handler.
+	t.ackInteraction(ctx, interaction.ID, interaction.Token)
+
+	// Build the command text.
+	text := "/" + interaction.Data.Name
+	for _, opt := range interaction.Data.Options {
+		text += " " + opt.Value
+	}
+
+	user := discordUser{}
+	if interaction.Member != nil {
+		user = interaction.Member.User
+	} else if interaction.User != nil {
+		user = *interaction.User
+	}
+
+	msg := InboundMessage{
+		ID:        interaction.ID,
+		ChannelID: interaction.ChannelID,
+		UserID:    user.ID,
+		Username:  user.Username,
+		Text:      text,
+		Platform:  "discord",
+	}
+
+	if t.handler != nil {
+		go t.handler(ctx, msg)
+	}
+}
+
+// ackInteraction acknowledges a slash command with a brief message.
+// The real response is sent by the message handler via t.Send().
+func (t *DiscordTransport) ackInteraction(ctx context.Context, interactionID, interactionToken string) {
+	// Type 4 = CHANNEL_MESSAGE_WITH_SOURCE (immediate visible response).
+	body, _ := json.Marshal(map[string]any{
+		"type": 4,
+		"data": map[string]any{
+			"content": "...",
+			"flags":   64, // EPHEMERAL — only visible to the command user
+		},
+	})
+	url := discordAPIBase + "/interactions/" + interactionID + "/" + interactionToken + "/callback"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		t.logger.Warn().Err(err).Msg("discord: failed to ACK interaction")
+		return
+	}
+	resp.Body.Close()
 }
 
 // resume attempts to resume an existing session.

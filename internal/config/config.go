@@ -104,7 +104,8 @@ type TelegramTransportConfig struct {
 // DiscordTransportConfig holds Discord bot settings.
 type DiscordTransportConfig struct {
 	Token   string `yaml:"token"`
-	GuildID string `yaml:"guild_id"` // optional: restrict to one guild
+	AppID   string `yaml:"app_id"`    // Discord application ID (for slash commands)
+	GuildID string `yaml:"guild_id"`  // optional: restrict to one guild
 }
 
 // SlackTransportConfig holds Slack bot settings.

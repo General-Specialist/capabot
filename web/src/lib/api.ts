@@ -131,6 +131,7 @@ export interface ProviderKeys {
   openai: string
   gemini: string
   openrouter: string
+  model?: string
 }
 
 export interface AutomationRun {
@@ -172,6 +173,20 @@ export interface Persona {
   updated_at: string
 }
 
+export interface UsageSummary {
+  provider: string
+  model: string
+  mode: string
+  input_tokens: number
+  output_tokens: number
+}
+
+export interface CreditEntry {
+  provider: string
+  total_used_usd: number
+  limit_usd: number
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path)
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
@@ -206,6 +221,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   health: () => get<HealthStatus>('/health'),
+  usage: (since?: string) => {
+    const params = since ? `?since=${since}` : ''
+    return get<UsageSummary[]>(`/usage${params}`)
+  },
+  credits: () => get<CreditEntry[]>('/credits'),
   agents: () => get<Agent[]>('/agents'),
   conversations: (limit = 50) => get<Conversation[]>(`/conversations?limit=${limit}`),
   conversation: (id: string) => get<{ session: Conversation; messages: Message[] }>(`/conversations/${id}`),
@@ -252,11 +272,29 @@ export const api = {
   },
 
   personas: () => get<Persona[]>('/personas'),
+  modes: () => get<{ modes: Record<string, ProviderKeys>; active: string }>('/modes'),
+  modeSet: (name: string, keys: ProviderKeys) => fetch(BASE + `/modes/${name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(keys),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
+  modeDelete: (name: string) => del<void>(`/modes/${name}`),
+  activeModeSet: (mode: string) => fetch(BASE + '/modes/active', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   defaultModelGet: () => get<{ default_model: string }>('/settings/default-model'),
   defaultModelSet: (model: string) => fetch(BASE + '/settings/default-model', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ default_model: model }),
+  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
+  summarizationModelGet: () => get<{ summarization_model: string }>('/settings/summarization-model'),
+  summarizationModelSet: (model: string) => fetch(BASE + '/settings/summarization-model', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ summarization_model: model }),
   }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   systemPromptGet: () => get<{ system_prompt: string }>('/personas/system-prompt'),
   systemPromptSet: (prompt: string) => fetch(BASE + '/personas/system-prompt', {

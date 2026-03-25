@@ -30,31 +30,6 @@ func TestContextManager_Defaults(t *testing.T) {
 	}
 }
 
-func TestContextManager_NeedsSummarization(t *testing.T) {
-	cm := NewContextManager(ContextConfig{
-		ContextWindow: 1000,
-		BudgetPct:     0.8,
-	})
-
-	// Under budget
-	cm.RecordUsage(llm.Usage{InputTokens: 500})
-	if cm.NeedsSummarization() {
-		t.Error("should not need summarization at 500/800")
-	}
-
-	// At budget
-	cm.RecordUsage(llm.Usage{InputTokens: 800})
-	if !cm.NeedsSummarization() {
-		t.Error("should need summarization at 800/800")
-	}
-
-	// Over budget
-	cm.RecordUsage(llm.Usage{InputTokens: 900})
-	if !cm.NeedsSummarization() {
-		t.Error("should need summarization at 900/800")
-	}
-}
-
 func TestContextManager_TruncateToolOutput(t *testing.T) {
 	cm := NewContextManager(ContextConfig{
 		MaxToolOutputTokens: 10, // 10 tokens * 4 chars = 40 chars max
@@ -81,24 +56,6 @@ func TestContextManager_TruncateToolOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "[output truncated") {
 		t.Error("expected truncation marker in output")
-	}
-}
-
-func TestEstimateTokens(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected int
-	}{
-		{"", 0},
-		{"hi", 1},
-		{"hello world!", 3},
-		{strings.Repeat("a", 100), 25},
-	}
-	for _, tc := range tests {
-		got := EstimateTokens(tc.input)
-		if got != tc.expected {
-			t.Errorf("EstimateTokens(%q) = %d, want %d", tc.input, got, tc.expected)
-		}
 	}
 }
 
@@ -164,5 +121,51 @@ func TestBuildMessages_DoesNotMutateInput(t *testing.T) {
 		if msgs[i].Content != original[i].Content {
 			t.Error("BuildMessages mutated the input slice")
 		}
+	}
+}
+
+func TestCompressOldToolOutputs(t *testing.T) {
+	longOutput := strings.Repeat("line of output\n", 50) // ~750 chars
+
+	history := []llm.ChatMessage{
+		{Role: "user", Content: "do something"},
+		{Role: "assistant", Content: "", ToolCalls: []llm.ToolCall{{ID: "t1", Name: "shell_exec"}}},
+		{Role: "tool", ToolResult: &llm.ToolResult{ToolUseID: "t1", Content: longOutput}},
+		{Role: "assistant", Content: "", ToolCalls: []llm.ToolCall{{ID: "t2", Name: "file_read"}}},
+		{Role: "tool", ToolResult: &llm.ToolResult{ToolUseID: "t2", Content: longOutput}},
+	}
+
+	// No summarization model — uses dumb truncation
+	a := newTestAgent(&mockProvider{}, NewRegistry())
+	a.compressOldToolOutputs(t.Context(), history)
+
+	// t1 (old) should be compressed
+	if len(history[2].ToolResult.Content) >= len(longOutput) {
+		t.Error("expected old tool output to be compressed")
+	}
+	if !strings.Contains(history[2].ToolResult.Content, "[condensed:") {
+		t.Error("expected condensed marker in old output")
+	}
+
+	// t2 (current) should be unchanged
+	if history[4].ToolResult.Content != longOutput {
+		t.Error("expected current tool output to remain full")
+	}
+}
+
+func TestCompressOldToolOutputs_ShortOutputsUntouched(t *testing.T) {
+	history := []llm.ChatMessage{
+		{Role: "user", Content: "do something"},
+		{Role: "assistant", Content: "", ToolCalls: []llm.ToolCall{{ID: "t1", Name: "file_edit"}}},
+		{Role: "tool", ToolResult: &llm.ToolResult{ToolUseID: "t1", Content: "edited /path/to/file"}},
+		{Role: "assistant", Content: "", ToolCalls: []llm.ToolCall{{ID: "t2", Name: "file_read"}}},
+		{Role: "tool", ToolResult: &llm.ToolResult{ToolUseID: "t2", Content: "some content"}},
+	}
+
+	a := newTestAgent(&mockProvider{}, NewRegistry())
+	a.compressOldToolOutputs(t.Context(), history)
+
+	if history[2].ToolResult.Content != "edited /path/to/file" {
+		t.Error("short tool output should not be compressed")
 	}
 }

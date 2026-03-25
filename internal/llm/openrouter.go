@@ -1,6 +1,11 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
 
 const openRouterBaseURL = "https://openrouter.ai/api/v1"
 
@@ -68,6 +73,33 @@ func (o *OpenRouterProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRe
 // Stream delegates to the inner OpenAI-compat provider, injecting OpenRouter headers.
 func (o *OpenRouterProvider) Stream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
 	return o.inner.streamWithHeaders(ctx, req, o.extraHeaders())
+}
+
+// FetchCredits returns the total spend on this OpenRouter key.
+func (o *OpenRouterProvider) FetchCredits(ctx context.Context) (*CreditInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterBaseURL+"/auth/key", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+o.inner.apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("openrouter credits: status %d", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			Usage float64 `json:"usage"`
+			Limit float64 `json:"limit"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return &CreditInfo{TotalUsedUSD: body.Data.Usage, LimitUSD: body.Data.Limit}, nil
 }
 
 func (o *OpenRouterProvider) extraHeaders() map[string]string {

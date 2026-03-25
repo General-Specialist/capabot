@@ -4,37 +4,43 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/polymath/capabot/internal/agent"
+	"github.com/polymath/capabot/internal/llm"
 )
 
 // FileReadTool implements the file_read tool.
+// Automatically handles images (JPEG, PNG, GIF, WEBP) and PDFs.
 type FileReadTool struct {
 	allowedDirs []string
 	maxBytes    int
+	maxPDFBytes int
 }
 
-// NewFileReadTool creates a file_read tool. If allowedDirs is empty, all paths are allowed.
 func NewFileReadTool(allowedDirs []string) *FileReadTool {
 	return &FileReadTool{
 		allowedDirs: allowedDirs,
-		maxBytes:    1024 * 1024, // 1MB
+		maxBytes:    1024 * 1024,       // 1MB for text
+		maxPDFBytes: 32 * 1024 * 1024,  // 32MB for PDFs
 	}
 }
 
 func (t *FileReadTool) Name() string        { return "file_read" }
-func (t *FileReadTool) Description() string { return "Read the contents of a file." }
+func (t *FileReadTool) Description() string {
+	return "Read a file. Automatically handles text, images (JPEG/PNG/GIF/WEBP), and PDFs."
+}
 
 func (t *FileReadTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"path": {"type": "string", "description": "File path to read"},
-			"start_line": {"type": "integer", "description": "1-based start line (optional)"},
-			"end_line": {"type": "integer", "description": "Inclusive end line (optional)"}
+			"start_line": {"type": "integer", "description": "1-based start line (text files only)"},
+			"end_line": {"type": "integer", "description": "Inclusive end line (text files only)"}
 		},
 		"required": ["path"]
 	}`)
@@ -57,31 +63,119 @@ func (t *FileReadTool) Execute(ctx context.Context, params json.RawMessage) (age
 	if err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("path error: %v", err), IsError: true}, nil
 	}
-
 	if err := checkAllowedPath(absPath, t.allowedDirs); err != nil {
 		return agent.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
+	// Check if it's a PDF
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if ext == ".pdf" {
+		return t.readPDF(absPath)
+	}
+
+	// Check if it's an image
+	if isImageExt(ext) {
+		return t.readImage(absPath)
+	}
+
+	// Text file
+	return t.readText(absPath, p.StartLine, p.EndLine)
+}
+
+func (t *FileReadTool) readText(absPath string, startLine, endLine int) (agent.ToolResult, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("read error: %v", err), IsError: true}, nil
 	}
-
-	// Truncate to maxBytes before splitting lines to avoid huge allocations
 	if len(data) > t.maxBytes {
 		data = data[:t.maxBytes]
 	}
 
 	content := string(data)
-
-	if p.StartLine > 0 || p.EndLine > 0 {
-		content = extractLines(content, p.StartLine, p.EndLine)
+	if startLine > 0 || endLine > 0 {
+		content = extractLines(content, startLine, endLine)
 	}
-
 	return agent.ToolResult{Content: content}, nil
 }
 
-// extractLines returns lines [startLine, endLine] (1-based, inclusive).
+func (t *FileReadTool) readImage(absPath string) (agent.ToolResult, error) {
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("read error: %v", err), IsError: true}, nil
+	}
+	mime := detectImageMime(absPath, data)
+	if mime == "" {
+		return agent.ToolResult{Content: "unsupported image format (supported: JPEG, PNG, GIF, WEBP)", IsError: true}, nil
+	}
+	name := filepath.Base(absPath)
+	return agent.ToolResult{
+		Content: fmt.Sprintf("[image: %s, %d bytes]", name, len(data)),
+		Parts:   []llm.MediaPart{{MimeType: mime, Data: data, Name: name}},
+	}, nil
+}
+
+func (t *FileReadTool) readPDF(absPath string) (agent.ToolResult, error) {
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("stat error: %v", err), IsError: true}, nil
+	}
+	if int(info.Size()) > t.maxPDFBytes {
+		return agent.ToolResult{Content: fmt.Sprintf("PDF too large (%d MB, max 32 MB)", info.Size()/1024/1024), IsError: true}, nil
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return agent.ToolResult{Content: fmt.Sprintf("read error: %v", err), IsError: true}, nil
+	}
+	if len(data) < 4 || string(data[:4]) != "%PDF" {
+		return agent.ToolResult{Content: "file does not appear to be a valid PDF", IsError: true}, nil
+	}
+	name := filepath.Base(absPath)
+	return agent.ToolResult{
+		Content: fmt.Sprintf("[PDF: %s, %d bytes]", name, len(data)),
+		Parts:   []llm.MediaPart{{MimeType: "application/pdf", Data: data, Name: name}},
+	}, nil
+}
+
+func isImageExt(ext string) bool {
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	}
+	return false
+}
+
+func detectImageMime(path string, data []byte) string {
+	if len(data) >= 4 {
+		if data[0] == 0xFF && data[1] == 0xD8 {
+			return "image/jpeg"
+		}
+		if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+			return "image/png"
+		}
+		if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+			return "image/gif"
+		}
+		if string(data[:4]) == "RIFF" && len(data) > 8 && string(data[8:12]) == "WEBP" {
+			return "image/webp"
+		}
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	}
+	ct := http.DetectContentType(data)
+	if strings.HasPrefix(ct, "image/") {
+		return ct
+	}
+	return ""
+}
+
 func extractLines(content string, startLine, endLine int) string {
 	lines := strings.Split(content, "\n")
 	if startLine < 1 {
@@ -101,7 +195,6 @@ type FileWriteTool struct {
 	allowedDirs []string
 }
 
-// NewFileWriteTool creates a file_write tool. If allowedDirs is empty, all paths are allowed.
 func NewFileWriteTool(allowedDirs []string) *FileWriteTool {
 	return &FileWriteTool{allowedDirs: allowedDirs}
 }
@@ -138,12 +231,10 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (ag
 	if err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("path error: %v", err), IsError: true}, nil
 	}
-
 	if err := checkAllowedPath(absPath, t.allowedDirs); err != nil {
 		return agent.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
-	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return agent.ToolResult{Content: fmt.Sprintf("mkdir error: %v", err), IsError: true}, nil
 	}
@@ -171,7 +262,6 @@ type FileEditTool struct {
 	allowedDirs []string
 }
 
-// NewFileEditTool creates a file_edit tool. If allowedDirs is empty, all paths are allowed.
 func NewFileEditTool(allowedDirs []string) *FileEditTool {
 	return &FileEditTool{allowedDirs: allowedDirs}
 }
@@ -240,7 +330,6 @@ func (t *FileEditTool) Execute(ctx context.Context, params json.RawMessage) (age
 	return agent.ToolResult{Content: fmt.Sprintf("edited %s", absPath)}, nil
 }
 
-// resolvePath cleans and resolves a path to an absolute path.
 func resolvePath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
@@ -252,8 +341,6 @@ func resolvePath(path string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-// checkAllowedPath returns an error if path is outside all allowed directories.
-// If allowedDirs is empty, all paths are allowed.
 func checkAllowedPath(absPath string, allowedDirs []string) error {
 	if len(allowedDirs) == 0 {
 		return nil

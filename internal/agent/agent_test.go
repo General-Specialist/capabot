@@ -53,6 +53,10 @@ func (ms *mockStore) SaveToolExecution(ctx context.Context, exec StoreToolExecut
 	return nil
 }
 
+func (ms *mockStore) SaveUsage(ctx context.Context, usage StoreUsage) error {
+	return nil
+}
+
 func newTestAgent(provider llm.Provider, tools *Registry) *Agent {
 	logger := zerolog.Nop()
 	ctxMgr := NewContextManager(ContextConfig{
@@ -317,9 +321,9 @@ func TestAgent_Persistence(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have 2 assistant messages persisted
-	if len(store.messages) != 2 {
-		t.Errorf("expected 2 persisted messages, got %d", len(store.messages))
+	// Should have 3 persisted messages: 2 assistant + 1 tool result
+	if len(store.messages) != 3 {
+		t.Errorf("expected 3 persisted messages, got %d", len(store.messages))
 	}
 
 	// Should have 1 tool execution persisted

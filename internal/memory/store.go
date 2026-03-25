@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -880,4 +881,173 @@ func (s *Store) ListDiscordTagRoles(ctx context.Context) (map[string]string, err
 		out[tag] = roleID
 	}
 	return out, rows.Err()
+}
+
+// GetChannelBinding returns the tag bound to a Discord channel, or "" if none.
+func (s *Store) GetChannelBinding(ctx context.Context, channelID string) (string, error) {
+	var tag string
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT tag FROM channel_bindings WHERE channel_id = $1`, channelID,
+	).Scan(&tag)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return tag, err
+}
+
+// SetChannelBinding binds a Discord channel to a tag.
+func (s *Store) SetChannelBinding(ctx context.Context, channelID, tag string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO channel_bindings (channel_id, tag) VALUES ($1, $2) ON CONFLICT (channel_id) DO UPDATE SET tag = $2`,
+			channelID, tag)
+		return err
+	})
+}
+
+// DeleteChannelBinding removes a channel's tag binding.
+func (s *Store) DeleteChannelBinding(ctx context.Context, channelID string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM channel_bindings WHERE channel_id = $1`, channelID)
+		return err
+	})
+}
+
+// ModeKeys represents the per-mode configuration as JSON (API key overrides + default model).
+type ModeKeys struct {
+	Anthropic  string `json:"anthropic,omitempty"`
+	OpenAI     string `json:"openai,omitempty"`
+	Gemini     string `json:"gemini,omitempty"`
+	OpenRouter string `json:"openrouter,omitempty"`
+	Model      string `json:"model,omitempty"`
+}
+
+// GetMode returns the keys JSON for a mode.
+func (s *Store) GetMode(ctx context.Context, name string) (ModeKeys, error) {
+	var raw string
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT keys FROM modes WHERE name = $1`, name,
+	).Scan(&raw)
+	if err != nil {
+		return ModeKeys{}, err
+	}
+	var keys ModeKeys
+	if err := json.Unmarshal([]byte(raw), &keys); err != nil {
+		return ModeKeys{}, err
+	}
+	return keys, nil
+}
+
+// SetMode upserts a mode's keys.
+func (s *Store) SetMode(ctx context.Context, name string, keys ModeKeys) error {
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO modes (name, keys) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET keys = $2`,
+			name, string(raw))
+		return err
+	})
+}
+
+// DeleteMode removes a custom mode. Built-in modes (default, chat, execute) cannot be deleted.
+func (s *Store) DeleteMode(ctx context.Context, name string) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM modes WHERE name = $1 AND name NOT IN ('default', 'chat', 'execute')`, name)
+		return err
+	})
+}
+
+// ListModes returns all mode names and their keys.
+func (s *Store) ListModes(ctx context.Context) (map[string]ModeKeys, error) {
+	rows, err := s.pool.DB().QueryContext(ctx, `SELECT name, keys FROM modes ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]ModeKeys)
+	for rows.Next() {
+		var name, raw string
+		if err := rows.Scan(&name, &raw); err != nil {
+			return nil, err
+		}
+		var keys ModeKeys
+		_ = json.Unmarshal([]byte(raw), &keys)
+		out[name] = keys
+	}
+	return out, rows.Err()
+}
+
+// GetActiveMode returns the current active mode name.
+func (s *Store) GetActiveMode(ctx context.Context) string {
+	v, _ := s.GetSetting(ctx, "active_mode")
+	if v == "" {
+		return "default"
+	}
+	return v
+}
+
+// SetActiveMode sets the current active mode.
+func (s *Store) SetActiveMode(ctx context.Context, mode string) error {
+	return s.SetSetting(ctx, "active_mode", mode)
+}
+
+// UsageRecord represents a single LLM call for cost tracking.
+type UsageRecord struct {
+	Provider     string `json:"provider"`
+	Model        string `json:"model"`
+	Mode         string `json:"mode"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+}
+
+// SaveUsage inserts a usage record.
+func (s *Store) SaveUsage(ctx context.Context, rec UsageRecord) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO usage_log (provider, model, mode, input_tokens, output_tokens) VALUES ($1, $2, $3, $4, $5)`,
+			rec.Provider, rec.Model, rec.Mode, rec.InputTokens, rec.OutputTokens,
+		)
+		return err
+	})
+}
+
+// UsageSummary is an aggregated usage row.
+type UsageSummary struct {
+	Provider     string `json:"provider"`
+	Model        string `json:"model"`
+	Mode         string `json:"mode"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+}
+
+// GetUsageSummary returns usage aggregated by provider, model, and mode.
+// If since is non-zero, only records after that time are included.
+func (s *Store) GetUsageSummary(ctx context.Context, since time.Time) ([]UsageSummary, error) {
+	var rows *sql.Rows
+	var err error
+	if since.IsZero() {
+		rows, err = s.pool.DB().QueryContext(ctx,
+			`SELECT provider, model, mode, SUM(input_tokens), SUM(output_tokens)
+			 FROM usage_log GROUP BY provider, model, mode ORDER BY provider, model, mode`)
+	} else {
+		rows, err = s.pool.DB().QueryContext(ctx,
+			`SELECT provider, model, mode, SUM(input_tokens), SUM(output_tokens)
+			 FROM usage_log WHERE created_at >= $1 GROUP BY provider, model, mode ORDER BY provider, model, mode`, since)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []UsageSummary
+	for rows.Next() {
+		var r UsageSummary
+		if err := rows.Scan(&r.Provider, &r.Model, &r.Mode, &r.InputTokens, &r.OutputTokens); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
 }

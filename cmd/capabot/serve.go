@@ -106,9 +106,9 @@ func runServe(configPath string) error {
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
-	// 7d. Register skill_create and skill_edit tools
-	_ = toolRegistry.Register(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
-	_ = toolRegistry.Register(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
+	// 7d. Register skill_create and skill_edit as extended tools
+	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
 
 	// 8. Build default agent runner (shared by transport + API server)
 	// Inject all loaded skills into the default system prompt.
@@ -135,9 +135,66 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 		BudgetPct:           cfg.Agent.ContextBudgetPct,
 		MaxToolOutputTokens: cfg.Agent.MaxToolOutputTokens,
 	}
+	// emptyToolRegistry is used for chat mode (no tools = way fewer tokens).
+	emptyToolRegistry := agent.NewRegistry()
+
+	// modeSettings holds resolved per-mode config.
+	type modeSettings struct {
+		Tools           *agent.Registry
+		DisableThinking bool
+		Model           string // mode's default model (empty = use global default)
+		Name            string // mode name for usage tracking
+	}
+
+	// resolveMode returns tool registry, thinking flag, and default model for the active mode.
+	resolveMode := func(ctx context.Context) modeSettings {
+		if store == nil {
+			return modeSettings{Tools: toolRegistry}
+		}
+		modeName := store.GetActiveMode(ctx)
+		ms := modeSettings{Tools: toolRegistry, Name: modeName}
+		if modeName == "chat" {
+			ms.Tools = emptyToolRegistry
+			ms.DisableThinking = true
+		}
+		// Load mode's default model
+		if modeKeys, err := store.GetMode(ctx, modeName); err == nil && modeKeys.Model != "" {
+			ms.Model = modeKeys.Model
+		}
+		return ms
+	}
+
+	// getSummarizationModel reads the summarization_model setting.
+	getSummarizationModel := func(ctx context.Context) string {
+		if store == nil {
+			return ""
+		}
+		v, _ := store.GetSetting(ctx, "summarization_model")
+		return v
+	}
+
+	// applyMode applies mode settings to an agent config.
+	// Model priority: explicit @tag (already set on cfg.Model) > mode default > global default.
+	applyMode := func(cfg agent.AgentConfig, ms modeSettings, ctx context.Context) agent.AgentConfig {
+		cfg.DisableThinking = ms.DisableThinking
+		cfg.Mode = ms.Name
+		if cfg.Model == "" && ms.Model != "" {
+			cfg.Model = ms.Model
+		}
+		if cfg.Model == "" && store != nil {
+			if v, _ := store.GetSetting(ctx, "default_model"); v != "" {
+				cfg.Model = v
+			}
+		}
+		cfg.SummarizationModel = getSummarizationModel(ctx)
+		return cfg
+	}
+
 	runAgent := func(runCtx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
-		a := agent.New(agentCfg, router, toolRegistry, ctxMgr, logger)
+		ms := resolveMode(runCtx)
+		cfg := applyMode(agentCfg, ms, runCtx)
+		a := agent.New(cfg, router, ms.Tools, ctxMgr, logger)
 		if onEvent != nil {
 			a.SetOnEvent(onEvent)
 		}
@@ -157,7 +214,9 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 			customCfg.Model = model
 		}
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
-		a := agent.New(customCfg, router, toolRegistry, ctxMgr, logger)
+		ms := resolveMode(runCtx)
+		customCfg = applyMode(customCfg, ms, runCtx)
+		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
 		if onEvent != nil {
 			a.SetOnEvent(onEvent)
 		}
@@ -177,7 +236,9 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 			customCfg.Model = model
 		}
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
-		a := agent.New(customCfg, router, toolRegistry, ctxMgr, logger)
+		ms := resolveMode(runCtx)
+		customCfg = applyMode(customCfg, ms, runCtx)
+		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
 		return a.Run(runCtx, sessionID, messages)
 	}
 
@@ -329,7 +390,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 	if cfg.Transports.Discord.Token != "" {
 		dc := transport.NewDiscordTransport(transport.DiscordConfig{
 			Token: cfg.Transports.Discord.Token,
-			AppID: cfg.Transports.Discord.GuildID,
+			AppID: cfg.Transports.Discord.AppID,
 		}, logger)
 		dc.OnMessage(messageHandler(dc))
 		go func() {
@@ -419,17 +480,46 @@ func makeMessageHandler(
 				return
 			}
 
+			// Handle bot commands.
+			if strings.HasPrefix(msg.Text, "/default_role") {
+				handleDefaultRoleCmd(msgCtx, store, t, msg, logger)
+				return
+			}
+			if strings.HasPrefix(msg.Text, "/chat") || strings.HasPrefix(msg.Text, "/execute") || strings.HasPrefix(msg.Text, "/mode") {
+				handleModeCmd(msgCtx, store, t, msg)
+				return
+			}
+
 			// Extract @model-id tag from the message.
+			// Priority: @model-id tag > mode default > global default.
+			// Mode and global defaults are applied by applyMode in the agent runner,
+			// so we only set modelID here if an explicit @tag was used.
 			modelID := extractModelTag(msg.Text, router)
 			if modelID != "" {
 				msg.Text = strings.Replace(msg.Text, "@"+modelID, "", 1)
 				msg.Text = strings.TrimSpace(msg.Text)
-			} else {
-				modelID, _ = store.GetSetting(msgCtx, "default_model")
 			}
 
 			// Detect @PersonaName or @tag mention at the start of the message.
 			text, personas := resolvePersonas(msgCtx, store, msg.Text, logger)
+
+			// If no @mention, check for channel binding (auto-route to bound tag or persona).
+			if len(personas) == 0 && store != nil {
+				if binding, _ := store.GetChannelBinding(msgCtx, msg.ChannelID); binding != "" {
+					if strings.HasPrefix(binding, "persona:") {
+						username := strings.TrimPrefix(binding, "persona:")
+						if p, err := store.GetPersonaByUsername(msgCtx, username); err == nil {
+							personas = []memory.Persona{p}
+							logger.Info().Str("channel", msg.ChannelID).Str("persona", username).Msg("channel binding auto-routed to persona")
+						}
+					} else {
+						if tagged, err := store.GetPersonasByTag(msgCtx, binding); err == nil && len(tagged) > 0 {
+							personas = tagged
+							logger.Info().Str("channel", msg.ChannelID).Str("tag", binding).Int("count", len(tagged)).Msg("channel binding auto-routed to tag")
+						}
+					}
+				}
+			}
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
 
 			// Load global system prompt (prepended to every persona prompt).
@@ -505,6 +595,129 @@ func makeMessageHandler(
 			}
 		}
 	}
+}
+
+// handleDefaultRoleCmd processes the /default_role command.
+// /default_role @tag      → bind this channel to all personas with that tag
+// /default_role @persona  → bind this channel to a single persona
+// /default_role none      → clear binding
+// /default_role           → show current binding
+// handleModeCmd processes /chat, /execute, and /mode commands.
+func handleModeCmd(ctx context.Context, store *memory.Store, t transport.Transport, msg transport.InboundMessage) {
+	reply := func(text string) {
+		_ = t.Send(ctx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: text})
+	}
+
+	var mode string
+	switch {
+	case strings.HasPrefix(msg.Text, "/chat"):
+		mode = "chat"
+	case strings.HasPrefix(msg.Text, "/execute"):
+		mode = "execute"
+	case strings.HasPrefix(msg.Text, "/mode"):
+		arg := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/mode"))
+		if arg == "" {
+			current := store.GetActiveMode(ctx)
+			reply(fmt.Sprintf("Current mode: **%s**", current))
+			return
+		}
+		mode = arg
+	}
+
+	if err := store.SetActiveMode(ctx, mode); err != nil {
+		reply("Failed to switch mode.")
+		return
+	}
+
+	desc := ""
+	switch mode {
+	case "chat":
+		desc = " (no tools — faster & cheaper)"
+	case "execute":
+		desc = " (full tools enabled)"
+	}
+	reply(fmt.Sprintf("Switched to **%s** mode%s.", mode, desc))
+}
+
+func handleDefaultRoleCmd(ctx context.Context, store *memory.Store, t transport.Transport, msg transport.InboundMessage, logger zerolog.Logger) {
+	reply := func(text string) {
+		_ = t.Send(ctx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: text})
+	}
+
+	arg := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/default_role"))
+
+	// Strip Discord role mention format <@&ID>.
+	if strings.HasPrefix(arg, "<@&") {
+		if end := strings.Index(arg, ">"); end > 0 {
+			roleID := arg[3:end]
+			// Try tag role first.
+			if tag, err := store.GetTagByDiscordRoleID(ctx, roleID); err == nil {
+				arg = tag
+			} else if persona, err := store.GetPersonaByDiscordRoleID(ctx, roleID); err == nil {
+				// Persona role — bind directly to this persona.
+				binding := "persona:" + persona.Username
+				if err := store.SetChannelBinding(ctx, msg.ChannelID, binding); err != nil {
+					reply("Failed to set binding.")
+					return
+				}
+				reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this persona.", persona.Name))
+				return
+			} else {
+				reply("Unknown role.")
+				return
+			}
+		}
+	}
+	arg = strings.TrimPrefix(arg, "@")
+
+	if arg == "" {
+		binding, _ := store.GetChannelBinding(ctx, msg.ChannelID)
+		if binding == "" {
+			reply("No default role set for this channel.")
+		} else if strings.HasPrefix(binding, "persona:") {
+			reply(fmt.Sprintf("Default role for this channel: persona **%s**", strings.TrimPrefix(binding, "persona:")))
+		} else {
+			reply(fmt.Sprintf("Default role for this channel: tag **%s**", binding))
+		}
+		return
+	}
+
+	if arg == "none" || arg == "clear" {
+		if err := store.DeleteChannelBinding(ctx, msg.ChannelID); err != nil {
+			reply("Failed to clear binding.")
+			return
+		}
+		reply("Default role cleared for this channel.")
+		return
+	}
+
+	// Try as persona username first.
+	if persona, err := store.GetPersonaByUsername(ctx, arg); err == nil {
+		if err := store.SetChannelBinding(ctx, msg.ChannelID, "persona:"+persona.Username); err != nil {
+			reply("Failed to set binding.")
+			return
+		}
+		reply(fmt.Sprintf("Default role set to **%s**. All messages in this channel will be answered by this persona.", persona.Name))
+		return
+	}
+
+	// Try as tag.
+	tagged, err := store.GetPersonasByTag(ctx, arg)
+	if err != nil || len(tagged) == 0 {
+		reply(fmt.Sprintf("No persona or tag found matching **%s**.", arg))
+		return
+	}
+
+	if err := store.SetChannelBinding(ctx, msg.ChannelID, arg); err != nil {
+		reply("Failed to set binding.")
+		return
+	}
+
+	names := make([]string, len(tagged))
+	for i, p := range tagged {
+		names[i] = p.Name
+	}
+	reply(fmt.Sprintf("Default role set to tag **%s** (%s). All messages in this channel will be answered by these personas.", arg, strings.Join(names, ", ")))
 }
 
 // extractModelTag checks if text contains @model-id matching a known model.
@@ -686,25 +899,26 @@ func initRouter(ctx context.Context, cfg config.Config) (*llm.Router, error) {
 func initToolRegistry(cfg config.Config, store *memory.Store) *agent.Registry {
 	registry := agent.NewRegistry()
 
-	_ = registry.Register(tools.NewWebSearchTool(tools.WebSearchConfig{}))
-	_ = registry.Register(tools.NewWebFetchTool())
+	// Core tools — always sent to the LLM.
 	_ = registry.Register(tools.NewFileReadTool(nil))
 	_ = registry.Register(tools.NewFileWriteTool(nil))
 	_ = registry.Register(tools.NewFileEditTool(nil))
-	_ = registry.Register(&tools.GlobTool{})
-	_ = registry.Register(&tools.GrepTool{})
+	_ = registry.Register(&tools.SearchTool{})
 	_ = registry.Register(tools.NewShellExecTool(cfg.Security.ShellAllowlist, cfg.Security.DrainTimeout))
+	_ = registry.Register(tools.NewWebSearchTool(tools.WebSearchConfig{}))
+	_ = registry.Register(tools.NewWebFetchTool())
+
+	// Extended tools — accessible via use_tool, not sent individually.
+	_ = registry.RegisterExtended(tools.NewBrowserTool(""))
+	_ = registry.RegisterExtended(&tools.NotebookTool{})
+	_ = registry.RegisterExtended(tools.NewScheduleTool(0))
+	_ = registry.RegisterExtended(tools.NewTodoTool())
 	if store != nil {
-		_ = registry.Register(tools.NewMemoryStoreTool(store))
-		_ = registry.Register(tools.NewMemoryRecallTool(store))
-		_ = registry.Register(tools.NewMemoryDeleteTool(store))
+		_ = registry.RegisterExtended(tools.NewMemoryTool(store))
 	}
-	_ = registry.Register(tools.NewScheduleTool(0))
-	_ = registry.Register(tools.NewTodoTool())
-	_ = registry.Register(&tools.ImageReadTool{})
-	_ = registry.Register(tools.NewPDFReadTool())
-	_ = registry.Register(&tools.NotebookTool{})
-	_ = registry.Register(tools.NewBrowserTool(""))
+
+	// Meta-tool that proxies to extended tools (must be registered after them).
+	_ = registry.Register(tools.NewUseToolTool(registry))
 
 	return registry
 }
@@ -767,6 +981,16 @@ func (a *storeAdapter) SaveToolExecution(ctx context.Context, exec agent.StoreTo
 		Output:     exec.Output,
 		DurationMs: exec.DurationMs,
 		Success:    exec.Success,
+	})
+}
+
+func (a *storeAdapter) SaveUsage(ctx context.Context, usage agent.StoreUsage) error {
+	return a.store.SaveUsage(ctx, memory.UsageRecord{
+		Provider:     usage.Provider,
+		Model:        usage.Model,
+		Mode:         usage.Mode,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
 	})
 }
 

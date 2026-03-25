@@ -94,6 +94,10 @@ func (r *Router) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		}
 		resp, err := p.Chat(ctx, req)
 		if err == nil {
+			resp.Provider = name
+			if resp.Model == "" {
+				resp.Model = req.Model
+			}
 			return resp, nil
 		}
 		lastErr = err
@@ -140,7 +144,14 @@ func (r *Router) ChatWithModel(ctx context.Context, modelID string, req ChatRequ
 		for _, m := range p.Models() {
 			if m.ID == modelID {
 				req.Model = modelID
-				return p.Chat(ctx, req)
+				resp, err := p.Chat(ctx, req)
+				if err == nil {
+					resp.Provider = p.Name()
+					if resp.Model == "" {
+						resp.Model = modelID
+					}
+				}
+				return resp, err
 			}
 		}
 	}

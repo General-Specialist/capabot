@@ -5,13 +5,13 @@ import (
 )
 
 // ContextManager tracks token usage across an agent loop and decides
-// when messages need summarization or tool outputs need truncation.
+// when tool outputs need truncation.
 type ContextManager struct {
-	contextWindow      int     // model's total context window (tokens)
-	budgetPct          float64 // fraction of window we're allowed to use (e.g., 0.8)
-	maxToolOutputTokens int    // max tokens per tool output before truncation
-	totalInputTokens   int     // cumulative input tokens reported by LLM
-	totalOutputTokens  int     // cumulative output tokens reported by LLM
+	contextWindow       int     // model's total context window (tokens)
+	budgetPct           float64 // fraction of window we're allowed to use (e.g., 0.8)
+	maxToolOutputTokens int     // max tokens per tool output before truncation
+	totalInputTokens    int     // latest prompt size reported by LLM
+	totalOutputTokens   int     // cumulative output tokens reported by LLM
 }
 
 // ContextConfig configures the context window manager.
@@ -50,12 +50,6 @@ func (cm *ContextManager) RecordUsage(usage llm.Usage) {
 	cm.totalOutputTokens += usage.OutputTokens
 }
 
-// NeedsSummarization returns true when cumulative input tokens exceed
-// the budget threshold, indicating older messages should be summarized.
-func (cm *ContextManager) NeedsSummarization() bool {
-	return cm.totalInputTokens >= cm.Budget()
-}
-
 // TruncateToolOutput truncates a tool output string if it exceeds
 // maxToolOutputTokens (approximated as 4 chars per token).
 // Returns the (possibly truncated) output and whether truncation occurred.
@@ -64,16 +58,7 @@ func (cm *ContextManager) TruncateToolOutput(output string) (string, bool) {
 	if len(output) <= maxChars {
 		return output, false
 	}
-	return output[:maxChars] + "\n\n[output truncated — full content stored in memory]", true
-}
-
-// EstimateTokens gives a rough token count for a string (4 chars per token).
-func EstimateTokens(s string) int {
-	n := len(s) / 4
-	if n == 0 && len(s) > 0 {
-		return 1
-	}
-	return n
+	return output[:maxChars] + "\n\n[output truncated]", true
 }
 
 // BuildMessages converts the conversation history into LLM ChatMessages,

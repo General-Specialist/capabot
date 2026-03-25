@@ -5,6 +5,17 @@ import (
 	"encoding/json"
 )
 
+// CreditInfo holds account-level spend data from a provider.
+type CreditInfo struct {
+	TotalUsedUSD float64 `json:"total_used_usd"` // lifetime spend in USD
+	LimitUSD     float64 `json:"limit_usd"`      // credit limit (0 = unknown)
+}
+
+// CreditFetcher is optionally implemented by providers that can report account spend.
+type CreditFetcher interface {
+	FetchCredits(ctx context.Context) (*CreditInfo, error)
+}
+
 // Provider is the interface all LLM backends must implement.
 type Provider interface {
 	// Chat sends a non-streaming request and returns the full response.
@@ -23,13 +34,14 @@ type Provider interface {
 
 // ChatRequest represents a request to an LLM provider.
 type ChatRequest struct {
-	Model       string            `json:"model"`
-	Messages    []ChatMessage     `json:"messages"`
-	System      string            `json:"system,omitempty"`
-	Tools       []ToolDefinition  `json:"tools,omitempty"`
-	MaxTokens   int               `json:"max_tokens"`
-	Temperature *float64          `json:"temperature,omitempty"`
-	StopSeqs    []string          `json:"stop_sequences,omitempty"`
+	Model           string            `json:"model"`
+	Messages        []ChatMessage     `json:"messages"`
+	System          string            `json:"system,omitempty"`
+	Tools           []ToolDefinition  `json:"tools,omitempty"`
+	MaxTokens       int               `json:"max_tokens"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	StopSeqs        []string          `json:"stop_sequences,omitempty"`
+	DisableThinking bool              `json:"disable_thinking,omitempty"`
 }
 
 // MediaPart carries binary content (image or document) alongside a text message.
@@ -81,6 +93,8 @@ type ChatResponse struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	StopReason string     `json:"stop_reason"`
 	Usage      Usage      `json:"usage"`
+	Model      string     `json:"model,omitempty"`    // actual model used
+	Provider   string     `json:"provider,omitempty"` // provider that handled it
 	// Metadata carries opaque provider-specific data that must be round-tripped
 	// back in the next request (e.g., Gemini thought signatures).
 	Metadata   any        `json:"-"`
