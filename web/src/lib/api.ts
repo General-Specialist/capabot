@@ -173,6 +173,15 @@ export interface Persona {
   updated_at: string
 }
 
+export interface MemoryEntry {
+  id: number
+  tenant_id: string
+  key: string
+  value: string
+  created_at: string
+  updated_at: string
+}
+
 export interface UsageSummary {
   provider: string
   model: string
@@ -323,6 +332,10 @@ export const api = {
     return fetch(BASE + `/personas/${id}`, { method: 'DELETE' })
       .then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
+
+  memory: () => get<MemoryEntry[]>('/memory'),
+  memorySet: (key: string, value: string) => put<{ key: string }>(`/memory/${encodeURIComponent(key)}`, { value }),
+  memoryDelete: (key: string) => del<{ deleted: boolean }>(`/memory/${encodeURIComponent(key)}`),
 
   chat: (messages: LLMMessage[], sessionId?: string) =>
     post<ChatResponse>('/chat', { messages, session_id: sessionId }),

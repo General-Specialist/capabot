@@ -154,6 +154,9 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("DELETE /api/modes/{name}", s.handleModesDelete)
 	s.mux.HandleFunc("PUT /api/personas/{id}", s.handlePersonasUpdate)
 	s.mux.HandleFunc("DELETE /api/personas/{id}", s.handlePersonasDelete)
+	s.mux.HandleFunc("GET /api/memory", s.handleMemoryList)
+	s.mux.HandleFunc("PUT /api/memory/{key}", s.handleMemoryUpsert)
+	s.mux.HandleFunc("DELETE /api/memory/{key}", s.handleMemoryDelete)
 	s.mux.HandleFunc("POST /api/avatars", s.handleAvatarUpload)
 	s.mux.Handle("GET /api/avatars/", http.StripPrefix("/api/avatars/", http.FileServer(http.Dir(s.avatarsDir()))))
 
