@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/capabot/internal/memory"
 	"github.com/rs/zerolog"
 )
 
@@ -39,21 +40,21 @@ func (m *mockProvider) Name() string { return "mock" }
 
 // mockStore implements StoreWriter for testing persistence.
 type mockStore struct {
-	messages       []StoreMessage
-	toolExecutions []StoreToolExecution
+	messages       []memory.Message
+	toolExecutions []memory.ToolExecution
 }
 
-func (ms *mockStore) SaveMessage(ctx context.Context, msg StoreMessage) (int64, error) {
+func (ms *mockStore) SaveMessage(ctx context.Context, msg memory.Message) (int64, error) {
 	ms.messages = append(ms.messages, msg)
 	return int64(len(ms.messages)), nil
 }
 
-func (ms *mockStore) SaveToolExecution(ctx context.Context, exec StoreToolExecution) error {
+func (ms *mockStore) SaveToolExecution(ctx context.Context, exec memory.ToolExecution) error {
 	ms.toolExecutions = append(ms.toolExecutions, exec)
 	return nil
 }
 
-func (ms *mockStore) SaveUsage(ctx context.Context, usage StoreUsage) error {
+func (ms *mockStore) SaveUsage(ctx context.Context, rec memory.UsageRecord) error {
 	return nil
 }
 

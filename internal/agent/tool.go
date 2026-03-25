@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -106,7 +107,7 @@ func (r *Registry) ExtendedNames() []string {
 	for name := range r.extended {
 		names = append(names, name)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	return names
 }
 
@@ -115,30 +116,17 @@ func (r *Registry) ExtendedDescriptions() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	type entry struct {
-		name string
-		desc string
-	}
-	entries := make([]entry, 0, len(r.extended))
+	names := make([]string, 0, len(r.extended))
 	for name := range r.extended {
-		if t, ok := r.tools[name]; ok {
-			entries = append(entries, entry{name, t.Description()})
-		}
+		names = append(names, name)
 	}
-	// Sort for deterministic output
-	for i := 1; i < len(entries); i++ {
-		key := entries[i]
-		j := i - 1
-		for j >= 0 && entries[j].name > key.name {
-			entries[j+1] = entries[j]
-			j--
-		}
-		entries[j+1] = key
-	}
+	sort.Strings(names)
 
 	var sb strings.Builder
-	for _, e := range entries {
-		fmt.Fprintf(&sb, "- %s: %s\n", e.name, e.desc)
+	for _, name := range names {
+		if t, ok := r.tools[name]; ok {
+			fmt.Fprintf(&sb, "- %s: %s\n", name, t.Description())
+		}
 	}
 	return sb.String()
 }
@@ -152,7 +140,7 @@ func (r *Registry) Names() []string {
 	for name := range r.tools {
 		names = append(names, name)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	return names
 }
 
@@ -163,15 +151,3 @@ func (r *Registry) Len() int {
 	return len(r.tools)
 }
 
-// sortStrings sorts a slice of strings using insertion sort (fine for small N).
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		key := s[i]
-		j := i - 1
-		for j >= 0 && s[j] > key {
-			s[j+1] = s[j]
-			j--
-		}
-		s[j+1] = key
-	}
-}

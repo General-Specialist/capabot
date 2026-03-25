@@ -107,6 +107,28 @@ func TestBuildMessages_SlidingWindow(t *testing.T) {
 	}
 }
 
+func TestBuildMessages_SkipsOrphanedToolResults(t *testing.T) {
+	// Window cuts right before a tool result — the tool result is orphaned
+	// (its parent assistant+tool_calls was cut). BuildMessages must advance
+	// the boundary forward so the LLM never sees an orphaned tool message.
+	msgs := []llm.ChatMessage{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "q"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "t1"}}},
+		{Role: "tool", ToolResult: &llm.ToolResult{ToolUseID: "t1"}},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "follow-up"},
+	}
+	// windowSize=4 → tail starts at index 2 (assistant+tool_calls).
+	// That's fine, but windowSize=3 → tail starts at index 3 (tool) — orphaned.
+	result := BuildMessages(msgs, 3)
+	for _, m := range result[1:] { // skip the always-kept first message
+		if m.Role == "tool" {
+			t.Error("BuildMessages returned an orphaned tool message")
+		}
+	}
+}
+
 func TestBuildMessages_DoesNotMutateInput(t *testing.T) {
 	msgs := []llm.ChatMessage{
 		{Role: "user", Content: "a"},

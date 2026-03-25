@@ -81,26 +81,11 @@ func rateLimitMiddleware(rpm int, next http.Handler) http.Handler {
 
 	var mu sync.Mutex
 	buckets := make(map[string]*bucket)
+	var lastCleanup time.Time
 
 	// Refill rate: tokens per nanosecond
 	refillRate := float64(rpm) / float64(time.Minute)
 	capacity := float64(rpm)
-
-	// Periodically remove stale buckets to prevent memory growth
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			mu.Lock()
-			cutoff := time.Now().Add(-10 * time.Minute)
-			for ip, b := range buckets {
-				if b.lastSeen.Before(cutoff) {
-					delete(buckets, ip)
-				}
-			}
-			mu.Unlock()
-		}
-	}()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -112,6 +97,16 @@ func rateLimitMiddleware(rpm int, next http.Handler) http.Handler {
 		now := time.Now()
 
 		mu.Lock()
+		// Lazily evict stale buckets every 5 minutes.
+		if now.Sub(lastCleanup) > 5*time.Minute {
+			cutoff := now.Add(-10 * time.Minute)
+			for addr, b := range buckets {
+				if b.lastSeen.Before(cutoff) {
+					delete(buckets, addr)
+				}
+			}
+			lastCleanup = now
+		}
 		b, exists := buckets[ip]
 		if !exists {
 			b = &bucket{tokens: capacity, lastSeen: now}

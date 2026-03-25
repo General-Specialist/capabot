@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/polymath/capabot/internal/config"
@@ -54,15 +55,6 @@ func supportedKeyList() string {
 	for k := range supportedKeys {
 		keys = append(keys, k)
 	}
-	// Simple sort for deterministic output
-	for i := 1; i < len(keys); i++ {
-		key := keys[i]
-		j := i - 1
-		for j >= 0 && keys[j] > key {
-			keys[j+1] = keys[j]
-			j--
-		}
-		keys[j+1] = key
-	}
+	sort.Strings(keys)
 	return strings.Join(keys, ", ")
 }

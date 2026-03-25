@@ -199,7 +199,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 			a.SetOnEvent(onEvent)
 		}
 		if store != nil {
-			a.SetStore(&storeAdapter{store: store})
+			a.SetStore(store)
 		}
 		return a.Run(runCtx, sessionID, messages)
 	}
@@ -221,7 +221,7 @@ When a tool is available for a task, use it directly. Do not do manual discovery
 			a.SetOnEvent(onEvent)
 		}
 		if store != nil {
-			a.SetStore(&storeAdapter{store: store})
+			a.SetStore(store)
 		}
 		return a.Run(runCtx, sessionID, messages)
 	}
@@ -955,44 +955,6 @@ func (w *wasmAgentTool) Execute(ctx context.Context, params json.RawMessage) (ag
 	return agent.ToolResult{Content: res.Content, IsError: res.IsError}, err
 }
 
-// storeAdapter adapts *memory.Store to the agent.StoreWriter interface,
-// bridging the type gap without creating an import cycle.
-type storeAdapter struct {
-	store *memory.Store
-}
-
-func (a *storeAdapter) SaveMessage(ctx context.Context, msg agent.StoreMessage) (int64, error) {
-	return a.store.SaveMessage(ctx, memory.Message{
-		SessionID:  msg.SessionID,
-		Role:       msg.Role,
-		Content:    msg.Content,
-		ToolCallID: msg.ToolCallID,
-		ToolName:   msg.ToolName,
-		ToolInput:  msg.ToolInput,
-		TokenCount: msg.TokenCount,
-	})
-}
-
-func (a *storeAdapter) SaveToolExecution(ctx context.Context, exec agent.StoreToolExecution) error {
-	return a.store.SaveToolExecution(ctx, memory.ToolExecution{
-		SessionID:  exec.SessionID,
-		ToolName:   exec.ToolName,
-		Input:      exec.Input,
-		Output:     exec.Output,
-		DurationMs: exec.DurationMs,
-		Success:    exec.Success,
-	})
-}
-
-func (a *storeAdapter) SaveUsage(ctx context.Context, usage agent.StoreUsage) error {
-	return a.store.SaveUsage(ctx, memory.UsageRecord{
-		Provider:     usage.Provider,
-		Model:        usage.Model,
-		Mode:         usage.Mode,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-	})
-}
 
 // nativeAgentTool adapts a skill.NativeTool to the agent.Tool interface.
 type nativeAgentTool struct {

@@ -4,10 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 )
@@ -47,21 +45,14 @@ type Message struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// MemoryEntry represents a key-value memory record with optional embedding.
+// MemoryEntry represents a key-value memory record.
 type MemoryEntry struct {
 	ID        int64     `json:"id"`
 	TenantID  string    `json:"tenant_id"`
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
-	Embedding []float32 `json:"embedding,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// MemoryMatch is a MemoryEntry with a similarity score from vector recall.
-type MemoryMatch struct {
-	MemoryEntry
-	Score float64 `json:"score"`
 }
 
 // CreateSession inserts a new session.
@@ -196,70 +187,17 @@ func (s *Store) GetMessages(ctx context.Context, sessionID string) ([]Message, e
 
 // StoreMemory inserts or updates a memory entry for a tenant.
 func (s *Store) StoreMemory(ctx context.Context, entry MemoryEntry) error {
-	var embeddingBytes []byte
-	if entry.Embedding != nil {
-		embeddingBytes = encodeEmbedding(entry.Embedding)
-	}
-
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO memory (tenant_id, key, value, embedding)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO memory (tenant_id, key, value)
+			 VALUES ($1, $2, $3)
 			 ON CONFLICT(tenant_id, key) DO UPDATE SET
 			   value = EXCLUDED.value,
-			   embedding = EXCLUDED.embedding,
 			   updated_at = NOW()`,
-			entry.TenantID, entry.Key, entry.Value, embeddingBytes,
+			entry.TenantID, entry.Key, entry.Value,
 		)
 		return err
 	})
-}
-
-// RecallMemory finds memory entries similar to the query embedding using
-// brute-force cosine similarity. Returns up to limit results above the
-// minimum score threshold.
-func (s *Store) RecallMemory(ctx context.Context, tenantID string, queryEmbedding []float32, limit int, minScore float64) ([]MemoryMatch, error) {
-	rows, err := s.pool.DB().QueryContext(ctx,
-		`SELECT id, tenant_id, key, value, embedding, created_at, updated_at
-		 FROM memory WHERE tenant_id = $1 AND embedding IS NOT NULL`,
-		tenantID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("querying memory: %w", err)
-	}
-	defer rows.Close()
-
-	var matches []MemoryMatch
-	for rows.Next() {
-		var entry MemoryEntry
-		var embeddingBytes []byte
-
-		if err := rows.Scan(&entry.ID, &entry.TenantID, &entry.Key, &entry.Value,
-			&embeddingBytes, &entry.CreatedAt, &entry.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning memory entry: %w", err)
-		}
-
-		entry.Embedding = decodeEmbedding(embeddingBytes)
-		if entry.Embedding == nil {
-			continue
-		}
-
-		score := cosineSimilarity(queryEmbedding, entry.Embedding)
-		if score >= minScore {
-			matches = append(matches, MemoryMatch{MemoryEntry: entry, Score: score})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	sortByScoreDesc(matches)
-
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
-
-	return matches, nil
 }
 
 // ToolExecution records a single tool invocation for audit logging.
@@ -611,61 +549,6 @@ func scanAutomationRuns(rows *sql.Rows) ([]AutomationRun, error) {
 		runs = append(runs, r)
 	}
 	return runs, rows.Err()
-}
-
-// cosineSimilarity computes the cosine similarity between two vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-
-	denom := math.Sqrt(normA) * math.Sqrt(normB)
-	if denom == 0 {
-		return 0
-	}
-	return dot / denom
-}
-
-// sortByScoreDesc sorts matches by score descending using insertion sort
-// (fine for small result sets from brute-force search).
-func sortByScoreDesc(matches []MemoryMatch) {
-	for i := 1; i < len(matches); i++ {
-		key := matches[i]
-		j := i - 1
-		for j >= 0 && matches[j].Score < key.Score {
-			matches[j+1] = matches[j]
-			j--
-		}
-		matches[j+1] = key
-	}
-}
-
-// encodeEmbedding serializes a float32 slice to raw little-endian bytes.
-func encodeEmbedding(v []float32) []byte {
-	buf := make([]byte, len(v)*4)
-	for i, f := range v {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(f))
-	}
-	return buf
-}
-
-// decodeEmbedding deserializes raw little-endian bytes to a float32 slice.
-func decodeEmbedding(b []byte) []float32 {
-	if len(b) == 0 || len(b)%4 != 0 {
-		return nil
-	}
-	v := make([]float32, len(b)/4)
-	for i := range v {
-		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
-	}
-	return v
 }
 
 // Persona is a named system prompt with optional display overrides and tags.

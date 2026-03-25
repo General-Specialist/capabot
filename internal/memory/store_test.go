@@ -3,11 +3,9 @@ package memory
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"sync"
 	"testing"
-	"time"
 )
 
 func testDSN(t *testing.T) string {
@@ -226,50 +224,6 @@ func TestStore_ConcurrentWriters(t *testing.T) {
 	}
 }
 
-func TestStore_CosineSimilarity(t *testing.T) {
-	store := setupTestStore(t)
-	ctx := context.Background()
-
-	entries := []MemoryEntry{
-		{TenantID: "t1", Key: "cat", Value: "cats are fluffy", Embedding: []float32{1, 0, 0, 0}},
-		{TenantID: "t1", Key: "dog", Value: "dogs are loyal", Embedding: []float32{0.9, 0.1, 0, 0}},
-		{TenantID: "t1", Key: "car", Value: "cars go fast", Embedding: []float32{0, 0, 1, 0}},
-		{TenantID: "t1", Key: "bike", Value: "bikes are fun", Embedding: []float32{0, 0, 0.8, 0.2}},
-	}
-	for _, e := range entries {
-		if err := store.StoreMemory(ctx, e); err != nil {
-			t.Fatalf("storing memory %s: %v", e.Key, err)
-		}
-	}
-
-	query := []float32{0.95, 0.05, 0, 0}
-
-	start := time.Now()
-	matches, err := store.RecallMemory(ctx, "t1", query, 2, 0.5)
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("recalling memory: %v", err)
-	}
-
-	if len(matches) != 2 {
-		t.Fatalf("expected 2 matches, got %d", len(matches))
-	}
-	if matches[0].Key != "cat" {
-		t.Errorf("expected first match to be 'cat', got %q", matches[0].Key)
-	}
-	if matches[1].Key != "dog" {
-		t.Errorf("expected second match to be 'dog', got %q", matches[1].Key)
-	}
-	if matches[0].Score < 0.9 {
-		t.Errorf("expected cat score > 0.9, got %f", matches[0].Score)
-	}
-
-	if elapsed > 100*time.Millisecond {
-		t.Logf("WARNING: cosine similarity took %v", elapsed)
-	}
-}
-
 func TestStore_MemoryDelete(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -284,37 +238,13 @@ func TestStore_MemoryDelete(t *testing.T) {
 		t.Fatalf("deleting memory: %v", err)
 	}
 
-	matches, err := store.RecallMemory(ctx, "t1", []float32{1, 0}, 10, 0.0)
+	entries, err := store.ListMemory(ctx, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range matches {
-		if m.Key == "to-delete" {
+	for _, e := range entries {
+		if e.Key == "to-delete" {
 			t.Error("deleted entry should not appear in results")
 		}
-	}
-}
-
-func TestCosineSimilarity_Unit(t *testing.T) {
-	tests := []struct {
-		name string
-		a, b []float32
-		want float64
-	}{
-		{"identical", []float32{1, 0, 0}, []float32{1, 0, 0}, 1.0},
-		{"orthogonal", []float32{1, 0, 0}, []float32{0, 1, 0}, 0.0},
-		{"opposite", []float32{1, 0}, []float32{-1, 0}, -1.0},
-		{"empty", []float32{}, []float32{}, 0.0},
-		{"length mismatch", []float32{1, 0}, []float32{1, 0, 0}, 0.0},
-		{"zero vector", []float32{0, 0, 0}, []float32{1, 0, 0}, 0.0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := cosineSimilarity(tt.a, tt.b)
-			if math.Abs(got-tt.want) > 1e-6 {
-				t.Errorf("cosineSimilarity(%v, %v) = %f, want %f", tt.a, tt.b, got, tt.want)
-			}
-		})
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,22 +21,28 @@ func main() {
 
 	switch os.Args[1] {
 	case "serve":
-		configPath := parseConfigFlag(os.Args[2:], defaultConfigPath)
-		if err := runServe(expandHome(configPath)); err != nil {
+		fs := flag.NewFlagSet("serve", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(os.Args[2:]) //nolint:errcheck
+		if err := runServe(expandHome(*configPath)); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "chat":
-		configPath := parseConfigFlag(os.Args[2:], defaultConfigPath)
-		if err := runChat(expandHome(configPath)); err != nil {
+		fs := flag.NewFlagSet("chat", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(os.Args[2:]) //nolint:errcheck
+		if err := runChat(expandHome(*configPath)); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "dev":
-		configPath := parseConfigFlag(os.Args[2:], defaultConfigPath)
-		if err := runDev(expandHome(configPath)); err != nil {
+		fs := flag.NewFlagSet("dev", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(os.Args[2:]) //nolint:errcheck
+		if err := runDev(expandHome(*configPath)); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -82,8 +89,10 @@ func main() {
 		}
 		switch os.Args[2] {
 		case "list":
-			configPath := parseConfigFlag(os.Args[3:], defaultConfigPath)
-			if err := runAgentList(expandHome(configPath)); err != nil {
+			fs := flag.NewFlagSet("agent-list", flag.ExitOnError)
+			configPath := fs.String("config", defaultConfigPath, "path to config file")
+			fs.Parse(os.Args[3:]) //nolint:errcheck
+			if err := runAgentList(expandHome(*configPath)); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -99,10 +108,10 @@ func main() {
 		}
 		switch os.Args[2] {
 		case "set":
-			configPath := parseConfigFlag(os.Args[3:], defaultConfigPath)
-			// Remaining args after stripping --config flag
-			args := filterConfigFlag(os.Args[3:])
-			if err := runConfigSet(expandHome(configPath), args); err != nil {
+			fs := flag.NewFlagSet("config-set", flag.ExitOnError)
+			configPath := fs.String("config", defaultConfigPath, "path to config file")
+			fs.Parse(os.Args[3:]) //nolint:errcheck
+			if err := runConfigSet(expandHome(*configPath), fs.Args()); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -112,8 +121,10 @@ func main() {
 		}
 
 	case "migrate":
-		configPath := parseConfigFlag(os.Args[2:], defaultConfigPath)
-		if err := runMigrate(expandHome(configPath)); err != nil {
+		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(os.Args[2:]) //nolint:errcheck
+		if err := runMigrate(expandHome(*configPath)); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -146,41 +157,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  migrate [--config <path>]         Run database migrations")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "default config path: ~/.capabot/config.yaml")
-}
-
-// parseConfigFlag scans args for --config <path> or --config=<path> and
-// returns the path found, or defaultPath if none.
-func parseConfigFlag(args []string, defaultPath string) string {
-	for i, arg := range args {
-		if arg == "--config" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if len(arg) > 9 && arg[:9] == "--config=" {
-			return arg[9:]
-		}
-	}
-	return defaultPath
-}
-
-// filterConfigFlag returns args with --config <val> or --config=<val> removed.
-func filterConfigFlag(args []string) []string {
-	result := make([]string, 0, len(args))
-	skip := false
-	for _, arg := range args {
-		if skip {
-			skip = false
-			continue
-		}
-		if arg == "--config" {
-			skip = true
-			continue
-		}
-		if len(arg) > 9 && arg[:9] == "--config=" {
-			continue
-		}
-		result = append(result, arg)
-	}
-	return result
 }
 
 // expandHome replaces a leading ~ with the user's home directory.

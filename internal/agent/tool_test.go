@@ -133,18 +133,3 @@ func TestRegistry_Execute(t *testing.T) {
 	}
 }
 
-func TestSortStrings(t *testing.T) {
-	s := []string{"z", "a", "m", "b"}
-	sortStrings(s)
-	expected := []string{"a", "b", "m", "z"}
-	for i, v := range s {
-		if v != expected[i] {
-			t.Errorf("s[%d] = %q, want %q", i, v, expected[i])
-		}
-	}
-}
-
-func TestSortStrings_Empty(t *testing.T) {
-	var s []string
-	sortStrings(s) // should not panic
-}

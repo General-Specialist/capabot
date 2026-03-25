@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,32 +28,9 @@ func httpStatusError(resp *http.Response) *HTTPStatusError {
 
 // isRetryable reports whether an error warrants a retry (429 or 5xx).
 func isRetryable(err error) bool {
-	if err == nil {
-		return false
-	}
 	var httpErr *HTTPStatusError
-	// Unwrap manually since errors.As works transitively
-	if unwrapped := unwrapHTTPStatusError(err); unwrapped != nil {
-		httpErr = unwrapped
-	}
-	if httpErr == nil {
+	if !errors.As(err, &httpErr) {
 		return false
 	}
-	code := httpErr.StatusCode
-	return code == 429 || (code >= 500 && code < 600)
-}
-
-func unwrapHTTPStatusError(err error) *HTTPStatusError {
-	for err != nil {
-		if httpErr, ok := err.(*HTTPStatusError); ok {
-			return httpErr
-		}
-		type unwrapper interface{ Unwrap() error }
-		if u, ok := err.(unwrapper); ok {
-			err = u.Unwrap()
-		} else {
-			break
-		}
-	}
-	return nil
+	return httpErr.StatusCode == 429 || (httpErr.StatusCode >= 500 && httpErr.StatusCode < 600)
 }

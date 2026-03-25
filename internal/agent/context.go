@@ -65,6 +65,10 @@ func (cm *ContextManager) TruncateToolOutput(output string) (string, bool) {
 // applying the sliding window strategy: when there are more than
 // windowSize messages, only the system message (first) and the most
 // recent windowSize-1 messages are kept.
+//
+// The window boundary is adjusted forward past any orphaned "tool" role
+// messages, so the LLM never receives a tool result without its preceding
+// assistant tool-call message.
 func BuildMessages(history []llm.ChatMessage, windowSize int) []llm.ChatMessage {
 	if len(history) == 0 {
 		return nil
@@ -75,10 +79,15 @@ func BuildMessages(history []llm.ChatMessage, windowSize int) []llm.ChatMessage 
 		return result
 	}
 
-	// Keep the first message (system/initial user) + tail
-	result := make([]llm.ChatMessage, 0, windowSize)
+	// Start of the tail window.
+	tailStart := len(history) - (windowSize - 1)
+	// Advance past any orphaned tool-result messages at the cut point.
+	for tailStart < len(history) && history[tailStart].Role == "tool" {
+		tailStart++
+	}
+
+	result := make([]llm.ChatMessage, 0, len(history)-tailStart+1)
 	result = append(result, history[0])
-	tail := history[len(history)-(windowSize-1):]
-	result = append(result, tail...)
+	result = append(result, history[tailStart:]...)
 	return result
 }

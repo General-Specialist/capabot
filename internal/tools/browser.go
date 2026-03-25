@@ -127,6 +127,8 @@ func (t *BrowserTool) Execute(ctx context.Context, params json.RawMessage) (agen
 
 	resp, err := t.send(cmd)
 	if err != nil {
+		// Subprocess crashed — reset so the next call will restart it cleanly.
+		t.stop()
 		return agent.ToolResult{Content: fmt.Sprintf("browser error: %v", err), IsError: true}, nil
 	}
 	if !resp.OK {

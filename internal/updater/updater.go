@@ -18,9 +18,9 @@ type state struct {
 
 // CheckAndUpdate fetches from origin and pulls if new commits are available.
 // Rate-limited to once per minute. air detects changes and rebuilds automatically.
-// Skips silently if not in a git repo or CAPABOT_NO_AUTOUPDATE is set.
+// Only runs when CAPABOT_AUTOUPDATE is set (opt-in; not appropriate for Docker/Railway deployments).
 func CheckAndUpdate() {
-	if os.Getenv("CAPABOT_NO_AUTOUPDATE") != "" {
+	if os.Getenv("CAPABOT_AUTOUPDATE") == "" {
 		return
 	}
 
@@ -43,7 +43,7 @@ func CheckAndUpdate() {
 		fmt.Fprintf(os.Stderr, "capabot: git pull failed: %v\n", err)
 		return
 	}
-	fmt.Fprintln(os.Stderr, "capabot: updated — air will rebuild automatically")
+	fmt.Fprintln(os.Stderr, "capabot: updated — restarting...")
 }
 
 func statePath() string {

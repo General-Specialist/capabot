@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/polymath/capabot/internal/llm"
+	"github.com/polymath/capabot/internal/memory"
 	"github.com/rs/zerolog"
 )
 
@@ -47,41 +48,11 @@ type AgentConfig struct {
 	Mode                string // active mode name for usage tracking
 }
 
-// StoreUsage mirrors memory.UsageRecord fields the agent writes.
-type StoreUsage struct {
-	Provider     string
-	Model        string
-	Mode         string
-	InputTokens  int
-	OutputTokens int
-}
-
 // StoreWriter is the subset of memory.Store the agent needs for audit logging.
 type StoreWriter interface {
-	SaveMessage(ctx context.Context, msg StoreMessage) (int64, error)
-	SaveToolExecution(ctx context.Context, exec StoreToolExecution) error
-	SaveUsage(ctx context.Context, usage StoreUsage) error
-}
-
-// StoreMessage mirrors memory.Message fields the agent writes.
-type StoreMessage struct {
-	SessionID  string
-	Role       string
-	Content    string
-	ToolCallID string
-	ToolName   string
-	ToolInput  string
-	TokenCount int
-}
-
-// StoreToolExecution mirrors memory.ToolExecution fields the agent writes.
-type StoreToolExecution struct {
-	SessionID  string
-	ToolName   string
-	Input      string
-	Output     string
-	DurationMs int64
-	Success    bool
+	SaveMessage(ctx context.Context, msg memory.Message) (int64, error)
+	SaveToolExecution(ctx context.Context, exec memory.ToolExecution) error
+	SaveUsage(ctx context.Context, rec memory.UsageRecord) error
 }
 
 // RunResult is the final outcome of an agent run.
@@ -430,7 +401,7 @@ func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content str
 		return
 	}
 
-	msg := StoreMessage{
+	msg := memory.Message{
 		SessionID:  sessionID,
 		Role:       role,
 		Content:    content,
@@ -448,7 +419,7 @@ func (a *Agent) persistToolMessage(ctx context.Context, sessionID, toolCallID, t
 	if a.store == nil || sessionID == "" {
 		return
 	}
-	msg := StoreMessage{
+	msg := memory.Message{
 		SessionID:  sessionID,
 		Role:       "tool",
 		Content:    content,
@@ -467,7 +438,7 @@ func (a *Agent) persistToolExecution(ctx context.Context, sessionID string, tc l
 		return
 	}
 
-	exec := StoreToolExecution{
+	exec := memory.ToolExecution{
 		SessionID:  sessionID,
 		ToolName:   tc.Name,
 		Input:      string(tc.Input),
@@ -490,7 +461,7 @@ func (a *Agent) persistUsage(ctx context.Context, resp *llm.ChatResponse) {
 	if mode == "" {
 		mode = "default"
 	}
-	if err := a.store.SaveUsage(ctx, StoreUsage{
+	if err := a.store.SaveUsage(ctx, memory.UsageRecord{
 		Provider:     resp.Provider,
 		Model:        resp.Model,
 		Mode:         mode,
