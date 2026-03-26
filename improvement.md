@@ -87,22 +87,6 @@ If the goal is a clean, independent product, consider whether this compatibility
 
 ---
 
-## 9. Frontend: `App.css` is mostly dead
-
-**Problem:** `App.css` exists alongside `index.css` (which has all the Tailwind + theme tokens). Most styling is done via Tailwind classes. `App.css` likely has leftover Vite scaffold styles.
-
-**Fix:** Audit `App.css`. If it's just the default Vite template CSS, delete it and move any remaining needed styles to `index.css`.
-
----
-
-## 10. `memory.schema.sql` has unused `embedding BYTEA` column
-
-**Problem:** The `memory` table has an `embedding BYTEA` column that's never written to or read from.
-
-**Fix:** Add a migration to drop the column: `ALTER TABLE memory DROP COLUMN IF EXISTS embedding;`
-
----
-
 ## Priority Order
 
 Medium effort, high impact:
@@ -111,5 +95,4 @@ Medium effort, high impact:
 
 Larger decisions (need user input):
 3. **#3** Audit and potentially remove OpenClaw compatibility layer
-4. **#9** Drop unused embedding column (migration needed)
-5. **#2** Move token pricing out of agent.go
+4. **#2** Move token pricing out of agent.go

@@ -45,7 +45,6 @@ CREATE TABLE IF NOT EXISTS memory (
     tenant_id  TEXT NOT NULL,
     key        TEXT NOT NULL,
     value      TEXT NOT NULL,
-    embedding  BYTEA,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, key)

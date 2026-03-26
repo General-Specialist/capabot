@@ -1,0 +1,1 @@
+ALTER TABLE memory DROP COLUMN IF EXISTS embedding;
