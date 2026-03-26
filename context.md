@@ -151,7 +151,7 @@ Opens Postgres and runs embedded SQL migrations, then exits.
 
 ## `internal/agent/` -- ReAct Agent Loop
 
-### `agent.go` (~590 lines)
+### `agent.go` (~550 lines)
 The core agent. Implements the ReAct (Reason + Act) loop.
 
 **`Agent` struct fields:**
@@ -186,7 +186,7 @@ The core agent. Implements the ReAct (Reason + Act) loop.
 - Otherwise falls back to truncation (first 2 lines + stats)
 - Threshold: 300 chars
 
-**Token pricing table:** Hardcoded map of model -> [input, output] cost per million tokens. Covers Anthropic (Claude 3.5/4.x), OpenAI (GPT-4o), Gemini (2.0/2.5/3), and OpenRouter variants. Lives in `agent.go` lines ~540-552.
+**Token pricing:** `llm.EstimateCost(model, inputTokens, outputTokens)` -- delegates to `internal/llm/pricing.go`.
 
 ### `context.go`
 **`ContextManager`** -- tracks token budget and provides truncation.
@@ -256,6 +256,9 @@ Google GenAI SDK implementation.
 - Handles Gemini's thought signatures (preserved in `Metadata` for round-tripping)
 - Converts tools via `ParametersJsonSchema` for raw JSON schema passthrough
 - Models: Gemini 3 Flash Preview, 2.5 Pro, 2.5 Flash, 2.0 Flash
+
+### `pricing.go`
+`EstimateCost(model, inputTokens, outputTokens) float64` -- per-million-token cost map for all supported models (Anthropic, OpenAI, Gemini, OpenRouter). Returns 0 for unknown models.
 
 ### `errors.go`
 `HTTPStatusError` type + `isRetryable(err)` check (429 or 5xx).

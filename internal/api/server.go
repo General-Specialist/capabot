@@ -908,17 +908,21 @@ func (s *Server) ensureSession(ctx context.Context, sessionID, tenantID, text st
 		sessionID = newSessionID()
 	}
 	if s.store != nil {
-		_ = s.store.UpsertSession(ctx, memory.Session{
+		if err := s.store.UpsertSession(ctx, memory.Session{
 			ID:       sessionID,
 			TenantID: tenantID,
 			Channel:  "web",
 			Title:    sessionTitle(text),
-		})
-		_, _ = s.store.SaveMessage(ctx, memory.Message{
+		}); err != nil {
+			s.logger.Warn().Err(err).Str("session", sessionID).Msg("failed to upsert session")
+		}
+		if _, err := s.store.SaveMessage(ctx, memory.Message{
 			SessionID: sessionID,
 			Role:      "user",
 			Content:   text,
-		})
+		}); err != nil {
+			s.logger.Warn().Err(err).Str("session", sessionID).Msg("failed to save user message")
+		}
 	}
 	return sessionID
 }

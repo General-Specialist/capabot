@@ -153,7 +153,9 @@ func (s *Server) handlePeopleCreate(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				s.logger.Warn().Err(err).Str("person", body.Username).Msg("failed to create Discord role")
 			} else {
-				_ = s.store.SetPersonDiscordRoleID(r.Context(), id, roleID)
+				if err := s.store.SetPersonDiscordRoleID(r.Context(), id, roleID); err != nil {
+					s.logger.Warn().Err(err).Int64("person", id).Msg("failed to save Discord role ID")
+				}
 			}
 		}
 		s.syncTagRoles(r.Context(), body.Tags)
@@ -210,11 +212,15 @@ func (s *Server) handlePeopleUpdate(w http.ResponseWriter, r *http.Request) {
 
 		if usernameChanged && body.Username != "" {
 			if oldPerson.DiscordRoleID != "" {
-				_ = s.discordRoles.UpdateRole(r.Context(), oldPerson.DiscordRoleID, body.Username)
+				if err := s.discordRoles.UpdateRole(r.Context(), oldPerson.DiscordRoleID, body.Username); err != nil {
+					s.logger.Warn().Err(err).Str("role", oldPerson.DiscordRoleID).Msg("failed to update Discord role")
+				}
 			} else {
 				roleID, err := s.discordRoles.CreateRole(r.Context(), body.Username)
-				if err == nil {
-					_ = s.store.SetPersonDiscordRoleID(r.Context(), id, roleID)
+				if err != nil {
+					s.logger.Warn().Err(err).Str("person", body.Username).Msg("failed to create Discord role")
+				} else if err := s.store.SetPersonDiscordRoleID(r.Context(), id, roleID); err != nil {
+					s.logger.Warn().Err(err).Int64("person", id).Msg("failed to save Discord role ID")
 				}
 			}
 		}
@@ -234,10 +240,15 @@ func (s *Server) handlePeopleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Delete Discord role before removing from DB.
 	if s.discordRoles != nil {
-		people, _ := s.store.ListPeople(r.Context())
+		people, err := s.store.ListPeople(r.Context())
+		if err != nil {
+			s.logger.Warn().Err(err).Msg("failed to list people for Discord role cleanup")
+		}
 		for _, p := range people {
 			if p.ID == id && p.DiscordRoleID != "" {
-				_ = s.discordRoles.DeleteRole(r.Context(), p.DiscordRoleID)
+				if err := s.discordRoles.DeleteRole(r.Context(), p.DiscordRoleID); err != nil {
+					s.logger.Warn().Err(err).Str("role", p.DiscordRoleID).Msg("failed to delete Discord role")
+				}
 				break
 			}
 		}
@@ -260,8 +271,8 @@ func (s *Server) syncTagRoles(ctx context.Context, tags []string) {
 			roleID, err := s.discordRoles.CreateRole(ctx, tag)
 			if err != nil {
 				s.logger.Warn().Err(err).Str("tag", tag).Msg("failed to create Discord tag role")
-			} else {
-				_ = s.store.UpsertDiscordTagRole(ctx, tag, roleID)
+			} else if err := s.store.UpsertDiscordTagRole(ctx, tag, roleID); err != nil {
+				s.logger.Warn().Err(err).Str("tag", tag).Msg("failed to save Discord tag role ID")
 			}
 		}
 	}

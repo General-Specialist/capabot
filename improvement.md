@@ -2,34 +2,6 @@
 
 Focus: reducing code, removing debt, simplifying. Keeping it maintainable by a tiny team.
 
----
-
-## Code Debt Removal
-
-### 4. `SkillRequires` parsed but never enforced
-
-**Problem:** `types.go` defines `SkillRequires` (bins, anyBins, env, config) and the parser extracts it from SKILL.md frontmatter, but the runtime never checks if requirements are met before loading a skill. Users declare dependencies that are silently ignored.
-
-**Fix:** Either add a simple check at skill load time (warn if required binaries/env vars are missing) or remove the struct and parsing code entirely. Recommendation: add a warning log, don't block loading.
-
-**Lines saved:** ~0 if adding warnings, ~30 if removing
-
----
-
-### 6. Error swallowing in API handlers
-
-**Problem:** Several API handlers use `_, _ = expr` to ignore errors from store operations:
-```go
-_, _ = s.store.SaveMessage(ctx, memory.Message{...})
-_ = s.store.UpsertSession(ctx, memory.Session{...})
-```
-
-**Fix:** Log errors at warn level. Don't fail the request, but make failures visible. Search for `_ =` in `internal/api/` and add `if err != nil { logger.Warn()... }` where appropriate.
-
-**Lines saved:** ~0 (adds lines, but removes hidden bugs)
-
----
-
 ## Architecture Improvements
 
 ### 7. Split `server.go` handler methods into logical files
@@ -45,16 +17,6 @@ Some handlers are already extracted (`automations.go`, `people.go`, `modes.go`, 
 - Keep route registration in `server.go`
 
 **Lines saved from server.go:** ~400 (moved, not deleted -- but server.go drops to ~500 lines)
-
----
-
-### 8. DatePicker is 546 lines for a single component
-
-**Problem:** `web/src/components/DatePicker.tsx` is 546 LOC. It handles calendar rendering, date selection, time input, and picker state all in one component.
-
-**Fix:** Calendar.tsx already exists separately. Verify DatePicker delegates properly. If it reimplements calendar logic, refactor to compose `Calendar` + a thin `DatePicker` wrapper.
-
-**Lines saved:** ~200 if calendar logic is duplicated
 
 ---
 
@@ -111,17 +73,12 @@ These are features in OpenClaw that GoStaff does not implement. Ordered by impac
 ## Priority Order
 
 ### Immediate (code debt)
-1. **#6** Split server.go handlers (~1 hour, pure cleanup)
-2. **#4** Decide on SkillRequires: enforce or remove
-3. **#5** Fix error swallowing in API handlers
-
-### Soon (architecture)
-4. **#7** Audit DatePicker for duplicated calendar logic
+1. **#7** Split server.go handlers (~1 hour, pure cleanup)
 
 ### OpenClaw conversion (feature work)
-7. **#8** Plugin streaming support
-8. **#9** Plugin config schema UI
-9. **#3 (OpenClaw gap)** Multi-tenant channel configuration
+2. **#9** Plugin streaming support
+3. **#10** Plugin config schema UI
+4. **OpenClaw gap** Multi-tenant channel configuration
 
 ### Backlog
-11. Frontend test coverage (at minimum `lib/api.ts`)
+5. Frontend test coverage (at minimum `lib/api.ts`)
