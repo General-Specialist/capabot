@@ -15,7 +15,7 @@ import (
 )
 
 // RunAgentFunc is the function signature for running an agent.
-type RunAgentFunc func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+type RunAgentFunc func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 
 // Scheduler polls for due automations and runs them.
 type Scheduler struct {
@@ -193,7 +193,7 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 
 	messages := []llm.ChatMessage{{Role: "user", Content: auto.Prompt}}
 
-	result, err := s.runAgent(ctx, sessionID, messages, func(ev agent.AgentEvent) {
+	result, err := s.runAgent(ctx, "", "", sessionID, messages, func(ev agent.AgentEvent) {
 		s.broadcast(runID, ev)
 	})
 	if err != nil {
@@ -304,7 +304,7 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 		Metadata: "{}",
 	})
 
-	result, err := s.runAgent(ctx, sessionID, []llm.ChatMessage{{Role: "user", Content: parsed.Instructions}}, func(ev agent.AgentEvent) {
+	result, err := s.runAgent(ctx, "", "", sessionID, []llm.ChatMessage{{Role: "user", Content: parsed.Instructions}}, func(ev agent.AgentEvent) {
 		s.broadcast(runID, ev)
 	})
 	if err != nil {

@@ -216,10 +216,17 @@ Skills vs plugins:
 		}
 	}
 
-	runAgent := func(runCtx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
+	runAgent := func(runCtx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
+		cfg := agentCfg
+		if sysPrompt != "" {
+			cfg.SystemPrompt = sysPrompt
+		}
+		if model != "" {
+			cfg.Model = model
+		}
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
 		ms := resolveMode(runCtx)
-		cfg := applyMode(agentCfg, ms, runCtx)
+		cfg = applyMode(cfg, ms, runCtx)
 		a := agent.New(cfg, router, ms.Tools, ctxMgr, logger)
 		addPluginHooks(a)
 		if onEvent != nil {
@@ -227,50 +234,6 @@ Skills vs plugins:
 		}
 		if store != nil {
 			a.SetStore(store)
-		}
-		return a.Run(runCtx, sessionID, messages)
-	}
-
-	// runAgentWithPrompt is like runAgent but with a custom system prompt and optional model override.
-	runAgentWithPrompt := func(runCtx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error) {
-		customCfg := agentCfg
-		if sysPrompt != "" {
-			customCfg.SystemPrompt = sysPrompt
-		}
-		if model != "" {
-			customCfg.Model = model
-		}
-		ctxMgr := agent.NewContextManager(ctxMgrCfg)
-		ms := resolveMode(runCtx)
-		customCfg = applyMode(customCfg, ms, runCtx)
-		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
-		addPluginHooks(a)
-		if onEvent != nil {
-			a.SetOnEvent(onEvent)
-		}
-		if store != nil {
-			a.SetStore(store)
-		}
-		return a.Run(runCtx, sessionID, messages)
-	}
-
-	// runAgentEphemeral is like runAgentWithPrompt but doesn't persist messages (for transports).
-	runAgentEphemeral := func(runCtx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage) (*agent.RunResult, error) {
-		customCfg := agentCfg
-		if sysPrompt != "" {
-			customCfg.SystemPrompt = sysPrompt
-		}
-		if model != "" {
-			customCfg.Model = model
-		}
-		ctxMgr := agent.NewContextManager(ctxMgrCfg)
-		ms := resolveMode(runCtx)
-		customCfg = applyMode(customCfg, ms, runCtx)
-		a := agent.New(customCfg, router, ms.Tools, ctxMgr, logger)
-		addPluginHooks(a)
-		if store != nil {
-			a.SetStore(store)
-			a.SetUsageOnly(true)
 		}
 		return a.Run(runCtx, sessionID, messages)
 	}
@@ -292,8 +255,7 @@ Skills vs plugins:
 		SkillReg:        skillRegistry,
 		Providers:       router.ProviderMap(),
 		ToolReg:         toolRegistry,
-		DefaultAgent:    runAgent,
-		AgentWithPrompt: runAgentWithPrompt,
+		RunAgent: runAgent,
 		LogBroadcaster:  broadcaster,
 		Logger:          logger,
 		APIKey:          cfg.Security.APIKey,
@@ -367,7 +329,7 @@ Skills vs plugins:
 	}
 
 	// 10. Start bot transports
-	messageHandler := makeMessageHandler(runAgentEphemeral, store, router, contentFilter, shellTool, logger)
+	messageHandler := makeMessageHandler(runAgent, store, router, contentFilter, shellTool, logger)
 
 	// HTTP bot transport (always started)
 	httpTransport := transport.NewHTTPTransport(transport.HTTPConfig{
@@ -530,7 +492,7 @@ func isApprovalResponse(text string) (approved bool, permanent bool, isResponse 
 }
 
 func makeMessageHandler(
-	runAgent func(context.Context, string, string, string, []llm.ChatMessage) (*agent.RunResult, error),
+	runAgent func(context.Context, string, string, string, []llm.ChatMessage, func(agent.AgentEvent)) (*agent.RunResult, error),
 	store *memory.Store,
 	router *llm.Router,
 	filter *agent.ContentFilter,
@@ -649,7 +611,7 @@ func makeMessageHandler(
 			}
 
 			if len(people) == 0 {
-				result, err := runAgent(msgCtx, globalSysPrompt, modelID, msg.ChannelID, messages)
+				result, err := runAgent(msgCtx, globalSysPrompt, modelID, msg.ChannelID, messages, nil)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
@@ -666,7 +628,7 @@ func makeMessageHandler(
 				if globalSysPrompt != "" {
 					prompt = globalSysPrompt + "\n\n" + prompt
 				}
-				result, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
+				result, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages, nil)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("person", p.Name).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
@@ -687,7 +649,7 @@ func makeMessageHandler(
 						if globalSysPrompt != "" {
 							prompt = globalSysPrompt + "\n\n" + prompt
 						}
-						res, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages)
+						res, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages, nil)
 						resultCh <- personResult{person: person, result: res, err: err}
 					}(p)
 				}

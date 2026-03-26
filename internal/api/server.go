@@ -34,8 +34,7 @@ type Server struct {
 	skillReg       *skill.Registry
 	providers      map[string]llm.Provider
 	toolReg        *agent.Registry
-	defaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
-	agentWithPrompt func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	runAgent func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	logBroadcaster *applog.Broadcaster
 	scheduler      *cron.Scheduler
 	mux            *http.ServeMux
@@ -54,8 +53,7 @@ type Config struct {
 	SkillReg       *skill.Registry
 	Providers      map[string]llm.Provider
 	ToolReg        *agent.Registry
-	DefaultAgent    func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
-	AgentWithPrompt func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
+	RunAgent func(ctx context.Context, sysPrompt, model, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
 	LogBroadcaster  *applog.Broadcaster
 	Logger         zerolog.Logger
 	// StaticFS is the embedded web/dist for SPA serving (nil = skip static serving).
@@ -93,8 +91,7 @@ func New(cfg Config) *Server {
 		skillReg:        cfg.SkillReg,
 		providers:       cfg.Providers,
 		toolReg:         cfg.ToolReg,
-		defaultAgent:    cfg.DefaultAgent,
-		agentWithPrompt: cfg.AgentWithPrompt,
+		runAgent: cfg.RunAgent,
 		logBroadcaster:  cfg.LogBroadcaster,
 		scheduler:      cfg.Scheduler,
 		mux:            http.NewServeMux(),
@@ -391,7 +388,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "messages is required", http.StatusBadRequest)
 		return
 	}
-	if s.defaultAgent == nil {
+	if s.runAgent == nil {
 		writeError(w, "no agent configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -405,13 +402,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sysPrompt = combinePrompts(p.sysPrompt, p.people[0].Prompt)
 	}
 
-	var result *agent.RunResult
-	var err error
-	if (sysPrompt != "" || p.modelID != "") && s.agentWithPrompt != nil {
-		result, err = s.agentWithPrompt(r.Context(), sysPrompt, p.modelID, p.sessionID, p.msgs, nil)
-	} else {
-		result, err = s.defaultAgent(r.Context(), p.sessionID, p.msgs, nil)
-	}
+	result, err := s.runAgent(r.Context(), sysPrompt, p.modelID, p.sessionID, p.msgs, nil)
 	if err != nil {
 		writeError(w, fmt.Sprintf("agent error: %v", err), http.StatusInternalServerError)
 		return
@@ -506,7 +497,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "messages is required", http.StatusBadRequest)
 		return
 	}
-	if s.defaultAgent == nil {
+	if s.runAgent == nil {
 		writeError(w, "no agent configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -587,13 +578,7 @@ func (s *Server) streamSingleAgent(ctx context.Context, w http.ResponseWriter, f
 		}
 	}
 
-	var result *agent.RunResult
-	var err error
-	if (sysPrompt != "" || model != "") && s.agentWithPrompt != nil {
-		result, err = s.agentWithPrompt(ctx, sysPrompt, model, sessionID, messages, onEvent)
-	} else {
-		result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
-	}
+	result, err := s.runAgent(ctx, sysPrompt, model, sessionID, messages, onEvent)
 	close(eventCh)
 	<-doneCh
 
@@ -640,13 +625,7 @@ func (s *Server) streamMultiAgent(ctx context.Context, w http.ResponseWriter, fl
 				case <-ctx.Done():
 				}
 			}
-			var result *agent.RunResult
-			var err error
-			if s.agentWithPrompt != nil {
-				result, err = s.agentWithPrompt(ctx, person.Prompt, "", sessionID, messages, onEvent)
-			} else {
-				result, err = s.defaultAgent(ctx, sessionID, messages, onEvent)
-			}
+			result, err := s.runAgent(ctx, person.Prompt, "", sessionID, messages, onEvent)
 			doneCh <- personDone{person: person, result: result, err: err}
 		}(p)
 	}

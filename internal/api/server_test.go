@@ -46,7 +46,7 @@ func TestHealthEndpoint(t *testing.T) {
 func TestChatEndpoint(t *testing.T) {
 	agentCalled := false
 	ts := newTestServer(t, api.Config{
-		DefaultAgent: func(_ context.Context, _ string, msgs []llm.ChatMessage, _ func(agent.AgentEvent)) (*agent.RunResult, error) {
+		RunAgent: func(_ context.Context, _, _, _ string, msgs []llm.ChatMessage, _ func(agent.AgentEvent)) (*agent.RunResult, error) {
 			agentCalled = true
 			return &agent.RunResult{Response: "pong"}, nil
 		},

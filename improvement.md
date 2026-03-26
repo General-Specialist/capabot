@@ -13,7 +13,7 @@ Focus: reducing code, removing debt, simplifying. Keeping it maintainable by a t
 - `handleDefaultRoleCmd`, `handleModeCmd` (~120 lines)
 - `syncDiscordPeopleRoles`, `avatarToDataURI` (~60 lines)
 - `registerNativeSkills`, `registerSDKPlugins` (~100 lines)
-- Agent runner closures (`runAgent`, `runAgentWithPrompt`, `runAgentEphemeral`)
+- Agent runner closure (`runAgent`)
 
 **Fix:** Extract into focused files:
 - `cmd/gostaff/init.go` — `initStore`, `initRouter`, `initToolRegistry`, `initSkillRegistry`, `registerNativeSkills`, `registerSDKPlugins` (pure setup, no business logic)
@@ -63,28 +63,7 @@ If the goal is a clean, independent product, consider whether this compatibility
 
 ---
 
-## 5. Three nearly identical agent runner closures
-
-**Problem:** `serve.go` defines three closures that are 80% identical:
-- `runAgent(ctx, sessionID, messages, onEvent)` — full persistence
-- `runAgentWithPrompt(ctx, sysPrompt, model, sessionID, messages, onEvent)` — custom prompt + model
-- `runAgentEphemeral(ctx, sysPrompt, model, sessionID, messages)` — usage-only persistence
-
-All three: create ContextManager, resolve mode, apply mode, create Agent, add hooks, set store, call Run.
-
-**Fix:** Consolidate into a single `runAgent` with an options struct:
-```go
-type RunOpts struct {
-    SystemPrompt string
-    Model        string
-    OnEvent      func(AgentEvent)
-    UsageOnly    bool
-}
-```
-
----
-
-## 6. `install.sh` and `install.ps1` — verify they're maintained
+## 5. `install.sh` and `install.ps1` — verify they're maintained
 
 **Problem:** These install scripts exist but may be out of date with the current release process (goreleaser).
 
@@ -128,10 +107,9 @@ type RunOpts struct {
 
 Medium effort, high impact:
 1. **#1** Split `serve.go` into focused files (30 min)
-2. **#5** Consolidate agent runner closures (20 min)
-3. **#4** Move Discord logic out of serve.go (20 min)
+2. **#4** Move Discord logic out of serve.go (20 min)
 
 Larger decisions (need user input):
-4. **#3** Audit and potentially remove OpenClaw compatibility layer
-5. **#10** Drop unused embedding column (migration needed)
-6. **#2** Move token pricing out of agent.go
+3. **#3** Audit and potentially remove OpenClaw compatibility layer
+4. **#9** Drop unused embedding column (migration needed)
+5. **#2** Move token pricing out of agent.go
