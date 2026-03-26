@@ -55,46 +55,62 @@ func (r *Registry) LoadDir(dir string) (int, error) {
 			continue
 		}
 
-		skillMDPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		data, err := os.ReadFile(skillMDPath)
-		if err != nil {
-			// Not a skill directory — skip silently
-			continue
+		skillDir := filepath.Join(dir, entry.Name())
+
+		// Try to load SKILL.md if present; otherwise synthesize a minimal parsed skill.
+		var parsed *ParsedSkill
+		skillMDPath := filepath.Join(skillDir, "SKILL.md")
+		if data, err := os.ReadFile(skillMDPath); err == nil {
+			p, err := ParseSkillMD(data)
+			if err != nil {
+				continue
+			}
+			parsed = p
+		} else {
+			// No SKILL.md — only register if an executable is present.
+			hasExec := false
+			if _, err := os.Stat(filepath.Join(skillDir, "main.go")); err == nil {
+				hasExec = true
+			}
+			if !hasExec {
+				for _, ep := range pluginEntryPoints {
+					if _, err := os.Stat(filepath.Join(skillDir, ep)); err == nil {
+						hasExec = true
+						break
+					}
+				}
+			}
+			if !hasExec {
+				continue
+			}
+			parsed = &ParsedSkill{Manifest: SkillManifest{Name: entry.Name()}}
 		}
 
-		parsed, err := ParseSkillMD(data)
-		if err != nil {
-			// Parsing failure — skip but don't block other skills
-			continue
-		}
-
-		// Resolve name: manifest name first, then directory name
+		// Resolve name: manifest name first, then directory name.
 		name := parsed.Manifest.Name
 		if name == "" {
 			name = entry.Name()
 			parsed.Manifest.Name = name
 		}
 
-		// Lower precedence dirs don't overwrite earlier registrations
+		// Lower precedence dirs don't overwrite earlier registrations.
 		if _, exists := r.skills[name]; exists {
 			continue
 		}
 
-		skillDir := filepath.Join(dir, entry.Name())
 		r.skills[name] = parsed
 		r.skillPaths[name] = skillDir
 
-		// Detect Tier 3: script entry point alongside the SKILL.md (plugin skill)
-		for _, entry := range pluginEntryPoints {
-			if _, err := os.Stat(filepath.Join(skillDir, entry)); err == nil {
+		// Detect Tier 3: script entry point (plugin skill).
+		for _, ep := range pluginEntryPoints {
+			if _, err := os.Stat(filepath.Join(skillDir, ep)); err == nil {
 				r.pluginPaths[name] = skillDir
 				break
 			}
 		}
 
-		// Detect Tier 2: companion main.go alongside the SKILL.md (native Go skill)
-		mainGoPath := filepath.Join(skillDir, "main.go")
-		if _, err := os.Stat(mainGoPath); err == nil {
+		// Detect Tier 2: main.go (native Go skill).
+		if _, err := os.Stat(filepath.Join(skillDir, "main.go")); err == nil {
 			r.nativePaths[name] = skillDir
 		}
 
@@ -123,15 +139,31 @@ func (r *Registry) LoadNewSkills() []string {
 			}
 
 			skillDir := filepath.Join(dir, entry.Name())
-			skillMDPath := filepath.Join(skillDir, "SKILL.md")
-			data, err := os.ReadFile(skillMDPath)
-			if err != nil {
-				continue
-			}
 
-			parsed, err := ParseSkillMD(data)
-			if err != nil {
-				continue
+			var parsed *ParsedSkill
+			if data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md")); err == nil {
+				p, err := ParseSkillMD(data)
+				if err != nil {
+					continue
+				}
+				parsed = p
+			} else {
+				hasExec := false
+				if _, err := os.Stat(filepath.Join(skillDir, "main.go")); err == nil {
+					hasExec = true
+				}
+				if !hasExec {
+					for _, ep := range pluginEntryPoints {
+						if _, err := os.Stat(filepath.Join(skillDir, ep)); err == nil {
+							hasExec = true
+							break
+						}
+					}
+				}
+				if !hasExec {
+					continue
+				}
+				parsed = &ParsedSkill{Manifest: SkillManifest{Name: entry.Name()}}
 			}
 
 			name := parsed.Manifest.Name
@@ -156,8 +188,7 @@ func (r *Registry) LoadNewSkills() []string {
 				}
 			}
 
-			mainGoPath := filepath.Join(skillDir, "main.go")
-			if _, err := os.Stat(mainGoPath); err == nil {
+			if _, err := os.Stat(filepath.Join(skillDir, "main.go")); err == nil {
 				r.nativePaths[name] = skillDir
 			}
 

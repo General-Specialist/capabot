@@ -357,7 +357,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
 
   return (
     <div ref={containerRef} className="w-full flex-shrink-0 relative">
-      <div className="flex items-center pl-3">
+      <div className="flex items-center">
         <CalendarIcon className="w-4 h-4 text-hover-black mr-2" />
         <button
           ref={triggerRef}

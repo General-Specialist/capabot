@@ -105,7 +105,7 @@ func (s *Store) ListSessions(ctx context.Context, tenantID string, limit, offset
 	}
 	rows, err := s.pool.DB().QueryContext(ctx,
 		`SELECT id, tenant_id, channel, title, user_id, created_at, updated_at, metadata
-		 FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
+		 FROM sessions WHERE tenant_id = $1 AND channel != 'automation' ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
 		tenantID, limit, offset,
 	)
 	if err != nil {

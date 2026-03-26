@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Trash2, Plus, X, Download } from 'lucide-react'
+import { Trash2, Plus, X, Download, ChevronDown } from 'lucide-react'
 import { api, type Skill } from '@/lib/api'
 
 const GO_PLACEHOLDER = `package main
@@ -229,39 +229,71 @@ function PluginList({ plugins, loading, removing, onRemove, empty }: {
   onRemove: (name: string) => void
   empty: string
 }) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [code, setCode] = useState<Record<string, string>>({})
+
+  const toggle = (name: string) => {
+    if (expanded === name) { setExpanded(null); return }
+    setExpanded(name)
+    if (!(name in code)) {
+      api.skillGet(name).then(res => setCode(prev => ({ ...prev, [name]: res.code }))).catch(() => {})
+    }
+  }
+
   if (!loading && plugins.length === 0) {
     return <p className="text-sm text-normal-black">{empty}</p>
   }
 
   return (
     <div className="space-y-2">
-      {plugins.map(plugin => (
-        <div key={plugin.name} className="flex items-center gap-4 px-4 py-3 rounded-2xl border border-border-white">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium text-hover-black truncate">{plugin.name}</p>
-              {plugin.version && (
-                <span className="text-xs text-normal-black font-mono shrink-0">{plugin.version}</span>
-              )}
-            </div>
-            {plugin.description && (
-              <p className="text-xs text-normal-black truncate mt-0.5">{plugin.description}</p>
+      {plugins.map(plugin => {
+        const isOpen = expanded === plugin.name
+        return (
+          <div key={plugin.name} className="rounded-2xl border border-border-white">
+            <button
+              className="w-full flex items-center gap-4 px-4 py-3 text-left"
+              onClick={() => toggle(plugin.name)}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-hover-black truncate">{plugin.name}</p>
+                  {plugin.version && (
+                    <span className="text-xs text-normal-black font-mono shrink-0">{plugin.version}</span>
+                  )}
+                </div>
+                {plugin.description && (
+                  <p className="text-xs text-normal-black truncate mt-0.5">{plugin.description}</p>
+                )}
+              </div>
+              <ChevronDown size={13} className={`text-normal-black shrink-0 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+            </button>
+            {isOpen && (
+              <div className="px-4 pb-4 flex flex-col gap-3">
+                {plugin.instructions && (
+                  <p className="text-xs text-normal-black whitespace-pre-wrap">{plugin.instructions}</p>
+                )}
+                {code[plugin.name] !== undefined
+                  ? <pre className="text-xs font-mono text-hover-black bg-sidebar-white rounded-xl p-3 overflow-x-auto whitespace-pre">{code[plugin.name]}</pre>
+                  : <div className="w-4 h-4 border border-border-white border-t-transparent rounded-full animate-spin" />
+                }
+                {plugin.removable && (
+                  <button
+                    onClick={() => onRemove(plugin.name)}
+                    disabled={removing[plugin.name]}
+                    className="flex items-center gap-1.5 text-xs text-normal-black hover:text-red disabled:opacity-40 transition-colors w-fit"
+                  >
+                    {removing[plugin.name]
+                      ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                      : <Trash2 size={13} />
+                    }
+                    Uninstall
+                  </button>
+                )}
+              </div>
             )}
           </div>
-          {plugin.removable && (
-            <button
-              onClick={() => onRemove(plugin.name)}
-              disabled={removing[plugin.name]}
-              className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40 shrink-0"
-            >
-              {removing[plugin.name]
-                ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-                : <Trash2 size={13} />
-              }
-            </button>
-          )}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

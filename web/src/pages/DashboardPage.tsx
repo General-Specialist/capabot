@@ -9,17 +9,16 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso.includes('T') ? iso : iso + 'Z')
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-}
 
-function todayUTC(): string {
+function dayLabel(iso: string): string {
+  const d = new Date(iso.includes('T') ? iso : iso + 'Z')
   const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}T00:00:00Z`
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today.getTime() - 86_400_000)
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  if (day.getTime() === today.getTime()) return 'Today'
+  if (day.getTime() === yesterday.getTime()) return 'Yesterday'
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function AgentTrace({ messages }: { messages: TraceMessage[] }) {
@@ -203,84 +202,46 @@ function RunCard({ run, automationName }: { run: AutomationRun; automationName: 
 }
 
 export function DashboardPage() {
-  const [todayRuns, setTodayRuns] = useState<AutomationRun[]>([])
-  const [allRuns, setAllRuns] = useState<AutomationRun[]>([])
+  const [runs, setRuns] = useState<AutomationRun[]>([])
   const [automations, setAutomations] = useState<Automation[]>([])
-  const [showAll, setShowAll] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const nameMap = new Map(automations.map(a => [a.id, a.name]))
 
   useEffect(() => {
     Promise.all([
-      api.allRuns(todayUTC(), 100),
+      api.allRuns(undefined, 500),
       api.automations(),
-    ]).then(([runs, autos]) => {
-      setTodayRuns(runs)
+    ]).then(([r, autos]) => {
+      setRuns(r)
       setAutomations(autos)
     }).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  const loadAll = () => {
-    setShowAll(true)
-    api.allRuns(undefined, 200).then(setAllRuns).catch(() => {})
+  const groups = new Map<string, AutomationRun[]>()
+  for (const run of runs) {
+    const key = dayLabel(run.started_at)
+    const list = groups.get(key) || []
+    list.push(run)
+    groups.set(key, list)
   }
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
-      <div className="max-w-3xl mx-auto">
-        {!loading && todayRuns.length === 0 ? (
-          <h2 className="text-sm font-medium text-hover-black mb-3">No runs today.</h2>
-        ) : (
-          <>
-            <h2 className="text-sm font-medium text-hover-black mb-3">Today</h2>
+      <div className="max-w-3xl mx-auto space-y-6">
+        {!loading && runs.length === 0 && (
+          <p className="text-sm text-normal-black">No runs yet.</p>
+        )}
+        {[...groups.entries()].map(([label, groupRuns]) => (
+          <div key={label}>
+            <h2 className="text-sm font-medium text-hover-black mb-3">{label}</h2>
             <div className="space-y-2">
-              {todayRuns.map(run => (
+              {groupRuns.map(run => (
                 <RunCard key={run.id} run={run} automationName={nameMap.get(run.automation_id) || `#${run.automation_id}`} />
               ))}
             </div>
-          </>
-        )}
-
-        {!showAll && (
-          <button
-            type="button"
-            onClick={loadAll}
-            className="mt-4 text-sm text-normal-black hover:opacity-70 transition-opacity"
-          >
-            Show all history
-          </button>
-        )}
-
-        {showAll && allRuns.length > 0 && (() => {
-          // group by date
-          const groups = new Map<string, AutomationRun[]>()
-          for (const run of allRuns) {
-            const key = formatDate(run.started_at)
-            const list = groups.get(key) || []
-            list.push(run)
-            groups.set(key, list)
-          }
-          // skip today since it's shown above
-          const todayKey = formatDate(new Date().toISOString())
-
-          return (
-            <div className="mt-6 space-y-5">
-              {[...groups.entries()]
-                .filter(([date]) => date !== todayKey)
-                .map(([date, runs]) => (
-                <div key={date}>
-                  <h2 className="text-sm font-medium text-normal-black mb-3">{date}</h2>
-                  <div className="space-y-2">
-                    {runs.map(run => (
-                      <RunCard key={run.id} run={run} automationName={nameMap.get(run.automation_id) || `#${run.automation_id}`} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )
-        })()}
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -247,6 +247,77 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 		return
 	}
 
-	log.Warn().Str("skill", skillName).Msg("skill has no executable — needs a prompt to run via agent")
-	_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q has no executable; add a prompt to run it via the agent", skillName))
+	// Plugin/script skill: spin up the process, invoke, close.
+	if skillDir, ok := s.skillReg.PluginPath(skillName); ok {
+		proc, err := skill.NewPluginProcess(ctx, skillDir)
+		if err != nil {
+			log.Error().Err(err).Msg("starting plugin skill")
+			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin start: %v", err))
+			return
+		}
+		defer proc.Close() //nolint:errcheck
+
+		// Invoke the tool matching the skill name, or the first registered tool.
+		toolName := skillName
+		if tools := proc.Tools(); len(tools) > 0 {
+			found := false
+			for _, t := range tools {
+				if t.Name == skillName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				toolName = tools[0].Name
+			}
+		}
+
+		result, err := proc.Invoke(ctx, toolName, inputJSON)
+		if err != nil {
+			log.Error().Err(err).Msg("invoking plugin skill")
+			_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("plugin invoke: %v", err))
+			return
+		}
+		status := "success"
+		if result.IsError {
+			status = "error"
+		}
+		_ = s.store.FinishAutomationRun(ctx, runID, status, result.Content, "")
+		log.Info().Str("skill", skillName).Msg("skill automation complete")
+		return
+	}
+
+	// Prompt-based skill: use the skill's instructions as the agent prompt.
+	parsed := s.skillReg.Get(skillName)
+	if parsed == nil || parsed.Instructions == "" {
+		log.Error().Str("skill", skillName).Msg("skill not found or has no instructions")
+		_ = s.store.FinishAutomationRun(ctx, runID, "error", "", fmt.Sprintf("skill %q not found or has no instructions", skillName))
+		return
+	}
+
+	sessionID := fmt.Sprintf("auto-%d-%d", auto.ID, runID)
+	_ = s.store.UpsertSession(ctx, memory.Session{
+		ID:       sessionID,
+		TenantID: "default",
+		Channel:  "automation",
+		Title:    auto.Name,
+		Metadata: "{}",
+	})
+
+	result, err := s.runAgent(ctx, sessionID, []llm.ChatMessage{{Role: "user", Content: parsed.Instructions}}, func(ev agent.AgentEvent) {
+		s.broadcast(runID, ev)
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("agent run failed")
+		status := "error"
+		msg := err.Error()
+		if ctx.Err() == context.Canceled {
+			status = "stopped"
+			msg = "stopped by user"
+		}
+		_ = s.store.FinishAutomationRun(ctx, runID, status, "", msg)
+		return
+	}
+	_ = s.store.FinishAutomationRun(ctx, runID, "success", result.Response, "")
+	log.Info().Str("skill", skillName).Int("iterations", result.Iterations).Msg("skill automation complete")
 }

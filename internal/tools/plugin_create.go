@@ -28,19 +28,22 @@ func NewSkillCreateTool(skillsDir string, skillReg *skill.Registry, toolReg *age
 
 func (t *SkillCreateTool) Name() string { return "plugin_create" }
 func (t *SkillCreateTool) Description() string {
-	return "Create a new executable skill from Go source code. The skill is immediately available as a tool. " +
+	return "Create a new executable plugin from Go source code. The plugin is immediately available as a tool. " +
 		"The Go program must read JSON params from stdin and write {\"content\":\"...\",\"is_error\":false} to stdout. " +
-		"NOTE: this creates a Plugin (shown on the Plugins page), not a Skill. " +
-		"Only use this when the task genuinely requires compiled Go code (e.g. calling an API, processing data). " +
-		"For prompt-based or instruction-based skills that appear on the Skills page, use skill_create_markdown instead."
+		"Use this for mechanical or deterministic tasks (running commands, clearing files, calling APIs, etc.). " +
+		"For prompt-based skills that rely on LLM reasoning, use skill_create_markdown instead. " +
+		"Only add instructions if the agent needs conditional logic to decide when/whether to invoke this plugin " +
+		"(e.g. 'check the user's email first and only run this if X condition is met'). " +
+		"Do not add instructions just to describe what the code does."
 }
 func (t *SkillCreateTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name":        {"type": "string", "description": "Skill name, lowercase with hyphens (e.g. clear-cache)"},
-			"description": {"type": "string", "description": "One-line description of what the skill does"},
-			"code":        {"type": "string", "description": "Complete Go source code for package main"}
+			"name":         {"type": "string", "description": "Skill name, lowercase with hyphens (e.g. clear-cache)"},
+			"description":  {"type": "string", "description": "One-line description of what the skill does"},
+			"code":         {"type": "string", "description": "Complete Go source code for package main"},
+			"instructions": {"type": "string", "description": "Only include if the agent needs conditional logic to decide when/whether to invoke this plugin. Omit otherwise."}
 		},
 		"required": ["name", "description", "code"]
 	}`)
@@ -48,9 +51,10 @@ func (t *SkillCreateTool) Parameters() json.RawMessage {
 
 func (t *SkillCreateTool) Execute(ctx context.Context, params json.RawMessage) (agent.ToolResult, error) {
 	var p struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Code        string `json:"code"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Code         string `json:"code"`
+		Instructions string `json:"instructions"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return agent.ToolResult{Content: "invalid params", IsError: true}, nil
@@ -74,7 +78,10 @@ func (t *SkillCreateTool) Execute(ctx context.Context, params json.RawMessage) (
 		return agent.ToolResult{Content: fmt.Sprintf("creating directory: %v", err), IsError: true}, nil
 	}
 
-	skillMD := "---\nname: " + p.Name + "\ndescription: " + p.Description + "\nversion: 1.0.0\n---\n\n" + p.Description + "\n"
+	skillMD := "---\nname: " + p.Name + "\ndescription: " + p.Description + "\nversion: 1.0.0\n---\n"
+	if strings.TrimSpace(p.Instructions) != "" {
+		skillMD += "\n" + strings.TrimSpace(p.Instructions) + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMD), 0o644); err != nil {
 		os.RemoveAll(skillDir)
 		return agent.ToolResult{Content: fmt.Sprintf("writing SKILL.md: %v", err), IsError: true}, nil

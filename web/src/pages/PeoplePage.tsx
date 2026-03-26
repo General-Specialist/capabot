@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Plus, Trash2, Check, X, Camera, Search, ScrollText } from 'lucide-react'
+import { Plus, Trash2, Check, Save, X, Camera, Search, ScrollText } from 'lucide-react'
 import { api, type Person } from '@/lib/api'
 import TagPicker from '@/components/TagPicker'
 
@@ -392,8 +392,8 @@ function AvatarCropModal({ initialSrc, onSave, onCancel }: {
           <button type="button" onClick={onCancel} className="p-1 rounded-lg text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors">
             <X size={14} />
           </button>
-          <button type="button" onClick={handleSave} disabled={!imgSrc} className="px-4 py-1.5 rounded-capsule text-sm bg-[var(--color-brand-primary)] text-white hover:opacity-80 disabled:opacity-50 transition-opacity">
-            Save
+          <button type="button" onClick={handleSave} disabled={!imgSrc} className="flex items-center gap-1.5 px-4 py-1.5 rounded-capsule text-sm bg-[var(--color-brand-primary)] text-white hover:opacity-80 disabled:opacity-50 transition-opacity">
+            <Save size={13} />Save
           </button>
         </div>
       </div>
