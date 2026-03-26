@@ -12,8 +12,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/polymath/gostaff/internal/config"
 	"github.com/polymath/gostaff/internal/skill"
 )
+
+// printImportResult prints a skill import/install result and returns an error if unsuccessful.
+func printImportResult(verb string, result *skill.ImportResult) error {
+	fmt.Printf("%s %s (tier %d)\n", verb, result.SkillName, result.Tier)
+	for _, w := range result.Warnings {
+		fmt.Printf("  WARN: %s\n", w)
+	}
+	for _, m := range result.MappedTools {
+		fmt.Printf("  TOOL: %s -> %s\n", m.From, m.To)
+	}
+	for _, h := range result.InstallHints {
+		fmt.Printf("  INSTALL: %s\n", h)
+	}
+	if !result.Success {
+		return fmt.Errorf("%s completed with errors", verb)
+	}
+	return nil
+}
 
 func runSkillLint(paths []string) {
 	if len(paths) == 0 {
@@ -57,7 +76,7 @@ func runSkillImport(args []string) {
 
 	srcDir := args[0]
 
-	destDir := defaultSkillsDir()
+	destDir := config.DefaultSkillsDir()
 	if len(args) >= 2 {
 		destDir = args[1]
 	}
@@ -67,65 +86,9 @@ func runSkillImport(args []string) {
 		fmt.Fprintf(os.Stderr, "import failed: %v\n", err)
 		os.Exit(1)
 	}
-
-	fmt.Printf("imported %s (tier %d)\n", result.SkillName, result.Tier)
-
-	for _, w := range result.Warnings {
-		fmt.Printf("  WARN: %s\n", w)
-	}
-	for _, m := range result.MappedTools {
-		fmt.Printf("  TOOL: %s -> %s\n", m.From, m.To)
-	}
-	for _, h := range result.InstallHints {
-		fmt.Printf("  INSTALL: %s\n", h)
-	}
-
-	if !result.Success {
+	if err := printImportResult("imported", result); err != nil {
 		os.Exit(1)
 	}
-}
-
-func runSkillCreate(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: gostaff skill create <name>")
-	}
-
-	name := args[0]
-	dirPath := filepath.Join(".", name)
-
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return fmt.Errorf("creating directory %q: %w", dirPath, err)
-	}
-
-	skillMDPath := filepath.Join(dirPath, "SKILL.md")
-	content := buildSkillTemplate(name)
-
-	if err := os.WriteFile(skillMDPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing SKILL.md: %w", err)
-	}
-
-	fmt.Printf("created %s/SKILL.md\n", name)
-	return nil
-}
-
-// buildSkillTemplate returns the SKILL.md template content for a new skill.
-func buildSkillTemplate(name string) string {
-	var sb strings.Builder
-	sb.WriteString("---\n")
-	sb.WriteString("name: " + name + "\n")
-	sb.WriteString("description: A brief description of what this skill does.\n")
-	sb.WriteString("version: \"1.0.0\"\n")
-	sb.WriteString("---\n")
-	sb.WriteString("\n")
-	sb.WriteString("# " + name + "\n")
-	sb.WriteString("\n")
-	sb.WriteString("<!-- Instructions for the LLM go here. Describe what the skill does and how to use the available tools. -->\n")
-	sb.WriteString("\n")
-	sb.WriteString("## Behavior\n")
-	sb.WriteString("\n")
-	sb.WriteString("- Describe the expected behavior\n")
-	sb.WriteString("- List any constraints or guidelines\n")
-	return sb.String()
 }
 
 // runSkillSearch searches the ClawHub skill directory for skills matching query.
@@ -170,7 +133,7 @@ func runSkillInstall(args []string) error {
 		return fmt.Errorf("usage: gostaff skill install <name-or-url> [dest-dir]")
 	}
 	target := args[0]
-	destDir := defaultSkillsDir()
+	destDir := config.DefaultSkillsDir()
 	if len(args) >= 2 {
 		destDir = args[1]
 	}
@@ -232,19 +195,7 @@ func runSkillInstall(args []string) error {
 	if importErr != nil {
 		return fmt.Errorf("import failed: %w", importErr)
 	}
-
-	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)
-	for _, w := range result.Warnings {
-		fmt.Printf("  WARN: %s\n", w)
-	}
-	for _, h := range result.InstallHints {
-		fmt.Printf("  INSTALL: %s\n", h)
-	}
-
-	if !result.Success {
-		return fmt.Errorf("install completed with errors")
-	}
-	return nil
+	return printImportResult("installed", result)
 }
 
 // runSkillInstallFromClawHub downloads a skill by name from the ClawHub registry
@@ -263,18 +214,7 @@ func runSkillInstallFromClawHub(name, destDir string) error {
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
-
-	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)
-	for _, w := range result.Warnings {
-		fmt.Printf("  WARN: %s\n", w)
-	}
-	for _, h := range result.InstallHints {
-		fmt.Printf("  INSTALL: %s\n", h)
-	}
-	if !result.Success {
-		return fmt.Errorf("install completed with errors")
-	}
-	return nil
+	return printImportResult("installed", result)
 }
 
 // isGitHubShorthand returns true for "owner/repo" or "owner/repo@ref" patterns.
@@ -346,18 +286,7 @@ func runSkillInstallFromGitHub(target, destDir string) error {
 	if importErr != nil {
 		return fmt.Errorf("import failed: %w", importErr)
 	}
-
-	fmt.Printf("installed %s (tier %d)\n", result.SkillName, result.Tier)
-	for _, w := range result.Warnings {
-		fmt.Printf("  WARN: %s\n", w)
-	}
-	for _, h := range result.InstallHints {
-		fmt.Printf("  INSTALL: %s\n", h)
-	}
-	if !result.Success {
-		return fmt.Errorf("install completed with errors")
-	}
-	return nil
+	return printImportResult("installed", result)
 }
 
 // extractZip extracts a zip archive to a temp directory and returns its path.
@@ -561,13 +490,6 @@ console.log(JSON.stringify({ content: result }));
 `
 }
 
-func defaultSkillsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", ".gostaff", "skills")
-	}
-	return filepath.Join(home, ".gostaff", "skills")
-}
 
 // resolveSkillFiles finds SKILL.md files from a path. If the path is a
 // directory, it looks for SKILL.md inside it. If the path is a file, it

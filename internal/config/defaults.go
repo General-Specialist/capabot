@@ -41,10 +41,13 @@ func Default() Config {
 	}
 }
 
-func defaultSkillsDir() string {
+// DefaultSkillsDir returns the default path for user skills (~/.gostaff/skills).
+func DefaultSkillsDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".", ".gostaff", "skills")
 	}
 	return filepath.Join(home, ".gostaff", "skills")
 }
+
+func defaultSkillsDir() string { return DefaultSkillsDir() }

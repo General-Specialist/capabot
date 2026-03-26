@@ -108,12 +108,12 @@ func runServe(configPath string) error {
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
 
 	// 7d. Register skill management tools
-	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateMarkdownTool(defaultSkillsDir(), skillRegistry))
-	_ = toolRegistry.RegisterExtended(tools.NewSkillEditMarkdownTool(defaultSkillsDir(), skillRegistry))
-	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteMarkdownTool(defaultSkillsDir(), skillRegistry))
-	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(defaultSkillsDir(), skillRegistry, toolRegistry))
-	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(defaultSkillsDir(), skillRegistry))
-	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteTool(defaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateMarkdownTool(config.DefaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillEditMarkdownTool(config.DefaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteMarkdownTool(config.DefaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillCreateTool(config.DefaultSkillsDir(), skillRegistry, toolRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillEditTool(config.DefaultSkillsDir(), skillRegistry))
+	_ = toolRegistry.RegisterExtended(tools.NewSkillDeleteTool(config.DefaultSkillsDir(), skillRegistry))
 	_ = toolRegistry.RegisterExtended(tools.NewSkillSearchTool(skill.NewClawHubClient(skill.ClawHubConfig{})))
 
 	// 7e. Hot-reload: poll skill directories every 10s for newly installed skills
@@ -298,7 +298,7 @@ Skills vs plugins:
 		Logger:          logger,
 		APIKey:          cfg.Security.APIKey,
 		RateLimitRPM:    cfg.Security.RateLimitRPM,
-		SkillsDir:       defaultSkillsDir(),
+		SkillsDir:       config.DefaultSkillsDir(),
 		ClawHubToken:    os.Getenv("GOSTAFF_GITHUB_TOKEN"),
 		StaticFS:        nil,
 		Scheduler:       scheduler,

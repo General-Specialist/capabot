@@ -21,7 +21,6 @@ import (
 	applog "github.com/polymath/gostaff/internal/log"
 	"github.com/polymath/gostaff/internal/llm"
 	"github.com/polymath/gostaff/internal/memory"
-	"github.com/polymath/gostaff/internal/orchestrator"
 	"github.com/polymath/gostaff/internal/skill"
 	"github.com/polymath/gostaff/internal/transport"
 	"github.com/rs/zerolog"
@@ -33,7 +32,6 @@ var startTime = time.Now()
 type Server struct {
 	store          *memory.Store
 	skillReg       *skill.Registry
-	agentReg       *orchestrator.Registry
 	providers      map[string]llm.Provider
 	toolReg        *agent.Registry
 	defaultAgent   func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
@@ -54,7 +52,6 @@ type Server struct {
 type Config struct {
 	Store          *memory.Store
 	SkillReg       *skill.Registry
-	AgentReg       *orchestrator.Registry
 	Providers      map[string]llm.Provider
 	ToolReg        *agent.Registry
 	DefaultAgent    func(ctx context.Context, sessionID string, messages []llm.ChatMessage, onEvent func(agent.AgentEvent)) (*agent.RunResult, error)
@@ -94,7 +91,6 @@ func New(cfg Config) *Server {
 	s := &Server{
 		store:           cfg.Store,
 		skillReg:        cfg.SkillReg,
-		agentReg:        cfg.AgentReg,
 		providers:       cfg.Providers,
 		toolReg:         cfg.ToolReg,
 		defaultAgent:    cfg.DefaultAgent,
@@ -112,7 +108,6 @@ func New(cfg Config) *Server {
 
 	// REST endpoints
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
-	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /api/conversations", s.handleConversations)
 	s.mux.HandleFunc("GET /api/conversations/{id}", s.handleConversation)
 	s.mux.HandleFunc("GET /api/skills", s.handleSkills)
@@ -202,38 +197,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"skills_loaded":   skillsLoaded,
 		"providers_count": len(s.providers),
 	})
-}
-
-func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
-	if s.agentReg == nil {
-		writeJSON(w, []any{})
-		return
-	}
-	cfgs := s.agentReg.List()
-	type agentDTO struct {
-		ID          string   `json:"id"`
-		Name        string   `json:"name"`
-		Provider    string   `json:"provider"`
-		Model       string   `json:"model"`
-		Skills      []string `json:"skills"`
-		Tools       []string `json:"tools"`
-		MaxTokens   int      `json:"max_tokens"`
-		Temperature float64  `json:"temperature"`
-	}
-	out := make([]agentDTO, len(cfgs))
-	for i, c := range cfgs {
-		out[i] = agentDTO{
-			ID:          c.ID,
-			Name:        c.Name,
-			Provider:    c.Provider,
-			Model:       c.Model,
-			Skills:      c.Skills,
-			Tools:       c.Tools,
-			MaxTokens:   c.MaxTokens,
-			Temperature: c.Temperature,
-		}
-	}
-	writeJSON(w, out)
 }
 
 func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {

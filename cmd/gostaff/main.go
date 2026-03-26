@@ -49,7 +49,7 @@ func main() {
 
 	case "skill":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: gostaff skill <lint|import|create|init|install|search> [args...]")
+			fmt.Fprintln(os.Stderr, "usage: gostaff skill <lint|import|init|install|search> [args...]")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
@@ -57,11 +57,6 @@ func main() {
 			runSkillLint(os.Args[3:])
 		case "import":
 			runSkillImport(os.Args[3:])
-		case "create":
-			if err := runSkillCreate(os.Args[3:]); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
 		case "install":
 			if err := runSkillInstall(os.Args[3:]); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -79,25 +74,6 @@ func main() {
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "unknown skill command: %s\n", os.Args[2])
-			os.Exit(1)
-		}
-
-	case "agent":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: gostaff agent <list>")
-			os.Exit(1)
-		}
-		switch os.Args[2] {
-		case "list":
-			fs := flag.NewFlagSet("agent-list", flag.ExitOnError)
-			configPath := fs.String("config", defaultConfigPath, "path to config file")
-			fs.Parse(os.Args[3:]) //nolint:errcheck
-			if err := runAgentList(expandHome(*configPath)); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-		default:
-			fmt.Fprintf(os.Stderr, "unknown agent command: %s\n", os.Args[2])
 			os.Exit(1)
 		}
 
@@ -147,12 +123,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  dev   [--config <path>]           Hot-reload mode for skill development")
 	fmt.Fprintln(os.Stderr, "  chat  [--config <path>]           Interactive CLI chat session")
 	fmt.Fprintln(os.Stderr, "  skill lint [path...]              Lint SKILL.md files for compatibility")
-	fmt.Fprintln(os.Stderr, "  skill import <src> [dest]         Import an OpenClaw skill")
-	fmt.Fprintln(os.Stderr, "  skill create <name>               Scaffold a new skill directory")
-	fmt.Fprintln(os.Stderr, "  skill init [--plugin] <name>      Scaffold a skill (--plugin adds index.ts)")
+	fmt.Fprintln(os.Stderr, "  skill import <src> [dest]         Import a skill directory")
+	fmt.Fprintln(os.Stderr, "  skill init [--plugin] <name>      Scaffold a new skill (--plugin adds index.ts)")
 	fmt.Fprintln(os.Stderr, "  skill install <name-or-url> [dest] Install from ClawHub, GitHub (owner/repo), or URL")
 	fmt.Fprintln(os.Stderr, "  skill search <query>              Search the ClawHub skill registry")
-	fmt.Fprintln(os.Stderr, "  agent list [--config <path>]      List configured agents")
 	fmt.Fprintln(os.Stderr, "  config set <key> <value>          Set a config value")
 	fmt.Fprintln(os.Stderr, "  migrate [--config <path>]         Run database migrations")
 	fmt.Fprintln(os.Stderr, "")
