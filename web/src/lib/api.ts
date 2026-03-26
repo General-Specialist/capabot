@@ -133,6 +133,16 @@ export interface ProviderKeys {
   gemini: string
   openrouter: string
   model?: string
+  summarization_model?: string
+}
+
+export interface TransportKeys {
+  discord_token: string
+  discord_app_id: string
+  discord_guild_id: string
+  slack_app_token: string
+  slack_bot_token: string
+  telegram_token: string
 }
 
 export interface AutomationRun {
@@ -282,6 +292,15 @@ export const api = {
     })
     if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
   },
+  transportKeys: () => get<TransportKeys>('/config/transport-keys'),
+  transportKeysSave: async (keys: TransportKeys) => {
+    const res = await fetch(BASE + '/config/transport-keys', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(keys),
+    })
+    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  },
 
   people: () => get<Person[]>('/people'),
   modes: () => get<{ modes: Record<string, ProviderKeys>; active: string }>('/modes'),
@@ -301,18 +320,6 @@ export const api = {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
-  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
-  defaultModelGet: () => get<{ default_model: string }>('/settings/default-model'),
-  defaultModelSet: (model: string) => fetch(BASE + '/settings/default-model', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ default_model: model }),
-  }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
-  summarizationModelGet: () => get<{ summarization_model: string }>('/settings/summarization-model'),
-  summarizationModelSet: (model: string) => fetch(BASE + '/settings/summarization-model', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ summarization_model: model }),
   }).then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) }),
   shellModeGet: () => get<{ shell_mode: string }>('/settings/shell-mode'),
   shellModeSet: (shell_mode: string) => fetch(BASE + '/settings/shell-mode', {

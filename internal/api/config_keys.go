@@ -16,6 +16,15 @@ type providerKeys struct {
 	OpenRouter string `json:"openrouter"`
 }
 
+type transportKeys struct {
+	DiscordToken   string `json:"discord_token"`
+	DiscordAppID   string `json:"discord_app_id"`
+	DiscordGuildID string `json:"discord_guild_id"`
+	SlackAppToken  string `json:"slack_app_token"`
+	SlackBotToken  string `json:"slack_bot_token"`
+	TelegramToken  string `json:"telegram_token"`
+}
+
 func maskKey(k string) string {
 	if len(k) <= 4 {
 		return k
@@ -77,6 +86,62 @@ func (s *Server) handleConfigKeysPut(w http.ResponseWriter, r *http.Request) {
 		cfg, err := config.LoadFromFile(s.configPath)
 		if err == nil {
 			s.reloadProviders(r.Context(), cfg)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleTransportKeysGet(w http.ResponseWriter, r *http.Request) {
+	if s.configPath == "" {
+		writeJSON(w, transportKeys{})
+		return
+	}
+	cfg, err := config.LoadFromFile(s.configPath)
+	if err != nil {
+		writeJSON(w, transportKeys{})
+		return
+	}
+	writeJSON(w, transportKeys{
+		DiscordToken:   maskKey(cfg.Transports.Discord.Token),
+		DiscordAppID:   cfg.Transports.Discord.AppID,
+		DiscordGuildID: cfg.Transports.Discord.GuildID,
+		SlackAppToken:  maskKey(cfg.Transports.Slack.AppToken),
+		SlackBotToken:  maskKey(cfg.Transports.Slack.BotToken),
+		TelegramToken:  maskKey(cfg.Transports.Telegram.Token),
+	})
+}
+
+func (s *Server) handleTransportKeysPut(w http.ResponseWriter, r *http.Request) {
+	if s.configPath == "" {
+		http.Error(w, "config path not set", http.StatusInternalServerError)
+		return
+	}
+	var body transportKeys
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	isPlaceholder := func(v string) bool {
+		return v == "" || (len(v) > 4 && v[4:] == "••••••••••••••••")
+	}
+
+	pairs := []struct{ key, val string }{
+		{"transports.discord.token", body.DiscordToken},
+		{"transports.discord.app_id", body.DiscordAppID},
+		{"transports.discord.guild_id", body.DiscordGuildID},
+		{"transports.slack.app_token", body.SlackAppToken},
+		{"transports.slack.bot_token", body.SlackBotToken},
+		{"transports.telegram.token", body.TelegramToken},
+	}
+	for _, p := range pairs {
+		if isPlaceholder(p.val) {
+			continue
+		}
+		if err := config.SetKey(s.configPath, p.key, p.val); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 

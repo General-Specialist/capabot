@@ -192,29 +192,20 @@ Skills vs plugins:
 		return ms
 	}
 
-	// getSummarizationModel reads the summarization_model setting.
-	getSummarizationModel := func(ctx context.Context) string {
-		if store == nil {
-			return ""
-		}
-		v, _ := store.GetSetting(ctx, "summarization_model")
-		return v
-	}
-
 	// applyMode applies mode settings to an agent config.
-	// Model priority: explicit @tag (already set on cfg.Model) > mode default > global default.
+	// Model priority: explicit @tag (already set on cfg.Model) > mode default.
 	applyMode := func(cfg agent.AgentConfig, ms modeSettings, ctx context.Context) agent.AgentConfig {
 		cfg.DisableThinking = ms.DisableThinking
 		cfg.Mode = ms.Name
 		if cfg.Model == "" && ms.Model != "" {
 			cfg.Model = ms.Model
 		}
-		if cfg.Model == "" && store != nil {
-			if v, _ := store.GetSetting(ctx, "default_model"); v != "" {
-				cfg.Model = v
+		// Load per-mode summarization model.
+		if store != nil {
+			if modeKeys, err := store.GetMode(ctx, ms.Name); err == nil && modeKeys.SummarizationModel != "" {
+				cfg.SummarizationModel = modeKeys.SummarizationModel
 			}
 		}
-		cfg.SummarizationModel = getSummarizationModel(ctx)
 		return cfg
 	}
 

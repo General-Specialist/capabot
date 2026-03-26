@@ -809,13 +809,14 @@ func (s *Store) DeleteChannelBinding(ctx context.Context, channelID string) erro
 	})
 }
 
-// ModeKeys represents the per-mode configuration as JSON (API key overrides + default model).
+// ModeKeys represents the per-mode configuration as JSON (API key overrides + models).
 type ModeKeys struct {
-	Anthropic  string `json:"anthropic,omitempty"`
-	OpenAI     string `json:"openai,omitempty"`
-	Gemini     string `json:"gemini,omitempty"`
-	OpenRouter string `json:"openrouter,omitempty"`
-	Model      string `json:"model,omitempty"`
+	Anthropic          string `json:"anthropic,omitempty"`
+	OpenAI             string `json:"openai,omitempty"`
+	Gemini             string `json:"gemini,omitempty"`
+	OpenRouter         string `json:"openrouter,omitempty"`
+	Model              string `json:"model,omitempty"`
+	SummarizationModel string `json:"summarization_model,omitempty"`
 }
 
 // GetMode returns the keys JSON for a mode.
