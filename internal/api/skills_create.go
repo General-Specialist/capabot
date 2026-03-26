@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/polymath/gostaff/internal/agent"
@@ -275,6 +276,134 @@ func (s *Server) handleSkillsCreateMarkdown(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"tier":    1,
 	})
+}
+
+func (s *Server) handleSkillsCatalog(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 {
+		limit = 10000
+	}
+
+	client := skill.NewClawHubClient(skill.ClawHubConfig{})
+	results, err := client.BrowseSkills(r.Context(), query, limit, offset)
+	if err != nil {
+		writeError(w, fmt.Sprintf("ClawHub error: %v", err), http.StatusBadGateway)
+		return
+	}
+	if results == nil {
+		results = []skill.ClawHubSkillEntry{}
+	}
+	writeJSON(w, results)
+}
+
+func (s *Server) handleSkillsInstall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Normalize: if user pasted a full GitHub URL, extract owner/repo
+	target := strings.TrimSpace(req.Name)
+	if shorthand, ok := skill.ParseGitHubURL(target); ok {
+		target = shorthand
+	}
+
+	var skillPath string
+	var cleanup func()
+
+	if skill.IsGitHubShorthand(target) {
+		// GitHub install: download tarball, extract, import
+		srcDir, err := skill.DownloadGitHub(r.Context(), target)
+		if err != nil {
+			writeError(w, fmt.Sprintf("GitHub download failed: %v", err), http.StatusBadGateway)
+			return
+		}
+		// srcDir may be inside a parent temp dir — clean the parent
+		cleanup = func() { os.RemoveAll(filepath.Dir(srcDir)) }
+		skillPath = srcDir
+	} else {
+		// Bare name: try ClawHub first, fall back to npm
+		client := skill.NewClawHubClient(skill.ClawHubConfig{})
+		tmpDir, err := os.MkdirTemp("", "gostaff-install-*")
+		if err != nil {
+			writeError(w, fmt.Sprintf("temp dir: %v", err), http.StatusInternalServerError)
+			return
+		}
+		cleanup = func() { os.RemoveAll(tmpDir) }
+
+		dlPath, dlErr := client.DownloadSkill(r.Context(), target, tmpDir)
+		if dlErr == nil {
+			skillPath = dlPath
+		} else {
+			// ClawHub miss — try npm
+			npmPath, npmErr := skill.DownloadNPM(r.Context(), target)
+			if npmErr != nil {
+				cleanup()
+				writeError(w, fmt.Sprintf("not found on ClawHub or npm: %v", npmErr), http.StatusBadGateway)
+				return
+			}
+			// npmPath is inside its own temp dir
+			oldCleanup := cleanup
+			cleanup = func() { oldCleanup(); os.RemoveAll(filepath.Dir(npmPath)) }
+			skillPath = npmPath
+		}
+	}
+	defer cleanup()
+
+	result, err := skill.ImportSkill(skillPath, s.skillsDir)
+	if err != nil {
+		writeError(w, fmt.Sprintf("import failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Hot-reload the skill registry so the agent can use the new skill immediately.
+	if s.skillReg != nil {
+		s.skillReg.LoadDir(s.skillsDir) //nolint:errcheck
+	}
+
+	writeJSON(w, map[string]any{
+		"skill_name": result.SkillName,
+		"tier":       result.Tier,
+		"success":    result.Success,
+		"warnings":   result.Warnings,
+	})
+}
+
+func (s *Server) handleSkillsUninstall(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if s.skillReg == nil {
+		writeError(w, "skill registry not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	skillPath, ok := s.skillReg.SkillPath(name)
+	if !ok {
+		writeError(w, fmt.Sprintf("skill %q not found", name), http.StatusNotFound)
+		return
+	}
+
+	// Only allow removing skills that live inside the API-managed skills dir.
+	if !strings.HasPrefix(skillPath, s.skillsDir) {
+		writeError(w, "skill is not removable (system or workspace skill)", http.StatusForbidden)
+		return
+	}
+
+	if err := os.RemoveAll(skillPath); err != nil {
+		writeError(w, fmt.Sprintf("removing skill: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.skillReg.Unregister(name)
+	writeJSON(w, map[string]any{"success": true, "name": name})
 }
 
 func buildSkillMD(name, description string, parameters json.RawMessage) string {
