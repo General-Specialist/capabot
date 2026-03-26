@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
+import { useAlert } from '@/components/AlertProvider'
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -16,6 +17,7 @@ interface InstalledSkill extends Skill {
 }
 
 export function SkillsPage() {
+  const { alert } = useAlert()
   const [tab, setTab] = useState<'custom' | 'clawhub' | 'browse'>('custom')
   const [allSkills, setAllSkills] = useState<InstalledSkill[]>([])
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
@@ -44,10 +46,10 @@ export function SkillsPage() {
     let cancelled = false
     api.skills()
       .then(res => { if (!cancelled) setAllSkills(res.filter(s => s.tier === 1) as InstalledSkill[]) })
-      .catch(() => {})
+      .catch((err: unknown) => { if (!cancelled) alert(err instanceof Error ? err.message : 'Failed to load skills', 'error') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false
@@ -94,8 +96,8 @@ export function SkillsPage() {
     try {
       await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
       await loadSkills()
-    } catch {
-      // silently fail
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to remove skill', 'error')
     } finally {
       setRemoving(prev => ({ ...prev, [name]: false }))
     }

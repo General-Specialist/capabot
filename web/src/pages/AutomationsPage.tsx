@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, Play, Save, ChevronDown, ChevronRight, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Automation, type AutomationRun, type Skill } from '@/lib/api'
+import { useAlert } from '@/components/AlertProvider'
 import DatePicker from '@/components/DatePicker'
 import SkillPicker from '@/components/SkillPicker'
 
@@ -160,6 +161,7 @@ function NewAutomationForm({ form, setForm, error, saving, onSave, onClose, onSc
 }
 
 export function AutomationsPage() {
+  const { alert } = useAlert()
   const [automations, setAutomations] = useState<Automation[]>([])
   const [selected, setSelected] = useState<Automation | null>(null)
   const [runs, setRuns] = useState<AutomationRun[]>([])
@@ -173,12 +175,12 @@ export function AutomationsPage() {
   const [loading, setLoading] = useState(true)
   const skipAutosave = useRef(false)
 
-  const load = () => api.automations().then(setAutomations).catch(() => {})
+  const load = () => api.automations().then(setAutomations).catch((err: unknown) => { alert(err instanceof Error ? err.message : 'Failed to load automations', 'error') })
 
   useEffect(() => {
     load().finally(() => setLoading(false))
-    api.skills().then(setSkills).catch(() => {})
-  }, [])
+    api.skills().then(setSkills).catch((err: unknown) => { alert(err instanceof Error ? err.message : 'Failed to load skills', 'error') })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadRuns = (id: number) =>
     api.automationRuns(id).then(setRuns).catch(() => setRuns([]))

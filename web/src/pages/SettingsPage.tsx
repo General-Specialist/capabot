@@ -86,6 +86,7 @@ export function SettingsPage() {
   const [activeMode, setActiveMode] = useState('default')
   const [selectedMode, setSelectedMode] = useState('default')
   const { dark, toggle } = useDarkMode()
+  const [silenceErrors, setSilenceErrors] = useState(() => localStorage.getItem('silence-errors') === 'true')
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const initialLoad = useRef(true)
   const modeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -205,6 +206,22 @@ export function SettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-normal-black">Dark mode</span>
               <Toggle on={dark} onClick={toggle} />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm text-normal-black">Silence error notifications</span>
+                <p className="text-xs text-normal-black opacity-60 mt-0.5">Hide toast alerts when API calls fail</p>
+              </div>
+              <Toggle
+                on={silenceErrors}
+                onClick={() => {
+                  const next = !silenceErrors
+                  setSilenceErrors(next)
+                  if (next) localStorage.setItem('silence-errors', 'true')
+                  else localStorage.removeItem('silence-errors')
+                }}
+              />
             </div>
 
             <div className="flex items-center justify-between">
