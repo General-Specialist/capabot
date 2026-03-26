@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, Play, Save, ChevronDown, ChevronRight, X } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
@@ -69,11 +69,13 @@ const EMPTY_FORM = { name: '', prompt: '', skill_names: [] as string[], enabled:
 
 type FormState = typeof EMPTY_FORM
 
-function AutomationFormBody({ form, setForm, error, saving, triggering, selected, onSave, onTrigger, onScheduleChange, skills }: {
+function AutomationFormBody({ form, setForm, error, saving, autoSaving, savedRecently, triggering, selected, onSave, onTrigger, onScheduleChange, skills }: {
   form: FormState
   setForm: React.Dispatch<React.SetStateAction<FormState>>
   error: string | null
   saving: boolean
+  autoSaving?: boolean
+  savedRecently?: boolean
   triggering: boolean
   selected: Automation | null
   onSave: () => void
@@ -112,9 +114,12 @@ function AutomationFormBody({ form, setForm, error, saving, triggering, selected
               Run now
             </button>
           )}
-          <button onClick={onSave} disabled={saving} className="ml-auto flex items-center gap-1.5 px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 disabled:opacity-40 transition-opacity">
-            <Save size={13} />{saving ? 'Saving…' : 'Save'}
-          </button>
+          {autoSaving
+            ? <span className="ml-auto text-xs text-normal-black">{saving ? 'Saving…' : savedRecently ? 'Saved' : ''}</span>
+            : <button onClick={onSave} disabled={saving} className="ml-auto flex items-center gap-1.5 px-4 py-1.5 bg-[var(--color-brand-primary)] text-white text-sm rounded-capsule hover:opacity-80 disabled:opacity-40 transition-opacity">
+                <Save size={13} />{saving ? 'Saving…' : 'Save'}
+              </button>
+          }
         </div>
         {form.start_offset === 'P0D' && !selected && !form.start_at?.match(/T(?!00:00:00Z)/) && (
           <p className="text-xs text-normal-black">This will run immediately on creation</p>
@@ -162,9 +167,11 @@ export function AutomationsPage() {
   const [skills, setSkills] = useState<Skill[]>([])
   const [isNew, setIsNew] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [savedRecently, setSavedRecently] = useState(false)
   const [triggering, setTriggering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const skipAutosave = useRef(false)
 
   const load = () => api.automations().then(setAutomations).catch(() => {})
 
@@ -177,6 +184,7 @@ export function AutomationsPage() {
     api.automationRuns(id).then(setRuns).catch(() => setRuns([]))
 
   const selectAutomation = (a: Automation) => {
+    skipAutosave.current = true
     setSelected(a)
     setError(null)
     setForm({ name: a.name, prompt: a.prompt, skill_names: a.skill_names || [], enabled: a.enabled, rrule: a.rrule, start_at: a.start_at, start_offset: a.start_offset || null, end_offset: a.end_offset || null, end_at: a.end_at })
@@ -207,6 +215,35 @@ export function AutomationsPage() {
     }))
   }
 
+  const updateExisting = async (f: FormState, s: Automation) => {
+    setSaving(true)
+    try {
+      const updated = await api.automationUpdate(s.id, {
+        name: f.name, prompt: f.prompt, skill_names: f.skill_names,
+        start_offset: f.start_offset || '', end_offset: f.end_offset || '',
+        rrule: f.rrule, start_at: f.start_at, end_at: f.end_at, enabled: f.enabled,
+      })
+      setAutomations(prev => prev.map(a => a.id === updated.id ? updated : a))
+      setSelected(updated)
+      setSavedRecently(true)
+      setTimeout(() => setSavedRecently(false), 5000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Autosave for existing automations
+  useEffect(() => {
+    if (!selected || isNew) return
+    if (skipAutosave.current) { skipAutosave.current = false; return }
+    const s = selected
+    const f = form
+    const timer = setTimeout(() => void updateExisting(f, s), 800)
+    return () => clearTimeout(timer)
+  }, [form]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const save = async () => {
     setError(null)
     setSaving(true)
@@ -231,20 +268,7 @@ export function AutomationsPage() {
           api.automationTrigger(created.id).catch(() => {})
         }
       } else if (selected) {
-        const updated = await api.automationUpdate(selected.id, {
-          name: form.name,
-          prompt: form.prompt,
-          skill_names: form.skill_names,
-          start_offset: form.start_offset || '',
-          end_offset: form.end_offset || '',
-          rrule: form.rrule,
-          start_at: form.start_at,
-          end_at: form.end_at,
-          enabled: form.enabled,
-        })
-        setAutomations(prev => prev.map(a => a.id === updated.id ? updated : a))
-        setSelected(updated)
-        setForm({ name: updated.name, prompt: updated.prompt, skill_names: updated.skill_names || [], enabled: updated.enabled, rrule: updated.rrule, start_at: updated.start_at, start_offset: updated.start_offset || null, end_offset: updated.end_offset || null, end_at: updated.end_at })
+        await updateExisting(form, selected)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -327,7 +351,7 @@ export function AutomationsPage() {
                         <p className="text-xs text-normal-black mb-3">
                           Next: {formatFuture(a.next_run_at)}
                         </p>
-                        <AutomationFormBody form={form} setForm={setForm} error={error} saving={saving} triggering={triggering} selected={selected} onSave={() => void save()} onTrigger={() => void trigger()} onScheduleChange={handleScheduleChange} skills={skills} />
+                        <AutomationFormBody form={form} setForm={setForm} error={error} saving={saving} autoSaving savedRecently={savedRecently} triggering={triggering} selected={selected} onSave={() => void save()} onTrigger={() => void trigger()} onScheduleChange={handleScheduleChange} skills={skills} />
                         {runs.length > 0 && (
                           <div className="mt-3">
                             <div className="space-y-1">
