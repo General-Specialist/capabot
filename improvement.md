@@ -4,23 +4,13 @@ Focus: reducing code, removing debt, simplifying. Keeping it maintainable by a t
 
 ---
 
-## 1. `serve.go` is too big (~1160 lines)
+## ~~1. `serve.go` is too big (~1160 lines)~~ ✅ Done
 
-**Problem:** `serve.go` is the wiring layer for the entire application. It defines:
-- All `init*` functions (store, router, tools, skills)
-- `makeMessageHandler` + all message routing logic (~200 lines)
-- `resolvePeople`, `extractModelTag`, `isApprovalResponse` (~100 lines)
-- `handleDefaultRoleCmd`, `handleModeCmd` (~120 lines)
-- `syncDiscordPeopleRoles`, `avatarToDataURI` (~60 lines)
-- `registerNativeSkills`, `registerSDKPlugins` (~100 lines)
-- Agent runner closure (`runAgent`)
-
-**Fix:** Extract into focused files:
-- `cmd/gostaff/init.go` — `initStore`, `initRouter`, `initToolRegistry`, `initSkillRegistry`, `registerNativeSkills`, `registerSDKPlugins` (pure setup, no business logic)
-- `cmd/gostaff/transport_handler.go` — `makeMessageHandler`, `resolvePeople`, `extractModelTag`, `isApprovalResponse`, `handleDefaultRoleCmd`, `handleModeCmd`, `avatarToDataURI`, `syncDiscordPeopleRoles`
-- `serve.go` stays as the orchestrator that calls everything in order
-
-This brings serve.go down to ~200 lines (just the boot sequence) and makes each concern independently testable.
+Split into focused files:
+- `cmd/gostaff/init.go` (259 lines) — all `init*` and `register*` functions
+- `cmd/gostaff/transport_handler.go` (426 lines) — `makeMessageHandler`, `resolvePeople`, `extractModelTag`, `isApprovalResponse`, `handleDefaultRoleCmd`, `handleModeCmd`
+- `internal/transport/discord_setup.go` (92 lines) — `SyncPeopleRoles`, `AvatarToDataURI`
+- `serve.go` reduced to 375 lines (boot sequence only)
 
 ---
 
@@ -52,14 +42,9 @@ If the goal is a clean, independent product, consider whether this compatibility
 
 ---
 
-## 4. Discord-specific logic leaks into serve.go
+## ~~4. Discord-specific logic leaks into serve.go~~ ✅ Done
 
-**Problem:** `serve.go` has Discord-specific concerns mixed into the general wiring:
-- `syncDiscordPeopleRoles` — creates Discord roles for all people/tags at startup
-- `avatarToDataURI` — reads avatar files and converts to Discord webhook format
-- `handleDefaultRoleCmd` — handles Discord role mention format `<@&ID>`
-
-**Fix:** Move these into `internal/transport/discord_*.go` or a new `internal/transport/discord_setup.go`. The serve.go startup should just call `discord.SyncRoles(store)` if Discord is configured.
+Moved `SyncPeopleRoles` and `AvatarToDataURI` to `internal/transport/discord_setup.go`. `serve.go` now calls `transport.SyncPeopleRoles(...)` directly.
 
 ---
 
@@ -89,10 +74,9 @@ If the goal is a clean, independent product, consider whether this compatibility
 
 ## Priority Order
 
-Medium effort, high impact:
-1. **#1** Split `serve.go` into focused files (30 min)
-2. **#4** Move Discord logic out of serve.go (20 min)
-
-Larger decisions (need user input):
-3. **#3** Audit and potentially remove OpenClaw compatibility layer
-4. **#2** Move token pricing out of agent.go
+Next up:
+1. **#3** Audit and potentially remove OpenClaw compatibility layer (needs user input)
+2. **#2** Move token pricing out of agent.go
+3. **#5** Verify install scripts are still needed
+4. **#7** Frontend: add error feedback (toast/banner)
+5. **#8** Frontend: add tests for `lib/api.ts`
