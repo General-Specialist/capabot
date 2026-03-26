@@ -302,7 +302,7 @@ func TestSpawnAgentTool_Execute(t *testing.T) {
 		Provider: "mock",
 	})
 
-	spawnTool := newSpawnAgentTool(orch, "parent-session")
+	spawnTool := newSpawnAgentTool(orch, "parent-session", "parent-agent")
 
 	params, _ := json.Marshal(map[string]string{
 		"agent_id": "child-agent",
@@ -323,7 +323,7 @@ func TestSpawnAgentTool_Execute(t *testing.T) {
 
 func TestSpawnAgentTool_Execute_UnknownAgent(t *testing.T) {
 	orch := newTestOrchestrator(defaultProviders(), emptyToolRegistry())
-	spawnTool := newSpawnAgentTool(orch, "parent-session")
+	spawnTool := newSpawnAgentTool(orch, "parent-session", "parent-agent")
 
 	params, _ := json.Marshal(map[string]string{
 		"agent_id": "does-not-exist",
@@ -341,7 +341,7 @@ func TestSpawnAgentTool_Execute_UnknownAgent(t *testing.T) {
 
 func TestSpawnAgentTool_Execute_InvalidParams(t *testing.T) {
 	orch := newTestOrchestrator(defaultProviders(), emptyToolRegistry())
-	spawnTool := newSpawnAgentTool(orch, "parent-session")
+	spawnTool := newSpawnAgentTool(orch, "parent-session", "parent-agent")
 
 	result, err := spawnTool.Execute(context.Background(), json.RawMessage(`not-json`))
 	if err != nil {
@@ -354,7 +354,7 @@ func TestSpawnAgentTool_Execute_InvalidParams(t *testing.T) {
 
 func TestSpawnAgentTool_Execute_EmptyAgentID(t *testing.T) {
 	orch := newTestOrchestrator(defaultProviders(), emptyToolRegistry())
-	spawnTool := newSpawnAgentTool(orch, "parent-session")
+	spawnTool := newSpawnAgentTool(orch, "parent-session", "parent-agent")
 
 	params, _ := json.Marshal(map[string]string{
 		"agent_id": "",
@@ -372,7 +372,7 @@ func TestSpawnAgentTool_Execute_EmptyAgentID(t *testing.T) {
 
 func TestSpawnAgentTool_Name(t *testing.T) {
 	orch := newTestOrchestrator(defaultProviders(), emptyToolRegistry())
-	tool := newSpawnAgentTool(orch, "sess")
+	tool := newSpawnAgentTool(orch, "sess", "test-agent")
 	if tool.Name() != "spawn_agent" {
 		t.Errorf("Name() = %q, want %q", tool.Name(), "spawn_agent")
 	}
@@ -380,7 +380,7 @@ func TestSpawnAgentTool_Name(t *testing.T) {
 
 func TestSpawnAgentTool_Parameters_ValidJSON(t *testing.T) {
 	orch := newTestOrchestrator(defaultProviders(), emptyToolRegistry())
-	tool := newSpawnAgentTool(orch, "sess")
+	tool := newSpawnAgentTool(orch, "sess", "test-agent")
 
 	var schema map[string]interface{}
 	if err := json.Unmarshal(tool.Parameters(), &schema); err != nil {

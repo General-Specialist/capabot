@@ -12,16 +12,18 @@ import (
 // SpawnAgentTool is a built-in tool that lets a parent agent delegate subtasks
 // to peer agents managed by the same Orchestrator.
 type SpawnAgentTool struct {
-	orch      *Orchestrator
-	sessionID string
+	orch          *Orchestrator
+	sessionID     string
+	parentAgentID string
 }
 
-// newSpawnAgentTool creates a new SpawnAgentTool bound to the given orchestrator
-// and parent session ID.
-func newSpawnAgentTool(orch *Orchestrator, sessionID string) *SpawnAgentTool {
+// newSpawnAgentTool creates a new SpawnAgentTool bound to the given orchestrator,
+// parent session ID, and the ID of the agent that owns this tool.
+func newSpawnAgentTool(orch *Orchestrator, sessionID, parentAgentID string) *SpawnAgentTool {
 	return &SpawnAgentTool{
-		orch:      orch,
-		sessionID: sessionID,
+		orch:          orch,
+		sessionID:     sessionID,
+		parentAgentID: parentAgentID,
 	}
 }
 
@@ -84,8 +86,13 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, params json.RawMessage) (a
 	// Scope child session under the parent session.
 	childSessionID := t.sessionID + "/" + p.AgentID
 
+	task := p.Task
+	if t.parentAgentID != "" {
+		task = fmt.Sprintf("[Delegated by agent: %s]\n\n%s", t.parentAgentID, p.Task)
+	}
+
 	messages := []llm.ChatMessage{
-		{Role: "user", Content: p.Task},
+		{Role: "user", Content: task},
 	}
 
 	result, err := t.orch.Dispatch(ctx, p.AgentID, childSessionID, messages)

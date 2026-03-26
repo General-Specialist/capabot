@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/polymath/gostaff/internal/agent"
 	"github.com/polymath/gostaff/internal/llm"
@@ -76,7 +77,7 @@ func (o *Orchestrator) buildAgent(cfg AgentConfig, sessionID string) (*agent.Age
 	toolReg := o.buildToolRegistry(cfg)
 
 	// Register the SpawnAgentTool so this agent can delegate to peers.
-	spawnTool := newSpawnAgentTool(o, sessionID)
+	spawnTool := newSpawnAgentTool(o, sessionID, cfg.ID)
 	if regErr := toolReg.Register(spawnTool); regErr != nil {
 		// Spawn tool already registered — not fatal, log and continue.
 		o.logger.Warn().
@@ -88,6 +89,11 @@ func (o *Orchestrator) buildAgent(cfg AgentConfig, sessionID string) (*agent.Age
 	// Build system prompt with active skill instructions.
 	activeSkills := skill.ActiveSkillsFromNames(o.skills, cfg.Skills)
 	systemPrompt := skill.BuildSystemPrompt(cfg.SystemPrompt, activeSkills)
+
+	// Append peers context so the agent knows which agents it can delegate to.
+	if peersCtx := o.buildPeersContext(cfg.ID); peersCtx != "" {
+		systemPrompt = systemPrompt + "\n\n" + peersCtx
+	}
 
 	// Build context manager.
 	ctxMgr := agent.NewContextManager(agent.ContextConfig{
@@ -145,6 +151,28 @@ func (o *Orchestrator) resolveProvider(cfg AgentConfig) (llm.Provider, error) {
 		Msg("provider not found, using fallback")
 
 	return first, nil
+}
+
+// buildPeersContext returns a system prompt section listing all agents the
+// current agent can delegate to via spawn_agent (all agents except itself).
+func (o *Orchestrator) buildPeersContext(selfID string) string {
+	peers := o.registry.List()
+	var lines []string
+	for _, p := range peers {
+		if p.ID == selfID {
+			continue
+		}
+		name := p.Name
+		if name == "" {
+			name = p.ID
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s)", name, p.ID))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "## Available agents\nYou can delegate subtasks to these agents via the spawn_agent tool:\n" +
+		strings.Join(lines, "\n")
 }
 
 // buildToolRegistry creates a tool registry for the agent.

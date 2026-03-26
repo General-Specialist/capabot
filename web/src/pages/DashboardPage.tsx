@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ChevronRight, Square } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Markdown } from '@/components/Markdown'
 import { api, type Automation, type AutomationRun, type TraceMessage } from '@/lib/api'
 
@@ -230,7 +231,7 @@ export function DashboardPage() {
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto space-y-6">
         {!loading && runs.length === 0 && (
-          <p className="text-sm text-normal-black">No runs yet.</p>
+          <p className="text-sm text-normal-black">No runs yet. <Link to="/automations" className="text-brand-primary hover:opacity-70 transition-opacity">Make an automation</Link></p>
         )}
         {[...groups.entries()].map(([label, groupRuns]) => (
           <div key={label}>
