@@ -1,754 +1,739 @@
 # GoStaff Codebase Context
 
-Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99% of use cases. Same skill ecosystem, same plugin protocol. Clean, easy-to-use web UI.
+GoStaff is a self-hosted AI agent platform. It connects to LLM providers (Anthropic, OpenAI, Gemini, OpenRouter), exposes a React web UI + REST API, and bridges to chat platforms (Discord, Telegram, Slack). It has a skill/plugin system for extensibility, scheduled automations, and persistent conversation memory.
+
+---
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      cmd/gostaff                        │
-│  main.go → serve.go (wires everything together)         │
-└────────────────────────┬────────────────────────────────┘
-                         │
-          ┌──────────────┼──────────────┐
-          │              │              │
-   ┌──────▼──────┐ ┌─────▼──────┐ ┌────▼────────┐
-   │ internal/api│ │ transports │ │ cron        │
-   │ REST + SSE  │ │ Discord    │ │ scheduler   │
-   │ web UI      │ │ Slack      │ │             │
-   └──────┬──────┘ │ Telegram   │ └────┬────────┘
-          │        │ HTTP       │      │
-          │        └─────┬──────┘      │
-          └──────────────▼─────────────┘
-                  ┌──────────────┐
-                  │internal/agent│
-                  │  ReAct loop  │
-                  └──┬───────┬───┘
-                     │       │
-          ┌──────────▼─┐  ┌──▼──────────────┐
-          │internal/llm│  │internal/tools + │
-          │Router →    │  │internal/skill   │
-          │Anthropic   │  │(shell, file,    │
-          │OpenAI      │  │browser, memory, │
-          │Gemini      │  │plugins...)      │
-          │OpenRouter  │  └─────────────────┘
-          └────────────┘
-                  ┌──────────────┐
-                  │internal/     │
-                  │memory        │
-                  │Postgres store│
-                  └──────────────┘
+User ──► Transport (Discord/Telegram/Slack/HTTP)
+              │
+              ▼
+         serve.go (wiring layer)
+              │
+    ┌─────────┼────────────┐
+    ▼         ▼            ▼
+  Agent    API Server   Cron Scheduler
+  (ReAct)  (REST+WebUI)  (automations)
+    │         │
+    ├── LLM Router ──► Anthropic / OpenAI / Gemini / OpenRouter
+    ├── Tool Registry ──► shell, files, browser, web, memory, skills...
+    ├── Skill Registry ──► SKILL.md files (Tier 1/2/3)
+    └── Memory Store ──► Postgres (sessions, messages, automations, people, usage)
 ```
 
-**Request path (simplified)**:
-1. Message arrives via API (`POST /api/chat/stream`) or transport (Discord/Telegram/Slack)
-2. `serve.go` closures (`runAgent` / `runAgentWithPrompt`) create a fresh `agent.Agent` per request
-3. Agent runs the ReAct loop: call LLM → execute tools → call LLM → ... → return
-4. LLM calls go through `llm.Router` which picks a provider and handles retries
-5. Tool calls hit `internal/tools` (built-ins), SDK plugins (in-process Go or OpenClaw adapter), or native skills (Go subprocess)
-6. SDK plugin hooks intercept tool calls before/after execution (if registered)
-7. Messages and tool executions are persisted to Postgres via `internal/memory`
-
-**Skill tiers**:
-- **Tier 1** (Markdown): SKILL.md instructions injected into the system prompt — no code
-- **Tier 2** (Native Go): `main.go` compiled on first use to `skill.bin`, called as subprocess per invocation
-- **Tier 3** (SDK Plugin): Go plugins implementing `sdk.Plugin` interface, running in-process. OpenClaw TS/JS/Python plugins are supported via `sdk.OpenClawPlugin` adapter which wraps their subprocess behind the same interface. Can register tools, hooks, HTTP routes, and LLM providers.
-
-**Deployment**: Docker (`CMD ["gostaff", "serve"]`) or direct binary. Config at `~/.gostaff/config.yaml`. Database: Postgres (optional — most features work without it). `GOSTAFF_AUTOUPDATE=1` enables self-update via git pull.
+**Key design decisions:**
+- Single Go binary (`gostaff`), no microservices
+- Postgres for all persistence (sessions, messages, memory, automations, people, usage tracking)
+- Skills are markdown files with YAML frontmatter — the LLM reads instructions from the markdown body
+- Plugins are executable code (Go/TS/JS) that the agent can invoke as tools
+- ReAct loop: the agent iterates (think → act → observe) until it produces a final text response or hits max iterations
+- Multi-provider LLM routing with automatic fallback on 429/5xx errors
 
 ---
 
-## Top-Level Config
+## Project Structure
 
-### `config.example.yaml`
-The canonical config reference. Copy to `~/.gostaff/config.yaml`. Key sections:
-- `server.addr` — HTTP API listen address (default `:8080`)
-- `providers.*` — LLM provider keys + default models
-- `agent.*` — `max_iterations`, `context_budget_pct`, `max_tool_output_tokens`
-- `skills.dirs` — list of directories scanned for `SKILL.md` subdirs
-- `security.*` — API key, rate limit RPM, content filtering, session TTL, `shell_allowlist` (shell execution mode is a DB setting, not config)
-- `transports.*` — Telegram, Discord, Slack tokens
-
-### `go.mod`
-Module: `github.com/polymath/gostaff`. Direct dependencies:
-- `google/uuid`, `bwmarrin/discordgo` (Discord gateway), `jackc/pgx/v5` (Postgres), `rs/zerolog` (logging), `google.golang.org/genai` (Gemini SDK), `gopkg.in/yaml.v3`
+```
+capabot/
+├── cmd/gostaff/          # CLI entry point
+│   ├── main.go           # Command dispatch (serve, chat, dev, skill, agent, config, migrate)
+│   ├── serve.go          # Main server startup — wires ALL subsystems together
+│   ├── chat.go           # Interactive CLI chat session
+│   ├── dev.go            # Skill hot-reload watcher
+│   ├── skill_cmds.go     # skill lint/import/create/init/install/search commands
+│   ├── agent_cmds.go     # agent list (placeholder)
+│   ├── config_cmds.go    # config set <key> <value>
+│   ├── helpers.go        # loadOrDefault config helper
+│   └── migrate.go        # Database migration runner
+├── internal/
+│   ├── agent/            # ReAct agent loop + tool registry + context management
+│   ├── llm/              # LLM provider interface + implementations
+│   ├── memory/           # Postgres store (sessions, messages, automations, people, usage)
+│   ├── skill/            # Skill parser, registry, importer, linter, ClawHub client
+│   ├── tools/            # Built-in tools (shell, files, browser, web, memory, skills...)
+│   ├── transport/        # Chat platform adapters (Discord, Telegram, Slack, HTTP)
+│   ├── api/              # REST API + web UI server
+│   ├── orchestrator/     # Multi-agent orchestration (spawn_tool)
+│   ├── sdk/              # Go SDK for compiled-in plugins + OpenClaw adapter
+│   ├── cron/             # Automation scheduler (RRULE-based)
+│   ├── log/              # Zerolog logger + SSE broadcaster for web UI
+│   ├── config/           # YAML config loading + env overrides + validation
+│   └── updater/          # Auto-update checker (GitHub releases)
+├── web/                  # React frontend (Vite + Tailwind + shadcn/ui)
+│   └── src/
+│       ├── pages/        # DashboardPage, ChatPage, AutomationsPage, SkillsPage,
+│       │                 # PluginsPage, PeoplePage, MemoryPage, SettingsPage, CostsPage
+│       ├── components/   # Sidebar, Calendar, DatePicker, Markdown, PillSwitch, etc.
+│       └── lib/          # api.ts (fetch wrapper), utils.ts (cn helper)
+├── config.yaml           # User config (gitignored)
+├── config.example.yaml   # Template with all options documented
+├── docker-compose.yml    # Postgres + backend + frontend
+├── Dockerfile            # Multi-stage Go build
+├── Makefile              # build, test, lint, dev, web targets
+└── .goreleaser.yaml      # Cross-platform release builds
+```
 
 ---
 
-## `cmd/gostaff/` — CLI entry point
+## `cmd/gostaff/` — CLI Entry Point
 
 ### `main.go`
-Dispatches to subcommands:
-- `serve` → `runServe`
-- `chat` → `runChat`
-- `dev` → `runDev`
-- `skill lint|import|create|init|install|search`
-- `agent list`
-- `config set`
-- `migrate`
+Top-level command dispatch using `os.Args` + `flag.FlagSet` per subcommand. On startup, fires `updater.CheckAndUpdate()` in a background goroutine.
 
-Spawns `updater.CheckAndUpdate()` as a goroutine on startup.
+**Commands:** `serve`, `chat`, `dev`, `skill {lint,import,create,init,install,search}`, `agent list`, `config set`, `migrate`
 
-Each subcommand creates its own `flag.FlagSet` with a `--config` flag. `expandHome` converts leading `~` to the home directory.
+### `serve.go` (~1160 lines — the wiring layer)
+This is the most important file. It boots every subsystem in order:
 
-### `helpers.go`
-`loadOrDefault(path)` — loads config from file if it exists, otherwise returns `config.Default()` with env overrides. Used by all subcommands.
+1. Load config (YAML + env overrides)
+2. Create logger with SSE broadcaster for web UI log streaming
+3. Signal handling (SIGINT/SIGTERM → graceful shutdown)
+4. Open Postgres pool + run migrations → `memory.Store`
+5. Initialize LLM providers → `llm.Router` (primary + fallback chain)
+6. Register built-in tools → `agent.Registry` (core tools sent to LLM, extended tools behind `use_tool`)
+7. Load skill registry from disk directories → inject skill instructions into system prompt
+8. Register SDK plugins (compiled Go + OpenClaw TS/JS adapters)
+9. Register native Go skills (Tier 2) as callable tools
+10. Register skill management tools (create/edit/delete skills via the agent)
+11. Start skill hot-reload goroutine (polls every 1s for new SKILL.md files)
+12. Build agent runner functions: `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral`
+13. Start cron scheduler for automations
+14. Start API server (REST + embedded web UI)
+15. Start transport adapters (Discord, Telegram, Slack, HTTP)
+16. Block until shutdown
 
-### `serve.go`
-The main wiring function. Startup sequence:
-1. Load config
-2. Create log broadcaster (writes to stderr + in-memory ring for web UI `/api/logs`)
-3. Signal handling (SIGINT/SIGTERM → context cancel)
-4. Init Postgres pool + store; call `store.MarkStaleRunsAsFailed` on startup
-5. Init LLM router
-6. Init tool registry via `initToolRegistry` — returns `(*agent.Registry, *tools.ShellExecTool)`. Shell tool returned separately so `makeMessageHandler` can handle pending approvals for stateless transports.
-7. Init skill registry (loads dirs); register SDK plugins via `registerSDKPlugins` (compiled-in Go plugins + OpenClaw adapters for installed TS/JS/Python plugins); register native skills as tools
-8. Register skill/plugin management tools as _extended_ tools: `skill_create_markdown`, `skill_edit`, `skill_delete` (T1 markdown), `plugin_create`, `plugin_edit`, `plugin_delete` (T2 Go), `skill_search` (ClawHub). Base system prompt includes a Skills vs Plugins explanation so the agent picks the right tool. Start skill hot-reload poller (1s interval — detects newly installed skills)
-9. Build the default `AgentConfig`; define `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral` closures (all attach SDK plugin hooks to each agent)
-10. `syncDiscordPeopleRoles` — creates Discord roles for people/tags that don't have one yet (startup helper, extracted from `runServe`)
-11. Start cron scheduler
-12. Start API server on `cfg.Server.Addr`
-13. Optional: content filter, session TTL cleanup goroutine
-14. Start transports (HTTP always on `:8081`; Telegram/Discord/Slack if configured)
-15. Block on `<-ctx.Done()`
-
-Key closures defined in `serve.go`:
-- `resolveMode(ctx)` — looks up the active mode from DB and returns tool registry + model + thinking flag
-- `applyMode(cfg, ms, ctx)` — applies mode settings to an `AgentConfig`; model priority: `@tag` > mode default > `default_model` setting
-- `runAgent` — creates a new agent each call, resolves mode
-- `runAgentWithPrompt` — same but with custom system prompt + optional model override
-- `runAgentEphemeral` — same but no store set (no message persistence); used by transports
-
-`makeMessageHandler` — returns the handler for transport messages. Handles (in order):
-- Content filter check
-- **Pending shell approval interception**: if `shell_mode=prompt` and a command is awaiting approval for this channel, checks if the message is a yes/no response (`isApprovalResponse`). On yes: approves (session or permanent) and executes the command directly via `shellTool.RunCommand`, bypassing the LLM. On no: sends denial. Non-approval messages put the pending command back and fall through normally.
-- `/default_role`, `/chat`, `/execute`, `/mode` commands
-- `@model-id` tag extraction
-- Channel ID injected into context via `tools.WithSessionID` so `shell_exec` can key pending state
-- `@PersonName` or channel binding person routing
-- Single person: runs agent with person's prompt
-- Multiple people (e.g. `@tag` targeting many): runs all in parallel goroutines
-
-`isApprovalResponse(text)` — returns `(approved, permanent, isResponse)`. "yes"/"allow"/"ok" etc. → session approve. "yes always"/"always"/"allow permanently" etc. → permanent approve. "no"/"deny" etc. → deny.
-
-`avatarToDataURI` — reads a local avatar file from `~/.gostaff/avatars/` and returns a base64 data URI for Discord webhook avatar display.
+**Key functions defined in serve.go:**
+- `initStore(ctx, dbURL)` → opens Postgres, runs migrations
+- `initRouter(ctx, cfg)` → creates providers from config, returns Router
+- `initToolRegistry(cfg, store)` → registers all built-in tools
+- `initSkillRegistry(cfg)` → loads SKILL.md files from disk
+- `registerNativeSkills(...)` → compiles and registers Tier 2 Go skills
+- `registerSDKPlugins(...)` → initializes compiled-in + OpenClaw plugins
+- `makeMessageHandler(...)` → factory for transport message handling (content filter, @person routing, @model routing, shell approval flow)
+- `resolveMode(ctx)` → returns tool registry + thinking flag based on active mode
+- `resolvePeople(ctx, store, text)` → parses @username/@tag mentions
 
 ### `chat.go`
-`runChat` — minimal interactive REPL. Creates one default agent, no store, reads from stdin, prints `Bot: <response>`. Maintains `history []llm.ChatMessage` for multi-turn context.
+Standalone CLI chat. Loads config, initializes router + tools, creates a default agent, then runs an interactive `bufio.Scanner` loop. No Postgres needed.
 
 ### `dev.go`
-`runDev` — polls skill directories every 2 seconds for SKILL.md changes. On change: logs added/changed/removed, runs lint on changed files. Does NOT restart the serve process — it's purely a watcher. The comment "restart serve to apply changes" means you need to run `air` or restart manually.
-
-`scanSkillFiles` / `diffSkillFiles` — file-mod-time diffing helpers.
+Skill hot-reload watcher. Polls skill directories every 2s, diffs SKILL.md file modification times, auto-lints changed files, and logs add/change/remove events. Does NOT restart the server — just monitors.
 
 ### `skill_cmds.go`
-CLI skill subcommands:
-- `runSkillLint` — resolves paths to SKILL.md files, runs `skill.LintSkill`, exits 1 on errors
-- `runSkillImport` — calls `skill.ImportSkill`
-- `runSkillCreate` — scaffolds `<name>/SKILL.md` in current dir
-- `runSkillInit` — like create, but with `--plugin` flag creates `index.ts` for plugin tier
-- `runSkillSearch` — calls ClawHub API to search registry
-- `runSkillInstall` — downloads URL (tar.gz or zip), ClawHub name, or GitHub shorthand (`owner/repo`), extracts, calls `ImportSkill`
-- `extractZip` / `extractTarGz` — archive extraction with path traversal protection
+Implements all `gostaff skill` subcommands:
+- **lint**: Validates SKILL.md files
+- **import**: Copies a skill directory + runs the importer (tool mapping, tier detection)
+- **create**: Scaffolds a SKILL.md template
+- **init**: Like create but supports `--plugin` for Tier 3 TS plugin template
+- **install**: Downloads from ClawHub registry, GitHub shorthand (`owner/repo`), or direct URL (zip/tar.gz)
+- **search**: Queries ClawHub for matching skills
 
-`defaultSkillsDir()` — `~/.gostaff/skills`
+Also contains archive extraction (zip, tar.gz) with path-traversal protection.
 
 ### `agent_cmds.go`
-`runAgentList` — stub; prints "no agents configured". Not yet implemented.
+Placeholder — just prints "no agents configured".
 
 ### `config_cmds.go`
-`runConfigSet` — validates key against a hardcoded `supportedKeys` set (e.g. `providers.anthropic.api_key`), calls `config.SetKey`.
-
-`supportedKeyList()` — returns sorted list of supported keys using `sort.Strings`.
+`gostaff config set <key> <value>` — updates a dot-path key in the YAML config file. Supported keys are allowlisted in `supportedKeys` map.
 
 ### `migrate.go`
-Calls `initStore` (which runs migrations as a side effect). Prints "migrations applied successfully".
+Opens Postgres and runs embedded SQL migrations, then exits.
 
 ---
 
-## `internal/config/`
+## `internal/agent/` — ReAct Agent Loop
 
-### `config.go`
-`Config` struct hierarchy. Key sub-structs:
-- `ServerConfig` — `Addr`
-- `DatabaseConfig` — `URL`
-- `ProvidersConfig` — `Anthropic`, `OpenAI`, `Gemini`, `OpenRouter`
-- `AgentConfig` — `MaxIterations`, `ContextBudgetPct`, `MaxToolOutputTokens`
-- `SkillsConfig` — `Dirs []string`
-- `SecurityConfig` — `ShellAllowlist`, `APIKey`, `RateLimitRPM`, `ContentFiltering`, `SessionTTLDays`, `DrainTimeout`. Shell execution **mode** is NOT in config — it's stored as a DB setting (`shell_mode`) so it can be changed at runtime from the UI.
-- `TransportsConfig` — `Telegram`, `Discord`, `Slack`
+### `agent.go` (~590 lines)
+The core agent. Implements the ReAct (Reason + Act) loop.
 
-`LoadFromFile(path)`:
-1. Start with `Default()`
-2. Decode YAML with `KnownFields(true)` (strict — unknown keys are errors)
-3. Apply `applyEnvOverrides` (env takes precedence over file)
-4. Run `validate`
+**`Agent` struct fields:**
+- `config AgentConfig` — ID, model, system prompt, max iterations, max tokens, temperature, thinking toggle, summarization model, mode
+- `provider llm.Provider` — the LLM router
+- `tools *Registry` — available tools
+- `ctxMgr *ContextManager` — token budget tracking
+- `store StoreWriter` — optional persistence (messages + tool executions + usage)
+- `onEvent func(AgentEvent)` — streaming callback for progress events
+- `hooks []ToolHook` — plugin pre/post hooks for tool execution
 
-`applyEnvOverrides` — maps `GOSTAFF_*` env vars to config fields. Gemini key is read from `GOSTAFF_GEMINI_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` (first non-empty wins).
+**`Run(ctx, sessionID, messages)` loop:**
+1. Check context cancellation
+2. Compress old tool outputs (all except the most recent batch)
+3. Apply sliding window to message history (`BuildMessages`, window=50)
+4. Call LLM with system prompt + tools + messages
+5. Track token usage + persist usage record
+6. If no tool calls → return final text response (retry once if empty)
+7. If tool calls → execute each tool, append results to history, continue loop
+8. Hit max iterations → return "[max iterations reached]"
 
-`SetKey(path, key, value)` — reads raw YAML, walks dot-path to set a nested value, rewrites file with `0o600` perms.
+**Tool execution flow:**
+1. Look up tool in registry
+2. Run pre-hooks (can block or modify params)
+3. Execute tool
+4. Run post-hooks (can modify result)
+5. Emit events + persist audit log
 
-`validate` — checks `server.addr` starts with `:`, log_level is valid, agent params are in range.
+**Output compression:**
+- Old tool outputs (from prior iterations) get compressed before sending to LLM
+- If `SummarizationModel` is set, uses a cheap LLM call to summarize
+- Otherwise falls back to truncation (first 2 lines + stats)
+- Threshold: 300 chars
 
-### `defaults.go`
-`Default()` — returns sane defaults. Notable: `MaxIterations: 0` (unlimited), shell allowlist includes `open`, `node`, `npx` in addition to the usual suspects.
-
----
-
-## `internal/agent/`
-
-### `agent.go`
-Core ReAct loop.
-
-**`AgentConfig`** fields:
-- `Model` — empty = use router's primary provider default
-- `MaxIterations` — 0 = unlimited
-- `DisableThinking` — suppresses extended thinking (Anthropic)
-- `SummarizationModel` — cheap model for condensing old tool outputs; empty = dumb truncation
-- `Mode` — name for usage tracking only
-
-**`StoreWriter` interface** — minimal interface for persistence. Uses `memory.Message`, `memory.ToolExecution`, `memory.UsageRecord` directly. `*memory.Store` satisfies this interface with no adapter needed.
-
-**`Run(ctx, sessionID, messages)`**:
-1. Copies messages to avoid mutating caller slice
-2. Loop: check ctx, compress old tool outputs, build windowed message slice, call LLM
-3. On tool calls: execute each tool, truncate if needed, append to history
-4. On empty response (no content, no tool calls): retry once with "Please provide a response."
-5. On no tool calls: return response
-6. On max iterations: return `[max iterations reached]`
-
-**`compressOldToolOutputs`** — mutates `history` in place. Finds last assistant message with tool calls; everything before that is "old" and gets compressed if `>300 chars`. Calls `llmSummarize` (cheap model) or falls back to `truncateOutput` (first 2 lines + stats).
-
-**`buildToolDefs`** — converts registry tools to `[]llm.ToolDefinition` for the LLM request. Does NOT include extended tools.
-
-**`ToolHook` interface** — `BeforeToolUse(ctx, toolName, params) (allow, modifiedParams, err)` and `AfterToolUse(ctx, toolName, params, result) (modifiedResult, err)`. Plugin hooks implement this interface.
-
-**`executeTool`** — runs pre-hooks (can block or modify params), looks up tool by name, runs it, runs post-hooks (can modify result), emits events, persists audit log.
-
-**Events**: `EventThinking`, `EventToolStart`, `EventToolEnd`, `EventResponse`. Emitted to `onEvent` callback (nil = no streaming).
+**Token pricing table:** Hardcoded map of model → [input, output] cost per million tokens. Covers Anthropic (Claude 4.x), OpenAI (GPT-4o, o3), Gemini (2.0/2.5/3), and OpenRouter variants.
 
 ### `context.go`
-**`ContextManager`** — tracks token usage across iterations.
-- `TruncateToolOutput(output)` — hard cap at `maxToolOutputTokens * 4` chars (4 chars ≈ 1 token approximation)
-- `BuildMessages(history, windowSize=50)` — sliding window: keeps first message + last `windowSize-1` messages. Window boundary advances past any orphaned `tool` role messages to avoid sending tool results without their preceding assistant tool-call message.
+**`ContextManager`** — tracks token budget and provides truncation.
+- `Budget()` = contextWindow × budgetPct
+- `RecordUsage(usage)` — updates latest input token count + cumulative output
+- `TruncateToolOutput(output)` — hard cap at maxToolOutputTokens × 4 chars
+
+**`BuildMessages(history, windowSize)`** — sliding window over conversation history. Keeps first message + most recent windowSize-1 messages. Adjusts cut point forward past orphaned "tool" role messages so the LLM never gets a tool result without its preceding assistant tool-call.
 
 ### `tool.go`
-**`Tool` interface**: `Name()`, `Description()`, `Parameters() json.RawMessage`, `Execute(ctx, params) (ToolResult, error)`
+**`Tool` interface:** `Name()`, `Description()`, `Parameters()`, `Execute(ctx, params) (ToolResult, error)`
 
-**`Registry`**: thread-safe map of tools. Two categories:
-- Core tools: sent to LLM as tool definitions
-- Extended tools: NOT sent to LLM; accessible only via the `use_tool` meta-tool
+**`ToolResult`:** `Content string`, `IsError bool`, `Parts []llm.MediaPart`
 
-`Register` / `RegisterExtended` — return error if name already registered.
-`List()` — core tools only.
-`ExtendedNames()` / `ExtendedDescriptions()` — for building `use_tool` description.
+**`Registry`** — thread-safe tool registry with two tiers:
+- **Core tools** → sent to LLM as tool definitions (via `List()`)
+- **Extended tools** → NOT sent to LLM directly, accessible via the `use_tool` meta-tool (via `Get(name)`)
 
-Uses `sort.Strings` for deterministic output in `ExtendedNames`, `ExtendedDescriptions`, and `Names`.
+Methods: `Register`, `RegisterExtended`, `Get`, `List`, `ExtendedNames`, `ExtendedDescriptions`, `Names`, `Len`
 
 ### `filter.go`
-**`ContentFilter`** — checks messages against a hardcoded list of prompt injection patterns (lowercased substring match after whitespace normalization). Conservative/high-precision approach. `maxLength` defaults to 32000.
+**`ContentFilter`** — basic prompt injection detector. Checks message length + lowercased substring matching against known injection patterns (role hijacking, system prompt extraction, DAN/jailbreak, delimiter confusion). Conservative — high precision, low recall.
 
 ---
 
-## `internal/llm/`
+## `internal/llm/` — LLM Providers
 
 ### `provider.go`
-Core types:
-- **`Provider` interface**: `Chat`, `Stream`, `Models`, `Name`
-- **`ChatRequest`**: `Model`, `Messages`, `System`, `Tools`, `MaxTokens`, `Temperature`, `StopSeqs`, `DisableThinking`
-- **`ChatMessage`**: `Role`, `Content`, `Parts []MediaPart`, `ToolCalls`, `ToolResult`, `Metadata any`
-  - `Metadata` is opaque provider data that must be round-tripped (e.g. Gemini thought signatures)
-  - `Parts` carries binary multimodal content (images, PDFs) — not JSON-serialized
-- **`ToolResult`**: `ToolUseID`, `Content`, `IsError`, `Parts []MediaPart`
-- **`StreamChunk`**: `Delta`, `Thinking`, `ToolCall *ToolCall`, `Done`, `Usage`, `Err`
-- **`CreditFetcher` interface** — optional; providers that can report account spend implement this
+**`Provider` interface:** `Chat(ctx, req) (*ChatResponse, error)`, `Stream(ctx, req) (<-chan StreamChunk, error)`, `Models() []ModelInfo`, `Name() string`
 
-### `errors.go`
-`HTTPStatusError{StatusCode, Body}` — returned by all providers on non-2xx responses.
-`isRetryable(err)` — true for 429 or 5xx. Uses `errors.As` for unwrapping.
+**`CreditFetcher` interface** (optional): `FetchCredits(ctx) (*CreditInfo, error)` — implemented by OpenRouter.
+
+**Key types:**
+- `ChatRequest` — model, messages, system prompt, tools, max tokens, temperature, stop sequences, disable thinking flag
+- `ChatMessage` — role, content, media parts, tool calls, tool result, metadata (for Gemini round-trip)
+- `ChatResponse` — content, thinking, tool calls, stop reason, usage, model, provider, metadata
+- `StreamChunk` — delta, thinking, tool call, done, usage, error
+- `ToolDefinition` — name, description, input schema (JSON)
+- `ToolCall` — id, name, input (JSON)
+- `ToolResult` — tool use id, content, is error, media parts
 
 ### `router.go`
-**`Router`** implements `Provider`. Routes to primary provider, falls back to `Fallbacks []string` on retryable errors.
+**`Router`** — multi-provider routing with fallback. Implements `Provider` interface.
+- `Chat()` → tries model-based routing first (if model ID is set, finds the owning provider), then falls through to primary → fallbacks on retryable errors
+- `Stream()` → same fallback strategy
+- `ChatWithModel(ctx, modelID, req)` → routes to the specific provider that owns modelID
+- `SetProvider(name, p)` / `SetFallbacks(names)` — thread-safe mutation
+- `ProviderMap()` — returns copy of provider map
 
-`Chat(req)`:
-- If `req.Model` is set: find provider by model ID via `ChatWithModel`
-- Otherwise: try providers in order `[primary, ...fallbacks]`
+### `anthropic.go` (~550 lines)
+Anthropic Messages API implementation.
+- Supports extended thinking (enabled by default, budget = 80% of maxTokens)
+- Prompt caching via `cache_control: ephemeral` on system prompt or last tool
+- Handles multimodal content (images, PDFs via base64)
+- Full SSE streaming parser
+- Models: Claude Opus 4.6, Sonnet 4.6, Haiku 4.5
 
-`ChatWithModel(modelID, req)` — iterates all providers' `Models()` list to find the right one.
-
-`SetProvider(name, p)` — hot-swaps a provider (used when API keys are updated via UI).
-
-`SetFallbacks(names)` — replaces the fallback provider list at runtime (used by execute key fallback setting).
-
-`ProviderMap()` — returns a copy of the provider map (used by API server for `/api/providers`).
-
-### `anthropic.go`
-`AnthropicProvider` — direct HTTP client to `https://api.anthropic.com`. Models: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001` (200k context each).
-
-Notable: supports prompt caching (`cache_control: ephemeral`) on the system prompt block. Extended thinking is sent as `thinking: {type: "enabled", budget_tokens: 10000}`.
-
-### `openai.go`
-`OpenAIProvider` — OpenAI chat completions API. Also used as the base for OpenRouter. Models: `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`.
+### `openai.go` (~485 lines)
+OpenAI Chat Completions API implementation.
+- Also used as base for OpenRouter (via `chatWithHeaders` / `streamWithHeaders`)
+- Handles multimodal (images as data URI, PDFs as file objects)
+- Full SSE streaming parser with tool call accumulation across deltas
+- Models: GPT-4o, GPT-4o Mini, GPT-4 Turbo
 
 ### `openrouter.go`
-`OpenRouterProvider` — wraps `OpenAIProvider` with base URL `https://openrouter.ai/api/v1`. Adds `X-Title` and `HTTP-Referer` headers. Default model `anthropic/claude-sonnet-4-6`.
+Thin wrapper around `OpenAIProvider` pointed at `openrouter.ai/api/v1`. Adds `X-Title` and `HTTP-Referer` headers. Implements `CreditFetcher` via the `/auth/key` endpoint.
+- Models: curated list of popular OpenRouter models (Claude, GPT, Gemini, Llama, Mistral, Qwen)
 
-### `gemini.go`
-`GeminiProvider` — uses the official `google.golang.org/genai` SDK. Thought signatures are stored in `ChatMessage.Metadata` and must be passed back in subsequent requests. Models: `gemini-3-flash-preview`, `gemini-2.5-pro-preview-05-06`, `gemini-2.5-flash-preview-04-17`.
+### `gemini.go` (~330 lines)
+Google GenAI SDK implementation.
+- Handles Gemini's thought signatures (preserved in `Metadata` for round-tripping)
+- Converts tools via `ParametersJsonSchema` for raw JSON schema passthrough
+- Models: Gemini 3 Flash Preview, 2.5 Pro, 2.5 Flash
+
+### `errors.go`
+`HTTPStatusError` type + `isRetryable(err)` check (429 or 5xx).
 
 ---
 
-## `internal/memory/`
+## `internal/memory/` — Postgres Persistence
 
 ### `pool.go`
-`Pool` — thin wrapper over `*sql.DB` using `pgx/v5/stdlib`. Max 20 open / 5 idle connections.
-`WriteTx(ctx, fn)` — runs fn in a transaction; rolls back on error.
+Wraps `sql.DB` (via pgx driver). Max 20 open connections, 5 idle. Provides `WriteTx` for transactional writes.
 
 ### `migrations.go`
-`Migrate(ctx, pool)` — embedded SQL migrations (`//go:embed migrations/*.sql`). Runs all in a single transaction. Uses a `schema_versions` table to track applied versions. Migrations are numbered `001` to `014`.
+Embedded SQL migrations (`//go:embed migrations/*.sql`). Tracks applied versions in `schema_versions` table. 15 migrations (001–015).
 
-Migration files (what they add):
-- 001: core tables (sessions, messages, memory, tool_executions)
-- 002: skill_names array on automations
-- 003: start_offset on automations
-- 004: datepicker schema changes
-- 005: person avatar_url
-- 006: person tags
-- 007: person discord_role_id
-- 008: discord_tag_roles table
-- 009: person avatar_position
-- 010: system_prompt settings key
-- 011: settings table
-- 012: channel_bindings table
-- 013: modes table
-- 014: usage_log table
+### `schema.sql`
+Consolidated schema (source of truth for DB structure). Tables:
+- **sessions** — id, tenant_id, channel, title, user_id, metadata (JSONB)
+- **messages** — session_id (FK), role, content, tool_call_id, tool_name, tool_input, token_count
+- **tool_executions** — session_id (FK), tool_name, input, output, duration_ms, success
+- **memory** — tenant_id, key, value, embedding (unused BYTEA column)
+- **automations** — name, rrule, prompt, skill_names (TEXT[]), start/end_at, start/end_offset, enabled, last/next_run_at
+- **automation_runs** — automation_id (FK), status (running/success/error/stopped), response, error
+- **people** — name, prompt, username, avatar_url, avatar_position, tags (TEXT[]), discord_role_id
+- **discord_tag_roles** — tag → role_id mapping
+- **settings** — key/value store (active_mode, system_prompt, shell_mode, etc.)
+- **channel_bindings** — channel_id → tag (auto-routes Discord channels to people/tags)
+- **modes** — name → keys JSON (per-mode LLM provider overrides + model selection)
+- **usage_log** — provider, model, mode, input/output tokens, created_at
 
-### `store.go`
-Repository pattern. All DB access goes through this.
-
-**Key types**:
-- `Session` — `id`, `tenant_id`, `channel`, `title`, `user_id`, timestamps, `metadata`
-- `Message` — `session_id`, `role`, `content`, `tool_call_id`, `tool_name`, `tool_input`, `token_count`
-- `MemoryEntry` — `tenant_id`, `key`, `value`
-- `ToolExecution` — audit log of tool calls
-- `Person` — `id`, `name`, `username`, `prompt`, `avatar_url`, `avatar_position`, `tags`, `discord_role_id`
-- `Automation` — `id`, `name`, `rrule`, `start_at`, `end_at`, `prompt`, `skill_names`, `enabled`, `next_run_at`
-- `AutomationRun` — `id`, `automation_id`, `status`, `output`, `started_at`, `finished_at`
-- `ModeKeys` — `model` (default model for mode), `skill_names []string`, `system_prompt_override`
-- `UsageRecord` — `provider`, `model`, `mode`, `input_tokens`, `output_tokens`
-
-**Notable methods**:
-- `MarkStaleRunsAsFailed` — sets any `running` automation runs to `failed` at startup
-- `GetActiveMode` / `SetActiveMode` — stored in the `settings` table under key `active_mode`; returns `"default"` if unset
-- `GetSystemPrompt` / `SetSystemPrompt` — stored in `settings` as `system_prompt`
-- `GetChannelBinding` / `SetChannelBinding` / `DeleteChannelBinding` — `channel_bindings` table maps channel ID to `persona:<username>` (person binding) or a tag name
-- `GetPersonByID` / `GetPersonByName` / `GetPersonByUsername` — person lookup by different keys
-- `SaveUsage` — writes to `usage_log` table for cost tracking
+### `store.go` (~950 lines)
+Repository-pattern access to all tables. Key method groups:
+- **Sessions**: Create, Upsert, List, Get, Delete old, Count messages
+- **Messages**: Save, Get by session
+- **Memory**: Store (upsert), List, Delete
+- **Tool Executions**: Save, Get by session
+- **Automations**: CRUD + ListDue + StartRun/FinishRun + UpdateSchedule + MarkStaleRunsAsFailed
+- **People**: CRUD + query by name/username/tag/discord_role_id
+- **Settings**: Get/Set generic key-value + convenience wrappers (system prompt, active mode)
+- **Discord Tag Roles**: Upsert/Get/Delete/List
+- **Channel Bindings**: Get/Set/Delete
+- **Modes**: Get/Set/Delete/List + GetActiveMode/SetActiveMode
+- **Usage**: SaveUsage + GetUsageSummary (aggregated by provider/model/mode)
 
 ---
 
-## `internal/skill/`
+## `internal/skill/` — Skill System
+
+Skills are the primary extensibility mechanism. They come in three tiers:
+
+### Tier 1: Markdown Skills (default)
+A SKILL.md file with YAML frontmatter + markdown body. The instructions are injected into the agent's system prompt. No code execution.
+
+### Tier 2: Native Go Skills
+A SKILL.md + Go source file. Compiled at startup via `go build -buildmode=plugin`. Registered as a callable tool.
+
+### Tier 3: Plugin Skills
+A SKILL.md + executable code (TypeScript via Bun, or Go binary). Invoked via stdin/stdout JSON protocol.
 
 ### `types.go`
-**`SkillManifest`** — parsed YAML frontmatter from `SKILL.md`:
-- `Name`, `Description`, `Version`, `Homepage`
-- `Metadata SkillMetadata` — OpenClaw metadata under `openclaw`, `clawdbot`, or `clawdis` keys (aliases for same thing)
-- `UserInvocable *bool`, `DisableModelInvocation bool`, `CommandDispatch`, `CommandTool`, `CommandArgMode`
-- `Parameters json.RawMessage` — JSON Schema for executable skills (Tier 2/3)
-
-**`SkillMetadataInner`** — OpenClaw metadata: `requires` (env vars, bins), `install` (package specs), `always`, `emoji`, `os`.
-
-**`ParsedSkill`**: `{Manifest, Instructions, Warnings []ParseWarning}`
+Core types: `SkillManifest` (parsed YAML frontmatter), `ParsedSkill` (manifest + instructions + warnings), `SkillResult` (JSON envelope for executable skills), `InstallSpec`, `SkillRequires`, `SkillMetadata` (OpenClaw compatibility).
 
 ### `parser.go`
-`ParseSkillMD(source)` — parses `---\nyaml\n---\nmarkdown` format. Deliberately forgiving:
-- Malformed YAML → warning, not error
-- Missing frontmatter → tries to extract name from first `# Heading`
-- ~14% of ClawHub skills have no frontmatter name (comment in code)
+Parses SKILL.md files: extracts YAML frontmatter between `---` delimiters, then the markdown body as instructions. Returns `ParsedSkill`.
 
 ### `registry.go`
-`Registry` — thread-safe map of `ParsedSkill` by name. Also tracks:
-- `skillPaths` — disk directory per skill
-- `pluginPaths` — dir containing `index.ts`/`index.js`/`index.py` (Tier 3 plugin)
-- `nativePaths` — dir containing `main.go` (Tier 2)
+Thread-safe skill registry. Loads skills from directories, tracks by name. Supports hot-reload via `LoadNewSkills()`. Methods: `LoadDir`, `Get`, `List`, `Len`, `NativeSkillNames`, `PluginSkillNames`, `NativePath`, `PluginPath`, `LoadNewSkills`.
 
-`LoadDir(dir)` — scans subdirectories for `SKILL.md`. Earlier dirs take precedence (workspace > user > bundled). Silently skips non-skill dirs.
-
-`LoadNewSkills()` — re-scans all previously loaded directories and registers any skills that weren't present before. Returns names of newly loaded skills. Used by the hot-reload poller in `serve.go`.
-
-Skill tiers are auto-detected at load time by presence of plugin entry points or `main.go`.
+Also has `BuildSystemPrompt(basePrompt, skills)` — concatenates the base prompt with all loaded skill instructions.
 
 ### `inject.go`
-`BuildSystemPrompt(base, skills)` — appends each skill's instructions to the base prompt as `## Skill: <name>\n_<desc>_\n\n<instructions>`. This is how Tier 1 (markdown) skills work — pure prompt injection.
-
-`ActiveSkillsFromNames(reg, names)` — filters registry by name list.
-
-### `plugin.go`
-`PluginProcess` — manages a long-running TS/JS/Python subprocess using JSON-line protocol over stdin/stdout. **Not called directly from serve.go** — used internally by the `sdk.OpenClawPlugin` adapter.
-
-**Lifecycle**: spawn subprocess (bun/node/python3) → plugin calls `register(api)` to register tools/hooks/routes/providers → sends "ready" → host dispatches invocations via JSON-line messages.
-
-**Entry point detection**: probes for `index.ts` (bun), `index.js` (node), `index.py` (python3) in order.
-
-**Registration types**: `RegisteredTool`, `RegisteredHook`, `RegisteredRoute`, `RegisteredProvider`.
-
-**Invocation methods**: `Invoke` (tools), `InvokeHook` (pre/post tool hooks), `InvokeHTTP` (route handlers), `InvokeChat` (LLM providers).
-
-### `plugin_tool.go`
-`PluginTool` — wraps a `RegisteredTool` + `*PluginProcess` reference. Multiple `PluginTool`s can share the same process (one plugin registers many tools). `Run()` delegates to `proc.Invoke()`.
-
-### `native.go`
-`NativeExecutor` — compiles `main.go` to `skill.bin` using `go build`. Caches compiled binary (skips rebuild if bin is newer than main.go). If no `go.mod`, creates a temporary one.
-
-Skill subprocess reads JSON params from stdin, writes `{"content":"...","is_error":false}` to stdout.
-
-### `native_tool.go`
-Adapter that wraps `NativeExecutor` as `agent.Tool` implementation.
+`BuildSystemPrompt(base, skills)` — appends skill instructions to the system prompt, formatted as sections.
 
 ### `importer.go`
-`ImportSkill(srcDir, destRoot)` — copies an OpenClaw skill directory into `destRoot/<skillName>/`. Validates SKILL.md, checks binary dependencies, detects tier (Markdown/Native/Plugin), translates tool names. For plugin-only repos (no SKILL.md), auto-generates one from `package.json`. After copying, auto-installs npm dependencies if `package.json` exists (`bun install` preferred, falls back to `npm install`).
-
-`ImportResult` contains `{SkillName, Tier, Warnings, Errors, MappedTools, InstallHints, DestPath}`.
+Imports skills from external sources. Handles tier detection, tool mapping (maps OpenClaw tool names to GoStaff equivalents), and generates warnings/install hints.
 
 ### `toolmap.go`
-`openClawToGoStaff` — map from OpenClaw flat tool names (`exec`, `read`, `write`) to GoStaff equivalents (`shell_exec`, `file_read`, `file_write`). Used by importer to generate `MappedTools` warnings.
+Maps OpenClaw/Claude tool names to GoStaff equivalents (e.g., `Read` → `file_read`, `Bash` → `shell_exec`).
 
 ### `lint.go`
-`LintSkill(source)` — parses and validates SKILL.md. Errors on missing `name` or `description`. Warnings for missing version, instructions, etc.
+Validates SKILL.md files: checks frontmatter presence, required fields (name, description), version format, body length. Returns a `LintReport`.
+
+### `plugin.go` / `plugin_tool.go`
+Tier 3 plugin executor. Spawns a subprocess (`bun run index.ts` or compiled binary), passes JSON params via stdin, reads JSON result from stdout.
+
+### `native.go` / `native_tool.go`
+Tier 2 native Go skill executor. Compiles Go source to a plugin at startup, loads it, and calls the exported `Run` function.
 
 ### `clawhub.go`
-`ClawHubClient` — fetches skills from `https://clawhub.ai` Convex backend.
-- `SearchSkills(ctx, query)` — queries `listPublicPageV4` Convex function
-- `DownloadSkill(ctx, name, destDir)` — downloads zip from ClawHub, extracts to temp dir
+HTTP client for the ClawHub skill registry (search + download).
 
 ### `github.go`
-Reusable GitHub download/extract logic for installing skills from GitHub repos.
-- `IsGitHubShorthand(s)` — detects `owner/repo` patterns (no slashes in owner or repo)
-- `ParseGitHubURL(s)` — extracts `owner/repo` from full `github.com` URLs
-- `DownloadGitHub(ctx, target)` — downloads tarball from GitHub API, extracts, unwraps single wrapper dir
-- `extractTarGzReader` — streaming tar.gz extraction helper
+GitHub archive downloader for `owner/repo[@ref]` skill installation.
 
 ### `npm.go`
-npm registry fallback for installing OpenClaw plugins distributed as npm packages.
-- `DownloadNPM(ctx, spec)` — fetches package metadata from `registry.npmjs.org`, downloads tarball, extracts. Handles scoped packages (`@scope/name@version`).
-- Used as fallback when ClawHub 404s on a bare name (e.g. `shellward` is on npm, not ClawHub)
+NPM package resolver for skill dependencies.
 
 ---
 
-## `internal/sdk/`
+## `internal/tools/` — Built-in Tools
 
-The Go plugin SDK. All Tier 3 plugins (both native Go and OpenClaw adapters) go through this layer.
+All tools implement the `agent.Tool` interface.
 
-### `sdk.go`
-Core interfaces and types:
-- **`Plugin`** — interface: `Init(Registrar) error`, `Close() error`. All plugins implement this.
-- **`Registrar`** — interface passed to `Init`: `RegisterTool(agent.Tool)`, `RegisterHook(agent.ToolHook)`, `RegisterRoute(method, path, http.HandlerFunc)`, `RegisterProvider(name, llm.Provider)`.
-- **`Registration`** — concrete `Registrar` that collects tools/hooks/routes/providers into slices. Created by `InitPlugin(p)` which calls `p.Init(reg)` and returns the populated registration.
-- **`SimpleTool`** — convenience: wraps a `func(ctx, params) (string, error)` as an `agent.Tool`.
+### Core Tools (sent to LLM)
+| Tool | File | Description |
+|------|------|-------------|
+| `shell_exec` | `shellexec.go` | Runs shell commands. Three modes: `allowlist` (default, only whitelisted binaries), `prompt` (asks user for approval via transport), `unrestricted`. Has pending-command approval flow for chat transports. |
+| `file_read` | `fileops.go` | Reads file content. Supports glob patterns and line ranges. |
+| `file_write` | `fileops.go` | Writes content to a file. Creates parent directories. |
+| `file_edit` | `fileops.go` | Applies search-and-replace edits to a file. |
+| `web_search` | `websearch.go` | Searches the web via DuckDuckGo HTML scraping or SearXNG (if configured). |
+| `web_fetch` | `webfetch.go` | Fetches a URL and extracts readable text content (HTML → text conversion). |
+| `search` | `search.go` | Grep-like recursive file/content search. |
+| `use_tool` | `usetool.go` | Meta-tool that proxies calls to extended tools. Lists available extended tools in its description. |
 
-### `openclaw.go`
-`OpenClawPlugin` — adapter that wraps an OpenClaw TS/JS/Python plugin directory behind the `sdk.Plugin` interface. On `Init`, spawns a `skill.PluginProcess` subprocess, then translates its registered tools/hooks/routes/providers into the SDK types (`agent.Tool`, `agent.ToolHook`, `http.HandlerFunc`, `llm.Provider`). Invocations delegate to the subprocess over JSON-line protocol.
+### Extended Tools (behind `use_tool`)
+| Tool | File | Description |
+|------|------|-------------|
+| `browser` | `browser.go` | Playwright-based browser automation. Auto-installs Playwright if needed. Supports navigate, click, type, screenshot, evaluate, select, hover, goBack. |
+| `notebook` | `notebook.go` | JavaScript notebook execution via Bun. |
+| `schedule` | `schedule.go` | Manage automations (list/create/update/delete). |
+| `todo` | `todo.go` | In-memory TODO list management. |
+| `memory` | `memory.go` | Persistent key-value memory (read/write/list/delete). |
 
-Contains adapter types: `openclawTool`, `openclawHook`, `openclawProvider`.
-
-**Usage in serve.go**: `registerSDKPlugins` collects compiled-in Go plugins from `sdkPlugins()` + auto-discovers OpenClaw plugins from the skill registry, wraps them via `NewOpenClawPlugin`, and registers everything through a single path.
+### Skill Management Tools (registered as extended)
+| Tool | File | Description |
+|------|------|-------------|
+| `skill_create_markdown` | `skill_create_markdown.go` | Creates a new Tier 1 SKILL.md. |
+| `skill_edit` | `skill_edit.go` | Edits an existing SKILL.md. |
+| `skill_delete` | `skill_delete.go` | Deletes a skill directory. |
+| `plugin_create` | `plugin_create.go` | Creates a Tier 3 plugin (SKILL.md + Go source). |
+| `plugin_edit` | `plugin_edit.go` | Edits an existing plugin's Go source. |
+| `plugin_delete` | `plugin_delete.go` | Deletes a plugin skill. |
+| `skill_search` | `skill_search.go` | Searches ClawHub for skills. |
 
 ---
 
-## `internal/transport/`
+## `internal/transport/` — Chat Platform Adapters
 
 ### `transport.go`
-**`Transport` interface**: `Start(ctx)`, `Stop(ctx)`, `Send(ctx, OutboundMessage)`, `OnMessage(handler)`, `Name()`
+**`Transport` interface:** `Start(ctx)`, `Send(ctx, OutboundMessage)`, `OnMessage(handler)`, `Name() string`
 
-**`InboundMessage`**: `ID`, `ChannelID`, `UserID`, `Username`, `Text`, `ReplyToID`, `Platform`
-**`OutboundMessage`**: `ChannelID`, `ReplyToID`, `Text`, `Markdown`, `DisplayName`, `AvatarURL`, `AvatarData`
+**`InboundMessage`:** ChannelID, UserID, Text, Attachments (filename + data + mime type)
+
+**`OutboundMessage`:** ChannelID, Text, DisplayName, AvatarURL, AvatarData (base64 data URI for Discord webhooks)
 
 ### `discord.go`
-`DiscordTransport` — wraps `bwmarrin/discordgo` for the gateway connection. discordgo handles heartbeat, resume, and reconnect automatically.
-- `Start` calls `session.Open()` then blocks until context is cancelled
-- Event handlers: `onMessageCreate` (skips bots), `onInteractionCreate` (slash commands → ACK + synthetic InboundMessage)
-- Registers global slash commands via REST on startup (`registerSlashCommands`)
-- Person replies use Discord webhooks (cached per channel in `webhooks map`, managed in `discord_send.go`)
-- Intents: `IntentsGuildMessages | IntentMessageContent`
+Discord gateway bot using discordgo. Listens for `MessageCreate` events, ignores own messages, handles message attachments (images/PDFs → MediaPart). Sends replies via webhooks (for custom display name + avatar) with fallback to regular channel messages. Splits long messages at 2000 chars.
 
 ### `discord_roles.go`
-`DiscordRoleClient` — creates and manages Discord roles for people and tags via REST API. Used at startup to sync roles.
+`DiscordRoleClient` — creates Discord roles for people and tags.
 
 ### `discord_send.go`
-Helpers for sending messages via Discord REST API (regular messages and webhook-based person messages).
-
-### `slack.go`
-`SlackTransport` — Socket Mode WebSocket connection. Uses `xapp-` token to get WebSocket URL, `xoxb-` token to send. Auto-reconnect with exponential backoff (1s → 30s max). Messages > 3000 chars split.
+Webhook-based message sending with display name/avatar override. Creates webhooks per channel on first use, caches them.
 
 ### `telegram.go`
-`TelegramTransport` — supports both long-polling and webhook modes. Long-poll uses 30s timeout. Messages > 4096 chars split.
+Telegram Bot API. Supports long-polling (default) or webhook mode. Sends replies via `sendMessage` with Markdown parse mode. Handles photo/document attachments.
+
+### `slack.go`
+Slack Socket Mode using the Slack API. Listens for `events_api` events (`message` type), sends replies via `chat.postMessage`. Handles file attachments via Slack file download.
 
 ### `http.go`
-`HTTPTransport` — simple REST transport on port `:8081` (separate from API server on `:8080`).
-- `GET /healthz` — health check
-- `POST /v1/chat` — synchronous request/response
+Simple HTTP transport. Exposes POST `/message` endpoint. Used as a universal fallback transport.
 
 ---
 
-## `internal/api/`
+## `internal/api/` — REST API + Web UI
 
 ### `server.go`
-`Server` — HTTP mux with all REST routes registered. Key routes:
-- `GET /api/health` — version, uptime, skills count, provider count
-- `POST /api/chat` — synchronous chat; uses `prepareChatRequest`, supports global sys prompt, model tag, single person
-- `POST /api/chat/stream` — SSE streaming; uses `prepareChatRequest`, supports all of the above plus multi-person fan-out
+HTTP server using Go's `net/http.ServeMux`. Routes:
 
-`prepareChatRequest` — shared helper called by both chat handlers. Resolves: session ID, global system prompt, `@model-id` tag extraction, person/tag mention (`resolvePeople`). Returns `preparedChat` struct.
-- `GET /api/logs` — SSE stream of log broadcaster
-- `GET/POST /api/automations` — CRUD for scheduled automations
-- `POST /api/automations/{id}/trigger` — manual trigger
-- `GET /api/runs/{runID}/stream` — SSE stream of a running automation's agent events
-- `GET /api/skills` — lists all skills with `tier`, `source` ("custom"|"clawhub" based on `_meta.json` presence), `removable`
-- `PUT /api/skills/{name}`, `DELETE /api/skills/{name}`, `POST /api/skills/install` (accepts ClawHub names, GitHub `owner/repo`, or npm package names with ClawHub→npm fallback), `POST /api/skills/create`, `POST /api/skills/create-markdown`
-- `GET/PUT /api/config/keys` — hot-reload provider API keys
-- `GET/POST/PUT/DELETE /api/people` — people management
-- `GET/PUT /api/people/system-prompt` — global system prompt prepended to all people
-- `GET/PUT /api/modes/active`, `PUT/DELETE /api/modes/{name}`
-- `GET/PUT /api/settings/default-model`, `GET/PUT /api/settings/summarization-model`, `GET/PUT /api/settings/execute-fallback`
-- `GET/PUT /api/settings/shell-mode` — shell execution mode (`allowlist`/`prompt`/`allow_all`); validated server-side; takes effect immediately (no restart)
-- `GET/PUT /api/settings/shell-approved` — permanently approved commands list (JSON array); UI can remove individual entries
-- `GET /api/usage`, `GET /api/credits`
-- `POST /api/avatars`, `GET /api/avatars/*` — avatar file upload/serve
-- SPA static files at `/` if `StaticFS` is provided
+**Chat & Sessions:**
+- `POST /api/chat` — send a message, get agent response (supports SSE streaming via `Accept: text/event-stream`)
+- `GET /api/sessions` — list sessions
+- `GET /api/sessions/{id}` — get session details
+- `GET /api/sessions/{id}/messages` — get messages for a session
+- `DELETE /api/sessions/{id}` — delete a session
+- `GET /api/logs/stream` — SSE stream of server logs
 
-Middleware stack (outermost first): `tenantMiddleware` → `rateLimitMiddleware` → `authMiddleware` → mux.
+**Automations:**
+- `GET /api/automations` — list automations
+- `POST /api/automations` — create automation
+- `PUT /api/automations/{id}` — update automation
+- `DELETE /api/automations/{id}` — delete automation
+- `GET /api/automations/{id}/runs` — list runs for an automation
+- `GET /api/automations/runs` — list all recent runs
+- `POST /api/automations/{id}/run` — trigger an automation manually
+
+**Skills:**
+- `GET /api/skills` — list loaded skills
+- `POST /api/skills` — install a skill (from ClawHub, GitHub, or URL)
+
+**People (bot personas):**
+- Full CRUD at `/api/people`, `/api/people/{id}`
+
+**Memory:**
+- `GET /api/memory` — list memory entries
+- `POST /api/memory` — store a memory entry
+- `DELETE /api/memory/{key}` — delete entry
+
+**Config & Settings:**
+- `GET /api/settings/system-prompt` / `PUT` — global system prompt
+- `GET /api/settings/shell-mode` / `PUT` — shell execution mode
+- `GET /api/config-keys` / `PUT` — per-mode API key overrides
+- `GET /api/modes` — list modes
+- `POST /api/modes` — create/update mode
+- `DELETE /api/modes/{name}` — delete mode
+- `GET /api/modes/active` / `PUT` — active mode
+
+**Usage:**
+- `GET /api/usage` — token usage summary (aggregated)
+- `GET /api/credits` — provider credit balance (OpenRouter)
+- `GET /api/models` — list available models
+
+**Static:**
+- `GET /api/avatars/{file}` — serve avatar images
+- `GET /*` — embedded web UI (when built)
 
 ### `middleware.go`
-- `tenantMiddleware` — reads `X-Tenant-ID` header, injects into context (`"default"` if absent)
-- `authMiddleware` — Bearer token check. Skips static assets and `/api/health`
-- `rateLimitMiddleware` — per-IP token-bucket. Lazily evicts stale buckets every 5 minutes (inside the request lock, no background goroutine). Only applies to `/api/` paths.
-- `TenantIDFromContext(ctx)` — extracts tenant ID from context
+- API key authentication (Bearer token, optional)
+- CORS (permissive: all origins, all methods)
+- Rate limiting (per-IP, configurable RPM)
 
-### `automations.go`
-CRUD handlers for automations. `handleAutomationsCreate` / `handleAutomationsUpdate` compute `next_run_at` via `computeNextRun`. `handleAutomationsTrigger` calls `scheduler.Trigger`.
-
-### `config_keys.go`
-`handleConfigKeysPut` — updates provider API keys in config file AND hot-reloads them into the live router via `router.SetProvider`.
-
-### `modes.go`
-Handlers for mode CRUD. Built-in modes (`default`, `chat`, `execute`) cannot be deleted.
-
-### `people.go`
-CRUD for people. On create, syncs Discord role if Discord is configured. On update, diffs against the existing person and only calls Discord API when username or tags actually changed (not on prompt/avatar edits) to avoid unnecessary API calls.
-
-Also contains simple settings handlers: `handleDefaultModelGet/Put`, `handleSummarizationModelGet/Put`, `handleShellModeGet/Put` (validates against `allowlist`/`prompt`/`allow_all`), `handleShellApprovedGet/Put`.
-
-### `skills_create.go`
-`handleSkillsCreate` — creates a Tier 2 native Go skill. Writes `SKILL.md` + `main.go`, compiles, hot-reloads into registries.
-
-`handleSkillsCreateMarkdown` — creates a Tier 1 markdown skill. Writes `SKILL.md` with instructions only (no code). Hot-reloads into skill registry.
-
-`handleSkillGet` — returns a single skill's source (name, description, code, tier).
-
-`handleSkillUpdate` — overwrites a Tier 2 skill's code/description and recompiles.
-
-### `execute_fallback.go`
-Execute key fallback setting. When enabled, registers execute mode's API keys as fallback providers in the router so rate-limited chat keys automatically fall back to execute keys.
-- `handleExecuteFallbackGet/Put` — REST endpoints for the toggle
-- `RestoreExecuteFallback(ctx)` — called at startup to re-apply if previously enabled
-- `reloadExecuteFallback(ctx)` — loads execute mode keys, registers as `execute-anthropic`, `execute-openai`, etc. providers and sets them as router fallbacks
-
-### `usage.go`
-`handleUsage` — returns usage log (token counts, costs) aggregated from `usage_log` table.
-`handleCredits` — calls `CreditFetcher.FetchCredits` on providers that support it.
+### Other API files
+- `automations.go` — CRUD handlers for automations
+- `config_keys.go` — per-mode API key management
+- `modes.go` — mode CRUD + activate
+- `people.go` — people CRUD + avatar upload
+- `skills_create.go` — skill installation handler
+- `execute_fallback.go` — toggles shell mode between allowlist ↔ unrestricted
+- `usage.go` — token usage summary + credit balance
+- `memory_handlers.go` — memory CRUD handlers
 
 ---
 
-## `internal/cron/`
-
-### `scheduler.go`
-`Scheduler` — polls every 30 seconds for due automations. On each tick, queries DB for automations where `next_run_at <= now AND enabled = true`. For each:
-1. Creates a `context.CancelFunc`, stores in `running[runID]`
-2. Runs agent in goroutine with skill-injected system prompt
-3. On completion: updates run record with status/output, schedules next run
-
-Manual trigger via `Trigger(automationID)` sends to `triggerC` channel.
-
-`Subscribe(runID)` — returns a channel of `AgentEvent`s for streaming run progress. Channel is closed when run finishes.
-
-`StopRun(runID)` — cancels a running run.
-
-### `parser.go`
-`Parse(rrule)` — custom minimal RRule parser. Supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL=n`, `BYDAY=MO,WE,FR`, `BYHOUR=0-23`, `BYMINUTE=0-59`.
-
-`Schedule.Next(from)` — computes next occurrence after `from`. For WEEKLY with BYDAY: finds next matching weekday. If `BYHOUR`/`BYMINUTE` are set, overrides the hour/minute of the computed date so automations can fire at a specific time of day.
-
----
-
-## `internal/orchestrator/`
+## `internal/orchestrator/` — Multi-Agent Orchestration
 
 ### `registry.go`
-`AgentConfig` — named agent definition: `id`, `name`, `system_prompt`, `provider`, `model`, `skills`, `tools`, `max_tokens`, `temperature`.
-
-`Registry` — thread-safe map of `AgentConfig` by ID. `List()` returns sorted by ID.
+`AgentRegistry` — stores named agent configurations (currently a placeholder for future multi-agent support).
 
 ### `orchestrator.go`
-`Orchestrator` — creates agents from registry configs, wires skills and tools.
-
-`Dispatch(ctx, agentID, sessionID, messages)` — looks up config, builds `agent.Agent`, runs it. Injects spawn_agent tool for multi-agent delegation.
-
-`buildAgent(cfg, sessionID)` — resolves provider by name from provider map, filters tools by `cfg.Tools` whitelist (if empty, all tools included), injects skill instructions into system prompt.
+`Orchestrator` — coordinates multi-agent workflows. Currently minimal: just spawns agents from the registry.
 
 ### `spawn_tool.go`
-`SpawnAgentTool` — `spawn_agent` tool that lets an agent delegate to a peer agent by ID. Parameters: `{agent_id, task}`. Returns peer's response content.
+`SpawnTool` — agent tool that spawns sub-agents. Allows the primary agent to delegate tasks.
 
 ---
 
-## `internal/log/`
+## `internal/sdk/` — Plugin SDK
+
+### `sdk.go`
+Defines the `Plugin` interface and `Registration` struct. A plugin can register tools, hooks (pre/post tool execution), HTTP routes, and LLM providers.
+
+**`Plugin` interface:** `Name()`, `Init() (*Registration, error)`
+
+**`Registration`:** Tools ([]agent.Tool), Hooks ([]agent.ToolHook), Routes ([]Route), Providers ([]ProviderEntry)
+
+`InitPlugin(p)` calls a plugin's `Init()` and returns its registration.
+
+### `openclaw.go`
+`OpenClawPlugin` — wraps a Tier 3 plugin directory as a Go SDK Plugin. Spawns the plugin process, communicates via stdin/stdout JSON.
+
+---
+
+## `internal/cron/` — Automation Scheduler
+
+### `scheduler.go`
+Polls `ListDueAutomations` every 30 seconds. For each due automation:
+1. Start a run record
+2. Build messages from the automation's prompt (with skill-specific system prompt injection)
+3. Call the agent runner
+4. Record success/failure
+5. Calculate next run time from RRULE
+
+### `parser.go`
+RRULE parser — converts RFC 5545 recurrence rules to next occurrence times. Supports FREQ (MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, YEARLY), INTERVAL, BYDAY, COUNT, UNTIL.
+
+---
+
+## `internal/log/` — Logging
 
 ### `log.go`
-`New(level, pretty)` — creates a `zerolog.Logger`. Pretty = ConsoleWriter with RFC3339 timestamps. Production = JSON to stderr.
-
-`NewWithWriter(level, pretty, w)` — same but to a custom writer (used with broadcaster).
-
-`WithContext(logger, tenantID, sessionID, agentID)` — adds structured fields.
-
-`parseLevel` — string to `zerolog.Level`. Falls back to `InfoLevel` for unknown values.
+Wraps zerolog. `New(level, pretty)` creates a logger. `NewWithWriter(level, pretty, w)` creates one writing to a custom `io.Writer`.
 
 ### `broadcast.go`
-`Broadcaster` — ring buffer (500 entries) + fan-out to subscribers. Implements `io.Writer`.
-
-`Write(p)` — strips ANSI codes, stores in ring, sends to all subscriber channels (non-blocking; drops if slow).
-
-`Recent(n)` — returns last n log lines from ring.
-
-`Subscribe(ctx)` — returns a `chan string` that receives new log lines. Channel is closed when ctx is cancelled.
+`Broadcaster` — fan-out writer. All log output written to it gets forwarded to registered SSE listeners. The web UI connects to `/api/logs/stream` to receive real-time logs.
 
 ---
 
-## `internal/tools/`
-
-All tools implement `agent.Tool`. Each is in its own file.
-
-### `shellexec.go`
-`ShellExecTool` — shell execution with three configurable modes (read from DB at runtime via `modeFunc func() string`):
-- `allowlist` (default) — only commands in the static allowlist run
-- `prompt` — non-allowlisted commands are denied and stored as **pending** for the channel; the LLM asks the user, who replies yes/no in the next message; `makeMessageHandler` intercepts the reply and runs the command directly without re-invoking the LLM
-- `allow_all` — no restrictions
-
-Supports both single command shorthand and batched `commands` array. Each command is `{command, args, cwd, approved, always_allow}`. Timeout defaults to 30s. Only the binary name is checked.
-
-**Two approval scopes in prompt mode**:
-- `approved: true` — approved for current session (process lifetime), stored in `sessionApproved map` (in-memory, thread-safe)
-- `always_allow: true` — approved permanently, stored in `settings` table under key `shell_approved_commands` (JSON array) via `ShellApprovalStore` interface
-
-**Pending approval system** (for stateless transports like Discord/Slack):
-- When a command is denied, `SetPending(channelID, cmd)` stores it in a per-channel map
-- `TakePending(channelID)` removes and returns it (consumed once)
-- `makeMessageHandler` checks for pending before running the agent, handles the yes/no directly
-- Non-approval messages put the pending back via `SetPending` and fall through to normal agent handling
-- `WithSessionID(ctx, id)` / `sessionIDFromCtx(ctx)` — context key used to thread channel ID into tool execution
-
-**Public methods for message handler**: `SetPending`, `TakePending`, `RunCommand`, `ApproveSession`, `ApprovePermanent`, `Mode`.
-
-### `fileops.go`
-- `FileReadTool` — reads text (with optional line range), images (JPEG/PNG/GIF/WEBP as multimodal `Parts`), PDFs (as multimodal `Parts`). Max 1MB text, 32MB PDFs.
-- `FileWriteTool` — writes files; creates parent dirs automatically
-- `FileEditTool` — exact string replacement (old→new). Returns error if old_string not found or found multiple times
-- `GlobTool` — walks filesystem matching glob pattern
-- `GrepTool` — regex search in files with optional pattern/include filters
-
-### `websearch.go`
-`WebSearchTool` — pluggable backends: `brave` (API key required), `searxng` (self-hosted), `duckduckgo` (default, no key). DuckDuckGo uses the Instant Answer API (non-JS compatible).
-
-### `webfetch.go`
-`WebFetchTool` — fetches a URL, strips HTML tags, returns plain text. Respects a max-byte limit.
-
-### `browser.go`
-`BrowserTool` — long-running Node.js subprocess running Playwright. Browser persists across calls (cookies/sessions preserved). Actions: `navigate`, `click`, `type`, `get_text`, `screenshot` (returns base64 PNG as multimodal Part), `evaluate` (JS), `close`.
-
-Auto-installs Playwright helper script to `~/.gostaff/browser/` on first use. If the subprocess crashes, state is reset on the next `send()` error so the following call will restart it cleanly.
-
-### `memory.go`
-`MemoryTool` — persistent key-value store backed by `memory.Store`. Actions: `store`, `recall` (single key or list all), `delete`. Requires store to be non-nil.
-
-### `todo.go`
-`TodoTool` — in-memory (per-process, not persisted) task list. Call with `todos` array to replace list; call without to read. Supports multiple named lists via `list_id`.
-
-### `schedule.go`
-`ScheduleTool` — `time.Sleep` wrapper. Max delay 5 minutes. Used for introducing deliberate delays between actions.
-
-### `notebook.go`
-`NotebookTool` — reads/writes Jupyter notebook cells. Actions: `read`, `write_cell`, `insert_cell`.
-
-### `search.go`
-`SearchTool` — combined glob + grep in one tool for file searching.
-
-### `usetool.go`
-`UseToolTool` (`use_tool`) — meta-tool proxy for extended tools. Takes `{tool, input}` and dispatches to the named extended tool. Description dynamically includes all extended tool names and descriptions.
-
-### `skill_create_markdown.go`
-`SkillCreateMarkdownTool` (`skill_create_markdown`) — extended tool. Creates a Tier 1 markdown skill. Takes `{name, instructions, description?}`. Writes `SKILL.md` with frontmatter + instructions. No code, no compilation. Hot-reloads into skill registry. Shows on Skills page.
-
-### `skill_edit.go`
-`SkillEditMarkdownTool` (`skill_edit`) — extended tool. Updates a Tier 1 markdown skill's `instructions` and/or `description`. Preserves fields not provided. Errors if skill has a `main.go` (use `plugin_edit` for those).
-
-### `skill_delete.go`
-`SkillDeleteMarkdownTool` (`skill_delete`) — extended tool. Removes a Tier 1 markdown skill by name. Errors if the target has a `main.go` (use `plugin_delete` for plugins). Only removes skills inside the managed skills directory.
-
-### `plugin_create.go`
-`SkillCreateTool` (`plugin_create`) — extended tool. Takes `{name, description, code}`. Validates name format (`^[a-z][a-z0-9_-]{0,62}$`), writes Go source to `~/.gostaff/skills/<name>/main.go`, writes `SKILL.md`, compiles via `NativeExecutor`, registers in both skill and tool registries. Plugin is immediately usable. Shows on Plugins page.
-
-### `plugin_edit.go`
-`SkillEditTool` (`plugin_edit`) — extended tool. Edits an existing plugin's instructions, description, or Go source code. Preserves fields not provided. Recompiles if code is updated.
-
-### `plugin_delete.go`
-`SkillDeleteTool` (`plugin_delete`) — extended tool. Removes an installed plugin or skill by name. Only items inside the managed `~/.gostaff/skills/` directory can be deleted. Unregisters from skill registry.
-
-### `skill_search.go`
-`SkillSearchTool` (`skill_search`) — extended tool. Searches the ClawHub catalog via `ClawHubClient.BrowseSkills`. Takes `{query, limit?}`. Returns formatted list of matching skills with name, slug, description, and download count.
-
----
-
-## `internal/updater/`
+## `internal/updater/` — Auto-Update
 
 ### `updater.go`
-`CheckAndUpdate()` — called as goroutine on startup. Rate-limited to once per minute (state stored in `~/.gostaff/update.json`). Does `git fetch origin`, checks commit count, then `git pull --ff-only`.
+`CheckAndUpdate()` — checks GitHub releases for a newer version. If found, downloads the binary, replaces the current one, and prints a message. Runs in a background goroutine at startup.
 
-Opt-in: only runs when `GOSTAFF_AUTOUPDATE` is set. Not appropriate for Docker/Railway deployments where updates happen via image rebuild.
+---
+
+## `web/src/` — React Frontend
+
+React 18 + Vite + Tailwind CSS v4 + React Router v6 + shadcn/ui components.
+
+### Pages
+| Page | Route | Description |
+|------|-------|-------------|
+| DashboardPage | `/` | Server logs (SSE stream), session list, quick stats |
+| ChatPage | `/chat`, `/chat/:id` | Chat interface with streaming responses, session management |
+| AutomationsPage | `/automations` | CRUD for scheduled automations with RRULE builder |
+| SkillsPage | `/skills` | List installed skills, install new ones from ClawHub/GitHub/URL |
+| PluginsPage | `/plugins` | List and manage Tier 3 plugins |
+| PeoplePage | `/people` | CRUD for bot personas (name, prompt, avatar, tags) |
+| MemoryPage | `/memory` | View/edit/delete key-value memory entries |
+| SettingsPage | `/settings` | System prompt, shell mode, API keys, modes, execute fallback |
+| CostsPage | `/costs` | Token usage breakdown by provider/model/mode, credit balance |
+
+### Components
+- **Sidebar** — navigation with icons, collapsible
+- **Calendar** — month view for automation scheduling
+- **DatePicker** — date/time picker using Calendar
+- **Markdown** — renders markdown content (used in chat messages)
+- **PillSwitch** — toggle switch component
+- **SkillPicker** — multi-select for skills (used in automations)
+- **TagPicker** — tag input for people
+- **ui/** — shadcn/ui primitives (badge, button, scroll-area, separator, tooltip)
+
+### `lib/api.ts`
+Fetch wrapper. Base URL from `window.location.origin`. All API calls go through `apiFetch(path, options)`. Functions for every API endpoint.
 
 ---
 
 ## Key Data Flows
 
-### Chat request (API)
-`POST /api/chat` or `/api/chat/stream` → `prepareChatRequest` (resolves session, sys prompt, model tag, person) → single person: `agentWithPrompt`; no person: `defaultAgent`; multi-person (stream only): `streamMultiAgent` → `agent.Run` → ReAct loop → returns `RunResult`
+### Chat request (Web UI)
+1. User types message in ChatPage
+2. `POST /api/chat` with `{session_id, message}` + `Accept: text/event-stream`
+3. API handler calls `runAgent(ctx, sessionID, messages, onEvent)` with SSE event callback
+4. Agent runs ReAct loop → emits thinking/tool_start/tool_end/response events
+5. Events streamed to browser via SSE
+6. Final response displayed in chat
 
-### Transport message (e.g. Discord)
-`DiscordTransport` receives message → `makeMessageHandler` → **pending shell approval check** (if prompt mode and pending exists: handle yes/no directly, skip LLM) → inject channel ID into context → resolve people/channel binding → `runAgentEphemeral` (no store) → send response via transport
-
-**Shell prompt mode on stateless transports**: when `shell_exec` denies a command, it stores the pending command keyed by channel. The user's next message ("yes"/"no") is caught by `makeMessageHandler` before the LLM runs — the approval is handled synchronously and the command is executed or denied immediately.
+### Chat request (Transport — Discord/Telegram/Slack)
+1. Message arrives via gateway/webhook/socket
+2. `makeMessageHandler` checks content filter → resolves @person/@tag mentions → extracts @model tag
+3. Calls `runAgentEphemeral(ctx, systemPrompt, modelID, channelID, messages)`
+4. Agent runs ReAct loop (no streaming, usage-only persistence)
+5. Response sent back via transport
 
 ### Automation run
-`cron.Scheduler` polls → finds due automation → runs `runAgent` with skill-injected prompt → stores result in `automation_runs` → schedules next occurrence
+1. Cron scheduler finds due automations (next_run_at ≤ NOW)
+2. Creates automation_run record with status=running
+3. Builds messages from automation prompt, injects skill instructions if skill_names set
+4. Calls `runAgent(ctx, sessionID, messages, nil)`
+5. Records success/failure + response
+6. Calculates next run from RRULE
 
 ### Skill loading
-`LoadDir` scans dirs → `ParseSkillMD` → detect tier (plugin entry point? main.go?) → register → in `serve.go`: `registerSDKPlugins` initializes compiled-in Go plugins + wraps OpenClaw TS/JS/Python plugins via `sdk.OpenClawPlugin` adapter (all go through `sdk.Plugin` interface); `registerNativeSkills` compiles Go skills and registers as `agent.Tool`. Hot-reload poller (1s) calls `LoadNewSkills()` to detect newly installed skills.
+1. `initSkillRegistry` scans configured directories for `<name>/SKILL.md`
+2. Parser extracts YAML frontmatter + markdown body
+3. Skills registered by name in registry
+4. `BuildSystemPrompt` concatenates base prompt + all skill instructions
+5. Hot-reload goroutine polls for new SKILL.md files every 1s
 
 ### Model routing
-`@modelname` tag in message → extracted, stripped from text → passed as `model` to `runAgent` → `llm.Router.Chat` with `req.Model` set → `ChatWithModel` finds provider by scanning all providers' `Models()` lists
-
-### Skill install (API)
-`POST /api/skills/install` with `{"name": "..."}` → normalize GitHub URLs → if `owner/repo` shorthand: `skill.DownloadGitHub` → else try ClawHub, on 404 fall back to `skill.DownloadNPM` → `skill.ImportSkill` → hot-reload into registry
+1. Request may specify model via `@model-id` tag in message or mode's default model
+2. Router checks if a model is set → finds the provider that owns it
+3. Falls through to primary → fallback providers on retryable errors (429/5xx)
 
 ---
 
-## `web/src/` — React frontend
+## Configuration
 
-Vite + React 18 + Tailwind CSS v4. Embedded in the Go binary via `embed.FS`.
+### `config.yaml` (YAML + env overrides)
+```yaml
+server:
+  addr: ":8080"
+log_level: info
+database:
+  url: postgres://...           # or GOSTAFF_DATABASE_URL
+providers:
+  anthropic:
+    api_key: ""                 # or GOSTAFF_ANTHROPIC_API_KEY
+    model: claude-sonnet-4-6-20250514
+  openai:
+    api_key: ""                 # or GOSTAFF_OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+    model: gpt-4o
+  gemini:
+    api_key: ""                 # or GEMINI_API_KEY / GOOGLE_API_KEY
+    model: gemini-2.0-flash
+  openrouter:
+    api_key: ""                 # or GOSTAFF_OPENROUTER_API_KEY
+    model: anthropic/claude-sonnet-4-5
+agent:
+  max_iterations: 25            # 0 = unlimited
+  context_budget_pct: 0.8
+  max_tool_output_tokens: 4096
+skills:
+  dirs: [~/.gostaff/skills]
+security:
+  api_key: ""                   # bearer token for REST API
+  rate_limit_rpm: 0             # 0 = disabled
+  content_filtering: false
+  session_ttl_days: 0           # 0 = keep forever
+  shell_allowlist: [ls, cat, head, tail, grep, wc, date, echo, pwd]
+transports:
+  telegram: { token: "" }
+  discord: { token: "" }
+  slack: { app_token: "", bot_token: "" }
+```
 
-### Pages
-- **`ChatPage`** — SSE streaming chat with conversation history
-- **`SkillsPage`** — two tabs: "Custom" (user-created T1 markdown skills with inline create/edit) and "ClawHub" (browse/install from ClawHub catalog)
-- **`PluginsPage`** — two tabs: "Custom" (T2 native Go plugins) and "OpenClaw" (T3 external plugins). OpenClaw tab has an install bar styled as `openclaw plugins install [input]` that accepts bare names (npm), `owner/repo` (GitHub), or full GitHub URLs. Success message auto-dismisses after 5s.
-- **`SettingsPage`** — dark mode toggle, execute key fallback toggle, shell command mode dropdown (`allowlist`/`prompt`/`allow all`), permanently approved commands list (shown when mode=prompt; click × to revoke), default/summarization model selects, mode switcher with per-mode API keys
-- **`PeoplePage`** — CRUD for people/personas with avatar upload, tags, prompt editing
-- **`AutomationsPage`** — CRUD for scheduled automations with RRULE, manual trigger, run history. DatePicker supports time-of-day via `BYHOUR`/`BYMINUTE` (e.g. "every day at 9:00 AM")
-- **`DashboardPage`** — health status, recent runs
-- **`CostsPage`** — usage/credits dashboard
-- **`MemoryPage`** — key-value memory store viewer/editor
+### Modes
+Modes are named configurations that override the default model + API keys + behavior:
+- **default** — full tools + extended thinking
+- **chat** — no tools, thinking disabled (fast + cheap)
+- **execute** — same as default but with unrestricted shell
+- Custom modes via API/settings
+
+---
+
+## Database
+
+Postgres 17. Connection via pgx. Migrations embedded in binary.
+
+**Key tables:**
+- `sessions` + `messages` + `tool_executions` — conversation history + audit trail
+- `automations` + `automation_runs` — scheduled agent tasks
+- `people` — bot personas with per-person system prompts
+- `memory` — persistent key-value store for the agent
+- `settings` — global config (system prompt, active mode, shell mode)
+- `modes` — per-mode LLM config (API keys, model, summarization model)
+- `usage_log` — token usage tracking for cost analysis
+- `channel_bindings` / `discord_tag_roles` — Discord-specific routing
+
+---
+
+## Dependencies
+
+**Go (go.mod):**
+- `discordgo` — Discord gateway
+- `pgx/v5` — Postgres driver
+- `zerolog` — structured logging
+- `gorilla/websocket` — WebSocket support
+- `google.golang.org/genai` — Gemini SDK
+- `gopkg.in/yaml.v3` — YAML parsing
+- `google/uuid` — UUID generation
+
+**Frontend (package.json):**
+- React 18, React Router v6
+- Vite + @vitejs/plugin-react
+- Tailwind CSS v4 (via @tailwindcss/vite)
+- shadcn/ui components (radix-ui primitives)
+- react-markdown + remark-gfm + rehype-highlight
+- zod (schema validation)
+
+---
+
+## How to Add a New Feature
+
+### Add a new built-in tool
+1. Create `internal/tools/mytool.go` implementing `agent.Tool` interface
+2. Register in `initToolRegistry` in `cmd/gostaff/serve.go` — use `Register` for core (sent to LLM) or `RegisterExtended` for behind-use_tool
+3. Add API endpoint if the tool needs web UI access
+
+### Add a new API endpoint
+1. Add handler in `internal/api/` (create new file or add to existing)
+2. Register route in `server.go`'s `New()` constructor
+3. Add corresponding fetch function in `web/src/lib/api.ts`
+4. Add UI in the appropriate page component
+
+### Add a new transport
+1. Create `internal/transport/mytransport.go` implementing `Transport` interface
+2. Add config type to `internal/config/config.go` under `TransportsConfig`
+3. Wire in `cmd/gostaff/serve.go` (section 10)
+
+### Add a new LLM provider
+1. Create `internal/llm/myprovider.go` implementing `Provider` interface
+2. Add config type to `internal/config/config.go` under `ProvidersConfig`
+3. Add env override in `applyEnvOverrides`
+4. Wire in `initRouter` in `cmd/gostaff/serve.go`
+5. Add models to token pricing table in `agent.go`
+
+### Add a new web page
+1. Create `web/src/pages/MyPage.tsx`
+2. Add route in `web/src/App.tsx`
+3. Add nav link in `web/src/components/Sidebar.tsx`
+4. Add API functions in `web/src/lib/api.ts`
