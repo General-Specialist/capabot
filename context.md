@@ -38,12 +38,13 @@ User ──► Transport (Discord/Telegram/Slack/HTTP)
 ```
 capabot/
 ├── cmd/gostaff/          # CLI entry point
-│   ├── main.go           # Command dispatch (serve, chat, dev, skill, agent, config, migrate)
+│   ├── main.go           # Command dispatch (serve, chat, dev, skill, config, migrate)
 │   ├── serve.go          # Main server startup — wires ALL subsystems together
+│   ├── init.go           # Subsystem setup (store, router, tools, skills, plugins)
+│   ├── transport_handler.go # Message routing logic
 │   ├── chat.go           # Interactive CLI chat session
 │   ├── dev.go            # Skill hot-reload watcher
-│   ├── skill_cmds.go     # skill lint/import/create/init/install/search commands
-│   ├── agent_cmds.go     # agent list (placeholder)
+│   ├── skill_cmds.go     # skill lint/import/init/install/search commands
 │   ├── config_cmds.go    # config set <key> <value>
 │   ├── helpers.go        # loadOrDefault config helper
 │   └── migrate.go        # Database migration runner
@@ -55,7 +56,6 @@ capabot/
 │   ├── tools/            # Built-in tools (shell, files, browser, web, memory, skills...)
 │   ├── transport/        # Chat platform adapters (Discord, Telegram, Slack, HTTP)
 │   ├── api/              # REST API + web UI server
-│   ├── orchestrator/     # Multi-agent orchestration (spawn_tool)
 │   ├── sdk/              # Go SDK for compiled-in plugins + OpenClaw adapter
 │   ├── cron/             # Automation scheduler (RRULE-based)
 │   ├── log/              # Zerolog logger + SSE broadcaster for web UI
@@ -82,38 +82,47 @@ capabot/
 ### `main.go`
 Top-level command dispatch using `os.Args` + `flag.FlagSet` per subcommand. On startup, fires `updater.CheckAndUpdate()` in a background goroutine.
 
-**Commands:** `serve`, `chat`, `dev`, `skill {lint,import,create,init,install,search}`, `agent list`, `config set`, `migrate`
+**Commands:** `serve`, `chat`, `dev`, `skill {lint,import,init,install,search}`, `config set`, `migrate`
 
-### `serve.go` (~1160 lines — the wiring layer)
-This is the most important file. It boots every subsystem in order:
+### `serve.go` (~375 lines — boot sequence only)
+Boots every subsystem in order and blocks until shutdown. Calls into `init.go` and `transport_handler.go`; contains no business logic itself.
 
 1. Load config (YAML + env overrides)
 2. Create logger with SSE broadcaster for web UI log streaming
 3. Signal handling (SIGINT/SIGTERM → graceful shutdown)
-4. Open Postgres pool + run migrations → `memory.Store`
-5. Initialize LLM providers → `llm.Router` (primary + fallback chain)
-6. Register built-in tools → `agent.Registry` (core tools sent to LLM, extended tools behind `use_tool`)
-7. Load skill registry from disk directories → inject skill instructions into system prompt
-8. Register SDK plugins (compiled Go + OpenClaw TS/JS adapters)
-9. Register native Go skills (Tier 2) as callable tools
-10. Register skill management tools (create/edit/delete skills via the agent)
-11. Start skill hot-reload goroutine (polls every 1s for new SKILL.md files)
-12. Build agent runner functions: `runAgent`, `runAgentWithPrompt`, `runAgentEphemeral`
-13. Start cron scheduler for automations
-14. Start API server (REST + embedded web UI)
+4. `initStore` → open Postgres pool + run migrations
+5. `initRouter` → LLM providers + Router
+6. `initToolRegistry` → built-in tools
+7. `initSkillRegistry` → load skills from disk
+8. `registerSDKPlugins` → compiled Go + OpenClaw adapters
+9. `registerNativeSkills` → Tier 2 Go skills as callable tools
+10. Register skill management tools + start hot-reload goroutine
+11. Build `runAgent` closure (mode resolution, plugin hooks, store wiring)
+12. `transport.SyncPeopleRoles` → create Discord roles at startup
+13. Start API server (REST + embedded web UI)
+14. `makeMessageHandler` → wire transport message handling
 15. Start transport adapters (Discord, Telegram, Slack, HTTP)
 16. Block until shutdown
 
-**Key functions defined in serve.go:**
+### `init.go` (~260 lines — subsystem setup)
+All `init*` and `register*` functions extracted from serve.go:
 - `initStore(ctx, dbURL)` → opens Postgres, runs migrations
 - `initRouter(ctx, cfg)` → creates providers from config, returns Router
 - `initToolRegistry(cfg, store)` → registers all built-in tools
 - `initSkillRegistry(cfg)` → loads SKILL.md files from disk
 - `registerNativeSkills(...)` → compiles and registers Tier 2 Go skills
 - `registerSDKPlugins(...)` → initializes compiled-in + OpenClaw plugins
-- `makeMessageHandler(...)` → factory for transport message handling (content filter, @person routing, @model routing, shell approval flow)
-- `resolveMode(ctx)` → returns tool registry + thinking flag based on active mode
-- `resolvePeople(ctx, store, text)` → parses @username/@tag mentions
+- `nativeAgentTool` adapter type (bridges `skill.NativeTool` → `agent.Tool`)
+
+### `transport_handler.go` (~425 lines — message routing)
+All transport message handling logic:
+- `makeMessageHandler(...)` → factory for transport message handling (content filter, shell approval flow, @person routing, @model routing, channel binding)
+- `resolvePeople(ctx, store, text)` → parses @username/@tag/Discord role mentions
+- `extractModelTag(text, router)` → strips @model-id tag from message
+- `isApprovalResponse(text)` → yes/no shell command approval detection
+- `handleDefaultRoleCmd(...)` → `/default_role` command
+- `handleModeCmd(...)` → `/chat`, `/execute`, `/mode` commands
+- `checkContent(filter, text)` → content filter wrapper
 
 ### `chat.go`
 Standalone CLI chat. Loads config, initializes router + tools, creates a default agent, then runs an interactive `bufio.Scanner` loop. No Postgres needed.
@@ -125,15 +134,11 @@ Skill hot-reload watcher. Polls skill directories every 2s, diffs SKILL.md file 
 Implements all `gostaff skill` subcommands:
 - **lint**: Validates SKILL.md files
 - **import**: Copies a skill directory + runs the importer (tool mapping, tier detection)
-- **create**: Scaffolds a SKILL.md template
-- **init**: Like create but supports `--plugin` for Tier 3 TS plugin template
+- **init**: Scaffolds a SKILL.md template; supports `--plugin` for Tier 3 TS plugin template
 - **install**: Downloads from ClawHub registry, GitHub shorthand (`owner/repo`), or direct URL (zip/tar.gz)
 - **search**: Queries ClawHub for matching skills
 
 Also contains archive extraction (zip, tar.gz) with path-traversal protection.
-
-### `agent_cmds.go`
-Placeholder — just prints "no agents configured".
 
 ### `config_cmds.go`
 `gostaff config set <key> <value>` — updates a dot-path key in the YAML config file. Supported keys are allowlisted in `supportedKeys` map.
@@ -405,6 +410,10 @@ Discord gateway bot using discordgo. Listens for `MessageCreate` events, ignores
 ### `discord_roles.go`
 `DiscordRoleClient` — creates Discord roles for people and tags.
 
+### `discord_setup.go`
+- `SyncPeopleRoles(ctx, client, store, logger)` — creates Discord roles for all people/tags at startup (called from serve.go)
+- `AvatarToDataURI(avatarURL)` — reads local avatar files and converts to base64 data URI for Discord webhook avatar field
+
 ### `discord_send.go`
 Webhook-based message sending with display name/avatar override. Creates webhooks per channel on first use, caches them.
 
@@ -485,19 +494,6 @@ HTTP server using Go's `net/http.ServeMux`. Routes:
 - `execute_fallback.go` — toggles shell mode between allowlist ↔ unrestricted
 - `usage.go` — token usage summary + credit balance
 - `memory_handlers.go` — memory CRUD handlers
-
----
-
-## `internal/orchestrator/` — Multi-Agent Orchestration
-
-### `registry.go`
-`AgentRegistry` — stores named agent configurations (currently a placeholder for future multi-agent support).
-
-### `orchestrator.go`
-`Orchestrator` — coordinates multi-agent workflows. Currently minimal: just spawns agents from the registry.
-
-### `spawn_tool.go`
-`SpawnTool` — agent tool that spawns sub-agents. Allows the primary agent to delegate tasks.
 
 ---
 
