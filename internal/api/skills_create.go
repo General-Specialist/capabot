@@ -406,6 +406,43 @@ func (s *Server) handleSkillsUninstall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"success": true, "name": name})
 }
 
+// handleSkillConfigGet returns the stored config.json for a plugin skill.
+func (s *Server) handleSkillConfigGet(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	path, ok := s.skillReg.SkillPath(name)
+	if !ok {
+		writeError(w, "skill not found", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(path, "config.json"))
+	if err != nil {
+		writeJSON(w, map[string]any{})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data) //nolint:errcheck
+}
+
+// handleSkillConfigSet writes config.json for a plugin skill.
+func (s *Server) handleSkillConfigSet(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	path, ok := s.skillReg.SkillPath(name)
+	if !ok {
+		writeError(w, "skill not found", http.StatusNotFound)
+		return
+	}
+	var config json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		writeError(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(path, "config.json"), config, 0o644); err != nil {
+		writeError(w, fmt.Sprintf("writing config: %v", err), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"success": true})
+}
+
 func buildSkillMD(name, description string, parameters json.RawMessage) string {
 	var sb strings.Builder
 	sb.WriteString("---\n")

@@ -85,7 +85,7 @@ Top-level command dispatch using `os.Args` + `flag.FlagSet` per subcommand. Decl
 
 **Commands:** `serve`, `chat`, `dev`, `skill {lint,import,init,install,search}`, `config set`, `migrate`, `update`, `version`
 
-### `serve.go` (~375 lines -- boot sequence only)
+### `serve.go` (~388 lines -- boot sequence only)
 Boots every subsystem in order and blocks until shutdown:
 
 1. Load config (YAML + env overrides)
@@ -95,29 +95,30 @@ Boots every subsystem in order and blocks until shutdown:
 5. `initRouter` -> LLM providers + Router
 6. `initToolRegistry` -> built-in tools
 7. `initSkillRegistry` -> load skills from disk
-8. `registerSDKPlugins` -> compiled Go + OpenClaw adapters
+8. `registerSDKPlugins` -> compiled Go + OpenClaw adapters (collects tools, hooks, routes, providers, channels, memory prompt builders)
 9. `registerNativeSkills` -> Tier 2 Go skills as callable tools
 10. Register skill management tools + start hot-reload goroutine
-11. Build `runAgent` closure (mode resolution, plugin hooks, store wiring)
+11. Build `runAgent` closure (mode resolution, plugin hooks, store wiring, memory prompt section injection before each run)
 12. `transport.SyncPeopleRoles` -> create Discord roles at startup
 13. Start API server (REST + embedded web UI)
 14. `makeMessageHandler` -> wire transport message handling
 15. Start transport adapters (Discord, Telegram, Slack, HTTP)
 16. Block until shutdown
 
-### `init.go` (~260 lines -- subsystem setup)
+### `init.go` (~280 lines -- subsystem setup)
 All `init*` and `register*` functions extracted from serve.go:
 - `initStore(ctx, dbURL)` -> opens Postgres, runs migrations
 - `initRouter(ctx, cfg)` -> creates providers from config, returns Router
 - `initToolRegistry(cfg, store)` -> registers all built-in tools
 - `initSkillRegistry(cfg)` -> loads SKILL.md files from disk
 - `registerNativeSkills(...)` -> compiles and registers Tier 2 Go skills
-- `registerSDKPlugins(...)` -> initializes compiled-in + OpenClaw plugins
+- `registerSDKPlugins(...)` -> initializes compiled-in + OpenClaw plugins, collects tools/hooks/routes/providers/channels/memory-prompt-builders into combined Registration
 - `nativeAgentTool` adapter type (bridges `skill.NativeTool` -> `agent.Tool`)
 
-### `transport_handler.go` (~425 lines -- message routing)
+### `transport_handler.go` (~440 lines -- message routing)
 All transport message handling logic:
-- `makeMessageHandler(...)` -> factory for transport message handling (content filter, shell approval flow, @person routing, @model routing, channel binding)
+- `makeMessageHandler(...)` -> factory for transport message handling (content filter, shell approval flow, @person routing, @model routing, channel config)
+- Loads full `ChannelConfig` per channel: applies per-channel system prompt (replaces global), model override, and memory isolation (`isolated:<channel_id>` session key)
 - `resolvePeople(ctx, store, text)` -> parses @username/@tag/Discord role mentions
 - `extractModelTag(text, router)` -> strips @model-id tag from message
 - `isApprovalResponse(text)` -> yes/no shell command approval detection
@@ -284,7 +285,7 @@ Consolidated schema (source of truth for DB structure). Tables:
 - **people** -- name, prompt, username, avatar_url, avatar_position, tags (TEXT[]), discord_role_id
 - **discord_tag_roles** -- tag -> role_id mapping
 - **settings** -- key/value store (active_mode, system_prompt, shell_mode, etc.)
-- **channel_bindings** -- channel_id -> tag (auto-routes Discord channels to people/tags)
+- **channel_bindings** -- channel_id -> tag, system_prompt, skill_names (TEXT[]), model, memory_isolated (per-channel config for routing, prompt override, model override, memory isolation)
 - **modes** -- name -> keys JSON (per-mode LLM provider overrides + model selection)
 - **usage_log** -- provider, model, mode, input/output tokens, created_at
 
@@ -298,7 +299,7 @@ Repository-pattern access to all tables. Key method groups:
 - **People**: CRUD + query by name/username/tag/discord_role_id
 - **Settings**: Get/Set generic key-value + convenience wrappers (system prompt, active mode)
 - **Discord Tag Roles**: Upsert/Get/Delete/List
-- **Channel Bindings**: Get/Set/Delete
+- **Channel Config**: GetChannelConfig/SetChannelConfig/ListChannelConfigs + legacy Get/Set/DeleteChannelBinding. `ChannelConfig` struct: channel_id, tag, system_prompt, skill_names, model, memory_isolated
 - **Modes**: Get/Set/Delete/List + GetActiveMode/SetActiveMode
 - **Usage**: SaveUsage + GetUsageSummary (aggregated by provider/model/mode)
 
@@ -335,11 +336,16 @@ Imports skills from external sources. Handles tier detection (looks for `index.t
 ### `lint.go`
 Validates SKILL.md files: checks frontmatter presence, required fields (name, description), version format, body length. Returns a `LintReport`.
 
-### `plugin.go` (~513 lines) / `plugin_tool.go`
+### `plugin.go` (~748 lines) / `plugin_tool.go`
 Tier 3 plugin executor. Spawns a subprocess (`bun run index.ts`, `node index.js`, or `python3 index.py`), communicates via JSON-line protocol:
-- **Upstream (plugin -> host):** `register_tool`, `register_hook`, `register_http_route`, `register_provider`, `ready`, `error`
-- **Downstream (host -> plugin):** `invoke`, `hook`, `http`, `chat`, `shutdown`
+- **Upstream (plugin -> host):** `register_tool`, `register_hook`, `register_http_route`, `register_provider`, `register_config_schema`, `register_channel`, `register_capability`, `register_memory_prompt_section`, `ready`, `error`, `chunk` (streaming delta), `done` (streaming complete)
+- **Downstream (host -> plugin):** `invoke`, `hook`, `http`, `chat`, `stream`, `capability_invoke`, `memory_prompt`, `shutdown`
 - 10-second init timeout; all registrations must complete before "ready"
+- Streaming support: `sendAndStream()` / `InvokeChatStream()` use a separate `streams` map for multi-message channels; `readLoop` forwards `chunk` messages without closing, closes on `done`
+- Plugin-level config schema captured during init via `ConfigSchema()` accessor
+- Channel configs captured during init via `Channels()` accessor — `RegisteredChannel` struct with id, tag, system_prompt, skill_names, model, memory_isolated
+- Capabilities captured during init via `Capabilities()` accessor — `RegisteredCapability` struct with kind, name, meta. Unified type for speech, image gen, media understanding, context engines, and interactive handlers.
+- Memory prompt sections captured via `MemoryPromptSections()` accessor — `RegisteredMemoryPrompt` struct with name. Invoked before each agent run via `InvokeMemoryPrompt()`.
 
 ### `native.go` / `native_tool.go`
 Tier 2 native Go skill executor. Compiles Go source to a plugin at startup, loads it, and calls the exported `Run` function.
@@ -357,8 +363,8 @@ GitHub archive downloader for `owner/repo[@ref]` skill installation.
 ### `npm.go`
 NPM package resolver for skill dependencies.
 
-### `shim/host.mjs` (~425 lines)
-JavaScript host for Tier 3 subprocess plugins. Provides OpenClaw-compatible `api` object to plugins. Maps between OpenClaw event names and GoStaff's hook system.
+### `shim/host.mjs` (~651 lines)
+JavaScript host for Tier 3 subprocess plugins. Provides OpenClaw-compatible `api` object to plugins. All 17 OpenClaw `register*` methods are implemented. Maps between OpenClaw event names and GoStaff's hook system. Handles `stream` requests (tries `streamChat()` then falls back to `chat()`). Loads `config.json` from plugin dir into `api.config`/`api.pluginConfig` before `register()`. Sends `register_config_schema` from `definePluginEntry` metadata. Capability registrations (speech, image gen, media understanding, context engines, interactive handlers) stored in `capabilityHandlers` map and dispatched via `capability_invoke` messages. Memory prompt sections stored in `memoryPromptHandlers` and dispatched via `memory_prompt` messages.
 
 ### `shim/openclaw-sdk/`
 Embedded SDK stubs so OpenClaw plugins can `import` from `openclaw/plugin-sdk` without installing anything. Contains `core.mjs` (utility stubs) and `plugin-entry.mjs` (factory pattern adapter).
@@ -438,8 +444,8 @@ Simple HTTP transport. Exposes POST `/message` endpoint. Used as a universal fal
 
 ## `internal/api/` -- REST API + Web UI
 
-### `server.go` (~964 lines)
-HTTP server using Go's `net/http.ServeMux`. 53 endpoints:
+### `server.go` (~337 lines)
+HTTP server using Go's `net/http.ServeMux`. Route registration only + a few small handlers (`handleHealth`, `handleSkills`, `handleProviders`, `handleLogs`) and shared helpers (`sendSSE`, `writeJSON`, `writeError`, `spaHandler`). 53 endpoints:
 
 **Chat & Conversations:**
 - `POST /api/chat` -- send a message, get agent response
@@ -454,6 +460,11 @@ HTTP server using Go's `net/http.ServeMux`. 53 endpoints:
 - `POST /api/skills/create` -- create Tier 3 plugin
 - `POST /api/skills/create-markdown` -- create Tier 1 skill
 - `GET/PUT/DELETE /api/skills/{name}` -- skill CRUD
+- `GET/PUT /api/skills/{name}/config` -- plugin config get/set (stored as `config.json` in skill dir)
+
+**Channels:**
+- `GET /api/channels` -- list all channel configs
+- `GET/PUT/DELETE /api/channels/{id}` -- channel config CRUD (system_prompt, skill_names, model, memory_isolated, tag)
 
 **Automations:**
 - `GET/POST /api/automations` -- list/create automations
@@ -505,12 +516,15 @@ HTTP server using Go's `net/http.ServeMux`. 53 endpoints:
 - Rate limiting (per-IP, configurable RPM)
 
 ### Other API files
+- `channels.go` -- channel config CRUD (list, get, set, delete)
+- `handlers_chat.go` -- chat + streaming handlers, persona resolution, session helpers
+- `handlers_conversations.go` -- conversation list/get handlers
 - `automations.go` -- CRUD handlers for automations
 - `config_keys.go` -- per-mode API key management
 - `modes.go` -- mode CRUD + activate
-- `people.go` -- people CRUD + avatar upload
-- `skills_create.go` -- skill installation/creation handlers
-- `execute_fallback.go` -- toggles shell mode
+- `people.go` -- people CRUD, avatar upload, shell-mode/shell-approved settings
+- `skills_create.go` -- skill installation, catalog browse, create/update/delete/uninstall, plugin config get/set
+- `execute_fallback.go` -- execute fallback toggle + reload logic
 - `usage.go` -- token usage summary + credit balance
 - `memory_handlers.go` -- memory CRUD handlers
 
@@ -519,20 +533,22 @@ HTTP server using Go's `net/http.ServeMux`. 53 endpoints:
 ## `internal/sdk/` -- Plugin SDK
 
 ### `sdk.go`
-Defines the `Plugin` interface and `Registration` struct. A plugin can register tools, hooks (pre/post tool execution), HTTP routes, and LLM providers.
+Defines the `Plugin` interface, `Registration` struct, and `MemoryPromptBuilder` interface. A plugin can register tools, hooks (pre/post tool execution), HTTP routes, LLM providers, and memory prompt builders.
 
 **`Plugin` interface:** `Name()`, `Init() (*Registration, error)`
 
-**`Registration`:** Tools ([]agent.Tool), Hooks ([]agent.ToolHook), Routes ([]Route), Providers ([]ProviderEntry)
+**`Registration`:** Tools ([]agent.Tool), Hooks ([]agent.ToolHook), Routes ([]Route), Providers ([]ProviderEntry), Channels ([]ChannelConfig), MemoryPromptBuilders ([]MemoryPromptBuilder)
 
-### `openclaw.go` (~214 lines)
-`OpenClawPlugin` -- wraps a Tier 3 plugin directory as a Go SDK Plugin. Spawns the plugin process, communicates via stdin/stdout JSON.
+**`MemoryPromptBuilder` interface:** `Name() string`, `Build(ctx, sessionID) (string, error)` — called before each agent run to inject dynamic context into the system prompt.
 
-**Supported OpenClaw features:** registerTool, registerCommand (as tools with `cmd_` prefix), registerHook (pre/post tool use), registerHttpRoute, registerProvider, registerService, registerWebSearchProvider (as regular tool).
+### `openclaw.go` (~369 lines)
+`OpenClawPlugin` -- wraps a Tier 3 plugin directory as a Go SDK Plugin. Spawns the plugin process, communicates via stdin/stdout JSON. All 17 OpenClaw `register*` methods are fully supported.
 
-**Unsupported (no-ops):** registerChannel, registerGatewayMethod, registerCli, registerSpeechProvider, registerMediaUnderstandingProvider, registerImageGenerationProvider, registerInteractiveHandler, registerContextEngine, registerMemoryPromptSection.
+**Core registrations:** registerTool, registerCommand (as tools with `cmd_` prefix), registerHook (pre/post tool use), registerHttpRoute, registerProvider (with streaming via `streamChat`), registerService, registerWebSearchProvider (as regular tool), registerChannel (per-channel config persisted to DB), configSchema (persisted to `_config_schema.json`), plugin config (loaded from `config.json` in skill dir).
 
-**Limitation:** Provider `Stream()` returns error -- plugins only support request-response chat, not streaming.
+**Capability registrations** (unified via `RegisteredCapability` → agent tools): registerSpeechProvider → `{name}_tts`/`{name}_stt` tools, registerImageGenerationProvider → `generate_image_{name}` tool, registerMediaUnderstandingProvider → `analyze_media_{name}` tool, registerContextEngine → `context_{name}` tool, registerInteractiveHandler → `interactive_{name}` tool.
+
+**Other registrations:** registerGatewayMethod (delegates to registerHttpRoute), registerCli (surfaced as `cli_` tools), registerMemoryPromptSection (pre-run system prompt injection via `MemoryPromptBuilder`).
 
 ---
 

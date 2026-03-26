@@ -40,6 +40,8 @@ export interface Skill {
   removable: boolean
   tier: number // 1=prompt-only, 2=native Go, 3=plugin
   source: 'custom' | 'clawhub'
+  config_schema?: Record<string, unknown>
+  has_config?: boolean
 }
 
 export interface CatalogSkill {
@@ -283,6 +285,9 @@ export const api = {
   skillGet: (name: string) => get<{ name: string; description: string; code: string; tier: number }>(`/skills/${name}`),
   skillUpdate: (name: string, data: { description?: string; code?: string }) =>
     put<{ success: boolean; name: string }>(`/skills/${name}`, data),
+  skillConfigGet: (name: string) => get<Record<string, unknown>>(`/skills/${encodeURIComponent(name)}/config`),
+  skillConfigSet: (name: string, config: Record<string, unknown>) =>
+    put<{ success: boolean }>(`/skills/${encodeURIComponent(name)}/config`, config),
   configKeys: () => get<ProviderKeys>('/config/keys'),
   configKeysSave: async (keys: ProviderKeys) => {
     const res = await fetch(BASE + '/config/keys', {

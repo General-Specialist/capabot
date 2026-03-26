@@ -111,6 +111,12 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
 	s.mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)
 	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
+	s.mux.HandleFunc("GET /api/skills/{name}/config", s.handleSkillConfigGet)
+	s.mux.HandleFunc("PUT /api/skills/{name}/config", s.handleSkillConfigSet)
+	s.mux.HandleFunc("GET /api/channels", s.handleChannelsList)
+	s.mux.HandleFunc("GET /api/channels/{id}", s.handleChannelGet)
+	s.mux.HandleFunc("PUT /api/channels/{id}", s.handleChannelSet)
+	s.mux.HandleFunc("DELETE /api/channels/{id}", s.handleChannelDelete)
 	s.mux.HandleFunc("GET /api/providers", s.handleProviders)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 	s.mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -199,13 +205,15 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	all := s.skillReg.List()
 	type skillDTO struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		Version      string `json:"version"`
-		Instructions string `json:"instructions"`
-		Removable    bool   `json:"removable"`
-		Tier         int    `json:"tier"`    // 1=prompt-only, 2=native Go, 3=plugin (TS/JS/Python)
-		Source       string `json:"source"` // "custom" or "clawhub"
+		Name         string          `json:"name"`
+		Description  string          `json:"description"`
+		Version      string          `json:"version"`
+		Instructions string          `json:"instructions"`
+		Removable    bool            `json:"removable"`
+		Tier         int             `json:"tier"`    // 1=prompt-only, 2=native Go, 3=plugin (TS/JS/Python)
+		Source       string          `json:"source"` // "custom" or "clawhub"
+		ConfigSchema json.RawMessage `json:"config_schema,omitempty"`
+		HasConfig    bool            `json:"has_config"`
 	}
 	out := make([]skillDTO, len(all))
 	for i, sk := range all {
@@ -224,6 +232,18 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 				source = "clawhub"
 			}
 		}
+		// Load config schema and check for config.json (tier 3 plugins only).
+		var configSchema json.RawMessage
+		hasConfig := false
+		if tier == 3 && hasPath {
+			if data, err := os.ReadFile(filepath.Join(path, "_config_schema.json")); err == nil {
+				configSchema = data
+			}
+			if _, err := os.Stat(filepath.Join(path, "config.json")); err == nil {
+				hasConfig = true
+			}
+		}
+
 		out[i] = skillDTO{
 			Name:         name,
 			Description:  sk.Manifest.Description,
@@ -232,6 +252,8 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			Removable:    removable,
 			Tier:         tier,
 			Source:       source,
+			ConfigSchema: configSchema,
+			HasConfig:    hasConfig,
 		}
 	}
 	writeJSON(w, out)

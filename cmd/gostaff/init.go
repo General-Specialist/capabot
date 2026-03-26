@@ -208,7 +208,7 @@ func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg
 // registerSDKPlugins initializes all Go SDK plugins (compiled-in + OpenClaw
 // adapters for installed TS/JS/Python plugins) and registers their tools,
 // hooks, routes, and providers.
-func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, logger zerolog.Logger) *gosdk.Registration {
+func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, store *memory.Store, logger zerolog.Logger) *gosdk.Registration {
 	combined := &gosdk.Registration{}
 
 	// Collect all plugins: compiled-in Go plugins + OpenClaw adapters
@@ -244,6 +244,27 @@ func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, route
 			router.SetProvider(pe.Name, pe.Provider)
 			logger.Info().Str("provider", pe.Name).Msg("SDK plugin provider registered")
 		}
+
+		// Persist channel configs declared by the plugin.
+		if store != nil {
+			for _, ch := range reg.Channels {
+				cfg := memory.ChannelConfig{
+					ChannelID:      ch.ID,
+					Tag:            ch.Tag,
+					SystemPrompt:   ch.SystemPrompt,
+					SkillNames:     ch.SkillNames,
+					Model:          ch.Model,
+					MemoryIsolated: ch.MemoryIsolated,
+				}
+				if err := store.SetChannelConfig(context.Background(), cfg); err != nil {
+					logger.Error().Err(err).Str("channel", ch.ID).Msg("failed to persist channel config from plugin")
+				} else {
+					logger.Info().Str("channel", ch.ID).Msg("plugin channel config persisted")
+				}
+			}
+		}
+		combined.Channels = append(combined.Channels, reg.Channels...)
+		combined.MemoryPromptBuilders = append(combined.MemoryPromptBuilders, reg.MemoryPromptBuilders...)
 	}
 
 	return combined

@@ -328,30 +328,50 @@ func makeMessageHandler(
 			// Detect @PersonName or @tag mention at the start of the message.
 			text, people := resolvePeople(msgCtx, store, msg.Text, logger)
 
+			// Load per-channel configuration (includes binding, system prompt, model, etc.)
+			var chanCfg *memory.ChannelConfig
+			if store != nil {
+				chanCfg, _ = store.GetChannelConfig(msgCtx, msg.ChannelID)
+			}
+
 			// If no @mention, check for channel binding (auto-route to bound tag or person).
-			if len(people) == 0 && store != nil {
-				if binding, _ := store.GetChannelBinding(msgCtx, msg.ChannelID); binding != "" {
-					if strings.HasPrefix(binding, "persona:") {
-						username := strings.TrimPrefix(binding, "persona:")
-						if p, err := store.GetPersonByUsername(msgCtx, username); err == nil {
-							people = []memory.Person{p}
-							logger.Info().Str("channel", msg.ChannelID).Str("person", username).Msg("channel binding auto-routed to person")
-						}
-					} else {
-						if tagged, err := store.GetPeopleByTag(msgCtx, binding); err == nil && len(tagged) > 0 {
-							people = tagged
-							logger.Info().Str("channel", msg.ChannelID).Str("tag", binding).Int("count", len(tagged)).Msg("channel binding auto-routed to tag")
-						}
+			if len(people) == 0 && chanCfg != nil && chanCfg.Tag != "" {
+				if strings.HasPrefix(chanCfg.Tag, "persona:") {
+					username := strings.TrimPrefix(chanCfg.Tag, "persona:")
+					if p, err := store.GetPersonByUsername(msgCtx, username); err == nil {
+						people = []memory.Person{p}
+						logger.Info().Str("channel", msg.ChannelID).Str("person", username).Msg("channel binding auto-routed to person")
+					}
+				} else {
+					if tagged, err := store.GetPeopleByTag(msgCtx, chanCfg.Tag); err == nil && len(tagged) > 0 {
+						people = tagged
+						logger.Info().Str("channel", msg.ChannelID).Str("tag", chanCfg.Tag).Int("count", len(tagged)).Msg("channel binding auto-routed to tag")
 					}
 				}
 			}
 			messages := []llm.ChatMessage{{Role: "user", Content: text}}
+
+			// Apply per-channel model override (if no @model tag was used).
+			if modelID == "" && chanCfg != nil && chanCfg.Model != "" {
+				modelID = chanCfg.Model
+			}
+
+			// Determine session channel key — isolate memory per channel if configured.
+			sessionChannel := msg.ChannelID
+			if chanCfg != nil && chanCfg.MemoryIsolated {
+				sessionChannel = "isolated:" + msg.ChannelID
+			}
 
 			// Attach channel ID to context so tools (e.g. shell_exec) can key pending state per channel.
 			msgCtx = tools.WithSessionID(msgCtx, msg.ChannelID)
 
 			// Load global system prompt (prepended to every person's prompt).
 			globalSysPrompt, _ := store.GetSystemPrompt(msgCtx)
+
+			// Apply per-channel system prompt override.
+			if chanCfg != nil && chanCfg.SystemPrompt != "" {
+				globalSysPrompt = chanCfg.SystemPrompt
+			}
 
 			sendResponse := func(result *agent.RunResult, displayName, avatarData string) {
 				text := strings.TrimSpace(result.Response)
@@ -365,7 +385,7 @@ func makeMessageHandler(
 			}
 
 			if len(people) == 0 {
-				result, err := runAgent(msgCtx, globalSysPrompt, modelID, msg.ChannelID, messages, nil)
+				result, err := runAgent(msgCtx, globalSysPrompt, modelID, sessionChannel, messages, nil)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("transport", t.Name()).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
@@ -382,7 +402,7 @@ func makeMessageHandler(
 				if globalSysPrompt != "" {
 					prompt = globalSysPrompt + "\n\n" + prompt
 				}
-				result, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages, nil)
+				result, err := runAgent(msgCtx, prompt, modelID, sessionChannel, messages, nil)
 				if err != nil {
 					logger.Error().Err(err).Str("session", msg.ChannelID).Str("person", p.Name).Msg("agent run failed")
 					_ = t.Send(msgCtx, transport.OutboundMessage{ChannelID: msg.ChannelID, Text: fmt.Sprintf("error: %v", err)})
@@ -403,7 +423,7 @@ func makeMessageHandler(
 						if globalSysPrompt != "" {
 							prompt = globalSysPrompt + "\n\n" + prompt
 						}
-						res, err := runAgent(msgCtx, prompt, modelID, msg.ChannelID, messages, nil)
+						res, err := runAgent(msgCtx, prompt, modelID, sessionChannel, messages, nil)
 						resultCh <- personResult{person: person, result: res, err: err}
 					}(p)
 				}

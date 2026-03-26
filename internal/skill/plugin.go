@@ -56,8 +56,34 @@ type RegisteredRoute struct {
 
 // RegisteredProvider describes an LLM provider registered by a plugin during init.
 type RegisteredProvider struct {
-	Name   string          `json:"name"`
-	Models json.RawMessage `json:"models"`
+	Name         string          `json:"name"`
+	Models       json.RawMessage `json:"models"`
+	ConfigSchema json.RawMessage `json:"config_schema,omitempty"`
+}
+
+// RegisteredChannel describes a channel configuration declared by a plugin during init.
+type RegisteredChannel struct {
+	ID             string   `json:"id"`
+	Tag            string   `json:"tag"`
+	SystemPrompt   string   `json:"system_prompt"`
+	SkillNames     []string `json:"skill_names"`
+	Model          string   `json:"model"`
+	MemoryIsolated bool     `json:"memory_isolated"`
+}
+
+// RegisteredCapability describes a generic capability registered by a plugin.
+// Used for speech, media understanding, image generation, interactive handlers,
+// and context engines — all surfaced as agent tools.
+type RegisteredCapability struct {
+	Kind string          `json:"kind"` // "speech", "media_understanding", "image_generation", "interactive", "context_engine"
+	Name string          `json:"name"`
+	Meta json.RawMessage `json:"meta,omitempty"`
+}
+
+// RegisteredMemoryPrompt describes a memory prompt section registered by a plugin.
+// Called before each agent run to inject dynamic context into the system prompt.
+type RegisteredMemoryPrompt struct {
+	Name string `json:"name"`
 }
 
 // pluginMsg is a JSON-line message in the host↔plugin protocol.
@@ -80,7 +106,7 @@ type pluginMsg struct {
 	Query   json.RawMessage `json:"query,omitempty"`
 	Body    string          `json:"body,omitempty"`
 
-	// register_provider / chat
+	// register_provider / chat / stream
 	Models   json.RawMessage `json:"models,omitempty"`
 	Provider string          `json:"provider,omitempty"`
 	Model    string          `json:"model,omitempty"`
@@ -101,12 +127,36 @@ type pluginMsg struct {
 	ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
 	Usage     json.RawMessage `json:"usage,omitempty"`
 
+	// chunk (streaming delta)
+	Delta string `json:"delta,omitempty"`
+	// done (streaming complete) — reuses Usage, Model, Error
+
 	// http_response
 	Status int `json:"status,omitempty"`
 
 	// error
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
+
+	// register_provider — config schema declared by plugin
+	ConfigSchema json.RawMessage `json:"config_schema,omitempty"`
+
+	// register_channel
+	SkillNames     []string `json:"skill_names,omitempty"`
+	MemoryIsolated bool     `json:"memory_isolated,omitempty"`
+	Tag            string   `json:"tag,omitempty"`
+
+	// register_capability
+	Kind string          `json:"kind,omitempty"`
+	Meta json.RawMessage `json:"meta,omitempty"`
+
+	// capability_invoke
+	Action string `json:"action,omitempty"`
+
+	// memory_prompt — reuses Name, ID, Content
+
+	// register_cli — reuses Name, Description, Parameters
+	// (dispatched as regular tool invoke)
 }
 
 // PluginProcess manages a long-running plugin subprocess.
@@ -121,13 +171,18 @@ type PluginProcess struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
 
-	tools     []RegisteredTool
-	hooks     []RegisteredHook
-	routes    []RegisteredRoute
-	providers []RegisteredProvider
+	tools         []RegisteredTool
+	hooks         []RegisteredHook
+	routes        []RegisteredRoute
+	providers     []RegisteredProvider
+	channels      []RegisteredChannel
+	capabilities  []RegisteredCapability
+	memoryPrompts []RegisteredMemoryPrompt
+	configSchema  json.RawMessage // plugin-level config schema from definePluginEntry
 
 	mu      sync.Mutex
 	pending map[string]chan pluginMsg
+	streams map[string]chan pluginMsg // streaming responses (multiple msgs per ID)
 	nextID  atomic.Int64
 }
 
@@ -195,6 +250,7 @@ func NewPluginProcess(ctx context.Context, skillDir string) (*PluginProcess, err
 		stdin:      stdinPipe,
 		stdout:     bufio.NewScanner(stdoutPipe),
 		pending:    make(map[string]chan pluginMsg),
+		streams:    make(map[string]chan pluginMsg),
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -242,8 +298,30 @@ func (p *PluginProcess) readRegistrations(ctx context.Context) error {
 				})
 			case "register_provider":
 				p.providers = append(p.providers, RegisteredProvider{
-					Name:   msg.Name,
-					Models: msg.Models,
+					Name:         msg.Name,
+					Models:       msg.Models,
+					ConfigSchema: msg.ConfigSchema,
+				})
+			case "register_config_schema":
+				p.configSchema = msg.ConfigSchema
+			case "register_channel":
+				p.channels = append(p.channels, RegisteredChannel{
+					ID:             msg.Name,
+					Tag:            msg.Tag,
+					SystemPrompt:   msg.System,
+					SkillNames:     msg.SkillNames,
+					Model:          msg.Model,
+					MemoryIsolated: msg.MemoryIsolated,
+				})
+			case "register_capability":
+				p.capabilities = append(p.capabilities, RegisteredCapability{
+					Kind: msg.Kind,
+					Name: msg.Name,
+					Meta: msg.Meta,
+				})
+			case "register_memory_prompt_section":
+				p.memoryPrompts = append(p.memoryPrompts, RegisteredMemoryPrompt{
+					Name: msg.Name,
 				})
 			case "ready":
 				done <- nil
@@ -276,22 +354,42 @@ func (p *PluginProcess) readLoop() {
 		if err := json.Unmarshal(p.stdout.Bytes(), &msg); err != nil {
 			continue
 		}
-		if msg.ID != "" {
-			p.mu.Lock()
-			ch, ok := p.pending[msg.ID]
-			if ok {
-				delete(p.pending, msg.ID)
-			}
-			p.mu.Unlock()
-			if ok {
+		if msg.ID == "" {
+			continue
+		}
+
+		p.mu.Lock()
+		// Check streaming channels first.
+		if ch, ok := p.streams[msg.ID]; ok {
+			if msg.Type == "done" || msg.Error != "" {
+				delete(p.streams, msg.ID)
+				p.mu.Unlock()
+				ch <- msg
+				close(ch)
+			} else {
+				p.mu.Unlock()
 				ch <- msg
 			}
+			continue
+		}
+		// Regular request-response.
+		ch, ok := p.pending[msg.ID]
+		if ok {
+			delete(p.pending, msg.ID)
+		}
+		p.mu.Unlock()
+		if ok {
+			ch <- msg
 		}
 	}
 	p.mu.Lock()
 	for id, ch := range p.pending {
 		close(ch)
 		delete(p.pending, id)
+	}
+	for id, ch := range p.streams {
+		close(ch)
+		delete(p.streams, id)
 	}
 	p.mu.Unlock()
 }
@@ -336,14 +434,71 @@ func (p *PluginProcess) sendAndWait(ctx context.Context, msg pluginMsg) (pluginM
 	}
 }
 
+// sendAndStream sends a message and returns a channel that receives multiple
+// responses (chunks) until the plugin sends a "done" message, which closes the channel.
+func (p *PluginProcess) sendAndStream(ctx context.Context, msg pluginMsg) (<-chan pluginMsg, error) {
+	id := fmt.Sprintf("%d", p.nextID.Add(1))
+	msg.ID = id
+
+	ch := make(chan pluginMsg, 64)
+	p.mu.Lock()
+	p.streams[id] = ch
+	p.mu.Unlock()
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		p.mu.Lock()
+		delete(p.streams, id)
+		p.mu.Unlock()
+		return nil, fmt.Errorf("marshaling message: %w", err)
+	}
+	data = append(data, '\n')
+
+	if _, err := p.stdin.Write(data); err != nil {
+		p.mu.Lock()
+		delete(p.streams, id)
+		p.mu.Unlock()
+		return nil, fmt.Errorf("writing to plugin stdin: %w", err)
+	}
+
+	// Wrap in a context-aware channel so cancellation works.
+	out := make(chan pluginMsg, 64)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case m, ok := <-ch:
+				if !ok {
+					return
+				}
+				out <- m
+				if m.Type == "done" || m.Error != "" {
+					return
+				}
+			case <-ctx.Done():
+				p.mu.Lock()
+				delete(p.streams, id)
+				p.mu.Unlock()
+				return
+			}
+		}
+	}()
+
+	return out, nil
+}
+
 // --- Accessors ---
 
-func (p *PluginProcess) Tools() []RegisteredTool         { return p.tools }
-func (p *PluginProcess) Hooks() []RegisteredHook          { return p.hooks }
-func (p *PluginProcess) Routes() []RegisteredRoute        { return p.routes }
-func (p *PluginProcess) Providers() []RegisteredProvider   { return p.providers }
-func (p *PluginProcess) EntryPoint() string                { return p.entryPoint }
-func (p *PluginProcess) Runtime() string                   { return p.runtime }
+func (p *PluginProcess) Tools() []RegisteredTool                { return p.tools }
+func (p *PluginProcess) Hooks() []RegisteredHook                 { return p.hooks }
+func (p *PluginProcess) Routes() []RegisteredRoute               { return p.routes }
+func (p *PluginProcess) Providers() []RegisteredProvider          { return p.providers }
+func (p *PluginProcess) Channels() []RegisteredChannel            { return p.channels }
+func (p *PluginProcess) Capabilities() []RegisteredCapability     { return p.capabilities }
+func (p *PluginProcess) MemoryPromptSections() []RegisteredMemoryPrompt { return p.memoryPrompts }
+func (p *PluginProcess) ConfigSchema() json.RawMessage            { return p.configSchema }
+func (p *PluginProcess) EntryPoint() string                       { return p.entryPoint }
+func (p *PluginProcess) Runtime() string                          { return p.runtime }
 
 // --- Invocation methods ---
 
@@ -434,6 +589,39 @@ func (p *PluginProcess) InvokeHTTP(ctx context.Context, req HTTPRequest) (HTTPRe
 	}, nil
 }
 
+// InvokeCapability calls a registered capability (speech, image gen, etc.) by kind and name.
+func (p *PluginProcess) InvokeCapability(ctx context.Context, kind, name, action string, params json.RawMessage) (SkillResult, error) {
+	resp, err := p.sendAndWait(ctx, pluginMsg{
+		Type:   "capability_invoke",
+		Kind:   kind,
+		Name:   name,
+		Action: action,
+		Params: params,
+	})
+	if err != nil {
+		return SkillResult{}, err
+	}
+	return SkillResult{Content: resp.Content, IsError: resp.IsError}, nil
+}
+
+// InvokeMemoryPrompt calls a registered memory prompt section to get dynamic
+// context for injection into the system prompt.
+func (p *PluginProcess) InvokeMemoryPrompt(ctx context.Context, sectionName, sessionID string) (string, error) {
+	sessionJSON, _ := json.Marshal(map[string]string{"session_id": sessionID})
+	resp, err := p.sendAndWait(ctx, pluginMsg{
+		Type:   "memory_prompt",
+		Name:   sectionName,
+		Params: sessionJSON,
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp.IsError {
+		return "", fmt.Errorf("memory prompt section %q: %s", sectionName, resp.Content)
+	}
+	return resp.Content, nil
+}
+
 // ChatRequest describes a chat request to forward to a plugin provider.
 type ChatRequest struct {
 	Provider string          `json:"provider"`
@@ -474,6 +662,54 @@ func (p *PluginProcess) InvokeChat(ctx context.Context, req ChatRequest) (ChatRe
 		Model:     resp.Model,
 		Error:     resp.Error,
 	}, nil
+}
+
+// InvokeChatStream forwards a streaming chat request to the plugin's LLM provider.
+// Returns a channel of ChatStreamChunk messages. The channel is closed when done.
+func (p *PluginProcess) InvokeChatStream(ctx context.Context, req ChatRequest) (<-chan ChatStreamChunk, error) {
+	raw, err := p.sendAndStream(ctx, pluginMsg{
+		Type:     "stream",
+		Provider: req.Provider,
+		Model:    req.Model,
+		Messages: req.Messages,
+		System:   req.System,
+		Tools:    req.Tools,
+		MaxTok:   req.MaxTok,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan ChatStreamChunk, 64)
+	go func() {
+		defer close(out)
+		for msg := range raw {
+			switch msg.Type {
+			case "chunk":
+				out <- ChatStreamChunk{Delta: msg.Delta}
+			case "done":
+				if msg.Error != "" {
+					out <- ChatStreamChunk{Err: msg.Error}
+				}
+				out <- ChatStreamChunk{Done: true, Usage: msg.Usage, Model: msg.Model}
+			default:
+				if msg.Error != "" {
+					out <- ChatStreamChunk{Err: msg.Error, Done: true}
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+// ChatStreamChunk is a single piece of a streaming response from a plugin provider.
+type ChatStreamChunk struct {
+	Delta string          `json:"delta,omitempty"`
+	Done  bool            `json:"done"`
+	Usage json.RawMessage `json:"usage,omitempty"`
+	Model string          `json:"model,omitempty"`
+	Err   string          `json:"error,omitempty"`
 }
 
 // Close sends a shutdown message and waits for the process to exit.

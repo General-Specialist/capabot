@@ -85,7 +85,7 @@ func runServe(configPath string) error {
 	logger.Info().Int("skills", skillRegistry.Len()).Msg("skills loaded")
 
 	// 7b. Register Tier 3 plugins via Go SDK (in-process Go + OpenClaw adapters)
-	sdkRegs := registerSDKPlugins(skillRegistry, toolRegistry, router, logger)
+	sdkRegs := registerSDKPlugins(skillRegistry, toolRegistry, router, store, logger)
 
 	// 7c. Register Tier 2 native Go skills as callable tools
 	registerNativeSkills(ctx, skillRegistry, toolRegistry, logger)
@@ -205,6 +205,19 @@ Skills vs plugins:
 		if model != "" {
 			cfg.Model = model
 		}
+
+		// Inject memory prompt sections from plugins.
+		for _, mpb := range sdkRegs.MemoryPromptBuilders {
+			text, err := mpb.Build(runCtx, sessionID)
+			if err != nil {
+				logger.Warn().Err(err).Str("section", mpb.Name()).Msg("memory prompt section failed")
+				continue
+			}
+			if text != "" {
+				cfg.SystemPrompt += "\n\n" + text
+			}
+		}
+
 		ctxMgr := agent.NewContextManager(ctxMgrCfg)
 		ms := resolveMode(runCtx)
 		cfg = applyMode(cfg, ms, runCtx)

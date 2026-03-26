@@ -103,8 +103,12 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS channel_bindings (
-    channel_id TEXT PRIMARY KEY,
-    tag        TEXT NOT NULL
+    channel_id      TEXT PRIMARY KEY,
+    tag             TEXT NOT NULL,
+    system_prompt   TEXT NOT NULL DEFAULT '',
+    skill_names     TEXT[] NOT NULL DEFAULT '{}',
+    model           TEXT NOT NULL DEFAULT '',
+    memory_isolated BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS modes (

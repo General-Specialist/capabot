@@ -30,6 +30,17 @@ type Registrar interface {
 	RegisterHook(hook agent.ToolHook)
 	RegisterRoute(method, path string, handler http.HandlerFunc)
 	RegisterProvider(name string, provider llm.Provider)
+	RegisterChannel(cfg ChannelConfig)
+}
+
+// ChannelConfig describes a per-channel configuration declared by a plugin.
+type ChannelConfig struct {
+	ID             string
+	Tag            string
+	SystemPrompt   string
+	SkillNames     []string
+	Model          string
+	MemoryIsolated bool
 }
 
 // Route is an HTTP route registered by a plugin.
@@ -45,12 +56,23 @@ type ProviderEntry struct {
 	Provider llm.Provider
 }
 
+// MemoryPromptBuilder is called before each agent run to produce dynamic
+// context that gets appended to the system prompt.
+type MemoryPromptBuilder interface {
+	// Build returns text to inject into the system prompt for this session.
+	Build(ctx context.Context, sessionID string) (string, error)
+	// Name returns the section name for logging/debugging.
+	Name() string
+}
+
 // Registration implements Registrar and collects everything into slices.
 type Registration struct {
-	Tools     []agent.Tool
-	Hooks     []agent.ToolHook
-	Routes    []Route
-	Providers []ProviderEntry
+	Tools                []agent.Tool
+	Hooks                []agent.ToolHook
+	Routes               []Route
+	Providers            []ProviderEntry
+	Channels             []ChannelConfig
+	MemoryPromptBuilders []MemoryPromptBuilder
 }
 
 func (r *Registration) RegisterTool(tool agent.Tool) {
@@ -67,6 +89,10 @@ func (r *Registration) RegisterRoute(method, path string, handler http.HandlerFu
 
 func (r *Registration) RegisterProvider(name string, provider llm.Provider) {
 	r.Providers = append(r.Providers, ProviderEntry{Name: name, Provider: provider})
+}
+
+func (r *Registration) RegisterChannel(cfg ChannelConfig) {
+	r.Channels = append(r.Channels, cfg)
 }
 
 // InitPlugin initializes a plugin and returns its registrations.

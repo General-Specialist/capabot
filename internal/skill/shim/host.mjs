@@ -8,19 +8,23 @@
 //   {"type":"register_tool","name":"...","description":"...","parameters":{...}}
 //   {"type":"register_hook","event":"pre_tool_use"|"post_tool_use","name":"..."}
 //   {"type":"register_http_route","method":"GET","path":"/..."}
-//   {"type":"register_provider","name":"...","models":[...]}
+//   {"type":"register_provider","name":"...","models":[...],"config_schema":{...}}
 //   {"type":"ready"}
 //   {"type":"result","id":"...","content":"...","is_error":false}
+//   {"type":"chunk","id":"...","delta":"..."}       (streaming)
+//   {"type":"done","id":"...","usage":{...},"model":"..."}  (streaming complete)
 //
 // Host → Plugin (stdin):
 //   {"type":"invoke","id":"...","tool":"...","params":{...}}
 //   {"type":"hook","id":"...","event":"pre_tool_use","tool":"...","params":{...}}
 //   {"type":"http","id":"...","method":"GET","path":"/...","headers":{...},"body":"..."}
 //   {"type":"chat","id":"...","model":"...","messages":[...],"system":"..."}
+//   {"type":"stream","id":"...","model":"...","messages":[...],"system":"..."}
 //   {"type":"shutdown"}
 
 import { createInterface } from "node:readline";
 import { resolve, dirname } from "node:path";
+import { readFileSync } from "node:fs";
 
 const pluginPath = resolve(process.argv[2]);
 if (!pluginPath) {
@@ -36,6 +40,8 @@ const routeHandlers = new Map(); // "GET /path" -> handler
 const providerHandlers = new Map(); // provider name -> { chat }
 const serviceHandlers = new Map(); // service id -> { start, stop }
 const commandHandlers = new Map(); // command name -> handler
+const capabilityHandlers = new Map(); // "kind:name" -> handler object
+const memoryPromptHandlers = new Map(); // section name -> builder function
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -139,11 +145,17 @@ const api = {
     if (!name || typeof chat !== "function") {
       throw new Error("registerProvider requires name/id and chat");
     }
-    providerHandlers.set(name, { chat });
+    const streamChat = typeof provider.streamChat === "function" ? provider.streamChat : null;
+    providerHandlers.set(name, { chat, streamChat });
+
+    const configSchema = typeof provider.configSchema === "function"
+      ? provider.configSchema()
+      : provider.configSchema || undefined;
     send({
       type: "register_provider",
       name,
       models: provider.models || [],
+      ...(configSchema ? { config_schema: configSchema } : {}),
     });
   },
 
@@ -196,30 +208,96 @@ const api = {
     }
   },
 
-  // --- No-op stubs for infrastructure gostaff doesn't have ---
+  // --- Channel registration (per-channel isolation) ---
 
-  registerChannel(_reg) {
-    logger.warn("registerChannel is not supported in gostaff (no-op)");
+  registerChannel(reg) {
+    // OpenClaw registerChannel shape: { id, systemPrompt, skills, model, memoryIsolated, ... }
+    // We send it to the host so it can store the configuration.
+    const id = reg.id || reg.channelId;
+    if (!id) {
+      logger.warn("registerChannel: missing id, skipping");
+      return;
+    }
+    send({
+      type: "register_channel",
+      name: id,
+      system: reg.systemPrompt || reg.system_prompt || "",
+      skill_names: reg.skills || reg.skill_names || [],
+      model: reg.model || "",
+      memory_isolated: reg.memoryIsolated ?? reg.memory_isolated ?? false,
+      tag: reg.tag || reg.persona || "",
+    });
   },
 
-  registerGatewayMethod(_method, _handler) {
-    logger.warn("registerGatewayMethod is not supported in gostaff (no-op)");
+  registerGatewayMethod(method, handler) {
+    // Gateway methods are custom API endpoints — delegate to registerHttpRoute.
+    if (typeof method === "object") {
+      // Object shape: { method, path, handler }
+      api.registerHttpRoute(method);
+    } else if (typeof method === "string" && typeof handler === "function") {
+      // (path, handler) shape — register as POST
+      api.registerHttpRoute({ method: "POST", path: method, handler });
+    }
   },
 
-  registerCli(_registrar, _opts) {
-    logger.warn("registerCli is not supported in gostaff (no-op)");
+  registerCli(registrar, _opts) {
+    // CLI commands are surfaced as tools (like registerCommand but with cli_ prefix).
+    if (typeof registrar === "function") {
+      // Factory pattern: registrar is a function that receives a register helper
+      registrar((def) => {
+        const name = def.name || def.command;
+        if (!name) return;
+        const handler = def.handler || def.execute;
+        if (typeof handler !== "function") return;
+        toolHandlers.set(`cli_${name}`, async (params) => {
+          const result = await handler({ args: params.args || "", flags: params.flags || {}, config: {}, logger });
+          if (typeof result === "string") return result;
+          return result?.content || JSON.stringify(result);
+        });
+        send({
+          type: "register_tool",
+          name: `cli_${name}`,
+          description: `[cli] ${def.description || name}`,
+          parameters: def.parameters || { type: "object", properties: { args: { type: "string" }, flags: { type: "object" } } },
+        });
+      });
+    } else if (typeof registrar === "object") {
+      // Direct object shape: { name, handler, description }
+      api.registerCommand(registrar);
+    }
   },
 
-  registerSpeechProvider(_provider) {
-    logger.warn("registerSpeechProvider is not supported in gostaff (no-op)");
+  registerSpeechProvider(provider) {
+    const name = provider.name || provider.id || `speech_${capabilityHandlers.size}`;
+    const handlers = {};
+    if (typeof provider.textToSpeech === "function") handlers.tts = provider.textToSpeech;
+    if (typeof provider.speechToText === "function") handlers.stt = provider.speechToText;
+    if (typeof provider.tts === "function") handlers.tts = provider.tts;
+    if (typeof provider.stt === "function") handlers.stt = provider.stt;
+    capabilityHandlers.set(`speech:${name}`, handlers);
+    send({ type: "register_capability", kind: "speech", name });
   },
 
-  registerMediaUnderstandingProvider(_provider) {
-    logger.warn("registerMediaUnderstandingProvider is not supported in gostaff (no-op)");
+  registerMediaUnderstandingProvider(provider) {
+    const name = provider.name || provider.id || `media_${capabilityHandlers.size}`;
+    const analyze = provider.analyze || provider.understand || provider.process;
+    if (typeof analyze !== "function") {
+      logger.warn(`registerMediaUnderstandingProvider: ${name} has no analyze function`);
+      return;
+    }
+    capabilityHandlers.set(`media_understanding:${name}`, { analyze });
+    send({ type: "register_capability", kind: "media_understanding", name });
   },
 
-  registerImageGenerationProvider(_provider) {
-    logger.warn("registerImageGenerationProvider is not supported in gostaff (no-op)");
+  registerImageGenerationProvider(provider) {
+    const name = provider.name || provider.id || `imagegen_${capabilityHandlers.size}`;
+    const generate = provider.generate || provider.generateImage || provider.create;
+    if (typeof generate !== "function") {
+      logger.warn(`registerImageGenerationProvider: ${name} has no generate function`);
+      return;
+    }
+    capabilityHandlers.set(`image_generation:${name}`, { generate });
+    send({ type: "register_capability", kind: "image_generation", name });
   },
 
   registerWebSearchProvider(provider) {
@@ -239,20 +317,50 @@ const api = {
     logger.warn("registerWebSearchProvider: no tool created (no-op)");
   },
 
-  registerInteractiveHandler(_reg) {
-    logger.warn("registerInteractiveHandler is not supported in gostaff (no-op)");
+  registerInteractiveHandler(reg) {
+    const name = reg.name || reg.id || `interactive_${capabilityHandlers.size}`;
+    const handler = reg.handler || reg.handle || reg.execute;
+    if (typeof handler !== "function") {
+      logger.warn(`registerInteractiveHandler: ${name} has no handler function`);
+      return;
+    }
+    capabilityHandlers.set(`interactive:${name}`, { handler });
+    send({ type: "register_capability", kind: "interactive", name });
   },
 
   onConversationBindingResolved(_handler) {
     // No-op — gostaff doesn't have conversation bindings
   },
 
-  registerContextEngine(_id, _factory) {
-    logger.warn("registerContextEngine is not supported in gostaff (no-op)");
+  registerContextEngine(id, factory) {
+    const name = typeof id === "string" ? id : (id?.id || id?.name || `context_${capabilityHandlers.size}`);
+    // factory can be a function (ctx => engine) or an engine object directly
+    let engine;
+    if (typeof factory === "function") {
+      engine = factory({ config: {}, logger });
+    } else if (typeof id === "object" && !factory) {
+      engine = id;
+    } else {
+      engine = factory;
+    }
+    const query = engine?.query || engine?.search || engine?.retrieve;
+    if (typeof query !== "function") {
+      logger.warn(`registerContextEngine: ${name} has no query function`);
+      return;
+    }
+    capabilityHandlers.set(`context_engine:${name}`, { query });
+    send({ type: "register_capability", kind: "context_engine", name });
   },
 
-  registerMemoryPromptSection(_builder) {
-    logger.warn("registerMemoryPromptSection is not supported in gostaff (no-op)");
+  registerMemoryPromptSection(builder) {
+    const name = builder.name || builder.id || `memory_section_${memoryPromptHandlers.size}`;
+    const build = builder.build || builder.generate || builder.get;
+    if (typeof build !== "function") {
+      logger.warn(`registerMemoryPromptSection: ${name} has no build function`);
+      return;
+    }
+    memoryPromptHandlers.set(name, build);
+    send({ type: "register_memory_prompt_section", name });
   },
 
   resolvePath(input) {
@@ -286,6 +394,23 @@ if (typeof register === "function") {
   if (entry.id) api.id = entry.id;
   if (entry.name) api.name = entry.name;
   if (entry.description) api.description = entry.description;
+
+  // Load stored config.json from the plugin directory (if it exists)
+  const pluginDir = dirname(pluginPath);
+  try {
+    const raw = readFileSync(resolve(pluginDir, "config.json"), "utf-8");
+    const cfg = JSON.parse(raw);
+    api.config = cfg;
+    api.pluginConfig = cfg;
+  } catch {
+    // No config.json — leave as empty objects
+  }
+
+  // Send plugin-level configSchema to the host (if declared via definePluginEntry)
+  const configSchema = entry.configSchema;
+  if (configSchema && typeof configSchema === "object" && Object.keys(configSchema).length > 0) {
+    send({ type: "register_config_schema", config_schema: configSchema });
+  }
 
   try {
     await register(api);
@@ -395,6 +520,108 @@ for await (const line of rl) {
           usage: resp.usage || {},
           model: resp.model || msg.model,
         });
+        break;
+      }
+
+      case "stream": {
+        const provider = providerHandlers.get(msg.provider);
+        if (!provider) {
+          send({ type: "done", id: msg.id, error: `unknown provider: ${msg.provider}` });
+          break;
+        }
+        const streamReq = {
+          model: msg.model,
+          messages: msg.messages,
+          system: msg.system,
+          tools: msg.tools,
+          max_tokens: msg.max_tokens,
+        };
+
+        if (provider.streamChat) {
+          // Use native streaming if available.
+          try {
+            const iter = await provider.streamChat(streamReq);
+            for await (const chunk of iter) {
+              const delta = chunk.delta || chunk.content || chunk.text || "";
+              if (delta) {
+                send({ type: "chunk", id: msg.id, delta });
+              }
+            }
+            send({ type: "done", id: msg.id, model: msg.model, usage: {} });
+          } catch (err) {
+            send({ type: "done", id: msg.id, error: err.message });
+          }
+        } else {
+          // Fall back to non-streaming chat, emit result as single chunk + done.
+          try {
+            const resp = await provider.chat(streamReq);
+            const content = resp.content || "";
+            if (content) {
+              send({ type: "chunk", id: msg.id, delta: content });
+            }
+            send({
+              type: "done",
+              id: msg.id,
+              model: resp.model || msg.model,
+              usage: resp.usage || {},
+            });
+          } catch (err) {
+            send({ type: "done", id: msg.id, error: err.message });
+          }
+        }
+        break;
+      }
+
+      case "capability_invoke": {
+        const key = `${msg.kind}:${msg.name}`;
+        const cap = capabilityHandlers.get(key);
+        if (!cap) {
+          send({ type: "result", id: msg.id, content: `unknown capability: ${key}`, is_error: true });
+          break;
+        }
+        const action = msg.action || "default";
+        const params = msg.params || {};
+
+        let result;
+        switch (msg.kind) {
+          case "speech":
+            if (action === "tts" && cap.tts) result = await cap.tts(params);
+            else if (action === "stt" && cap.stt) result = await cap.stt(params);
+            else { send({ type: "result", id: msg.id, content: `speech action ${action} not supported`, is_error: true }); break; }
+            break;
+          case "image_generation":
+            result = await cap.generate(params);
+            break;
+          case "media_understanding":
+            result = await cap.analyze(params);
+            break;
+          case "context_engine":
+            result = await cap.query(params);
+            break;
+          case "interactive":
+            result = await cap.handler(params);
+            break;
+          default:
+            send({ type: "result", id: msg.id, content: `unknown capability kind: ${msg.kind}`, is_error: true });
+            break;
+        }
+        if (result !== undefined) {
+          const content = typeof result === "string" ? result : JSON.stringify(result);
+          send({ type: "result", id: msg.id, content, is_error: false });
+        }
+        break;
+      }
+
+      case "memory_prompt": {
+        const builder = memoryPromptHandlers.get(msg.name);
+        if (!builder) {
+          send({ type: "result", id: msg.id, content: "", is_error: false });
+          break;
+        }
+        const sessionId = msg.params?.session_id || "";
+        const text = await builder({ sessionId, config: {}, logger });
+        const content = typeof text === "string" ? text : JSON.stringify(text);
+        send({ type: "result", id: msg.id, content, is_error: false });
         break;
       }
 

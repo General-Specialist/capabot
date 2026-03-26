@@ -779,7 +779,17 @@ func (s *Store) ListDiscordTagRoles(ctx context.Context) (map[string]string, err
 	return out, rows.Err()
 }
 
-// GetChannelBinding returns the tag bound to a Discord channel, or "" if none.
+// ChannelConfig holds the full per-channel configuration.
+type ChannelConfig struct {
+	ChannelID      string   `json:"channel_id"`
+	Tag            string   `json:"tag"`             // persona/tag routing (legacy "binding")
+	SystemPrompt   string   `json:"system_prompt"`   // per-channel system prompt override
+	SkillNames     []string `json:"skill_names"`     // restrict to specific skills (empty = all)
+	Model          string   `json:"model"`           // model override (empty = default)
+	MemoryIsolated bool     `json:"memory_isolated"` // isolate memory per channel
+}
+
+// GetChannelBinding returns the tag bound to a channel, or "" if none.
 func (s *Store) GetChannelBinding(ctx context.Context, channelID string) (string, error) {
 	var tag string
 	err := s.pool.DB().QueryRowContext(ctx,
@@ -791,17 +801,71 @@ func (s *Store) GetChannelBinding(ctx context.Context, channelID string) (string
 	return tag, err
 }
 
-// SetChannelBinding binds a Discord channel to a tag.
+// GetChannelConfig returns the full channel configuration, or nil if none.
+func (s *Store) GetChannelConfig(ctx context.Context, channelID string) (*ChannelConfig, error) {
+	var cfg ChannelConfig
+	var skills pgStringArray
+	err := s.pool.DB().QueryRowContext(ctx,
+		`SELECT channel_id, tag, system_prompt, skill_names, model, memory_isolated
+		 FROM channel_bindings WHERE channel_id = $1`, channelID,
+	).Scan(&cfg.ChannelID, &cfg.Tag, &cfg.SystemPrompt, &skills, &cfg.Model, &cfg.MemoryIsolated)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg.SkillNames = []string(skills)
+	return &cfg, nil
+}
+
+// SetChannelConfig upserts the full channel configuration.
+func (s *Store) SetChannelConfig(ctx context.Context, cfg ChannelConfig) error {
+	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO channel_bindings (channel_id, tag, system_prompt, skill_names, model, memory_isolated)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (channel_id) DO UPDATE SET
+			   tag = $2, system_prompt = $3, skill_names = $4, model = $5, memory_isolated = $6`,
+			cfg.ChannelID, cfg.Tag, cfg.SystemPrompt, pgStringArray(cfg.SkillNames), cfg.Model, cfg.MemoryIsolated)
+		return err
+	})
+}
+
+// ListChannelConfigs returns all channel configurations.
+func (s *Store) ListChannelConfigs(ctx context.Context) ([]ChannelConfig, error) {
+	rows, err := s.pool.DB().QueryContext(ctx,
+		`SELECT channel_id, tag, system_prompt, skill_names, model, memory_isolated
+		 FROM channel_bindings ORDER BY channel_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChannelConfig
+	for rows.Next() {
+		var cfg ChannelConfig
+		var skills pgStringArray
+		if err := rows.Scan(&cfg.ChannelID, &cfg.Tag, &cfg.SystemPrompt, &skills, &cfg.Model, &cfg.MemoryIsolated); err != nil {
+			return nil, err
+		}
+		cfg.SkillNames = []string(skills)
+		out = append(out, cfg)
+	}
+	return out, rows.Err()
+}
+
+// SetChannelBinding binds a channel to a tag (legacy shorthand — only sets the tag field).
 func (s *Store) SetChannelBinding(ctx context.Context, channelID, tag string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO channel_bindings (channel_id, tag) VALUES ($1, $2) ON CONFLICT (channel_id) DO UPDATE SET tag = $2`,
+			`INSERT INTO channel_bindings (channel_id, tag) VALUES ($1, $2)
+			 ON CONFLICT (channel_id) DO UPDATE SET tag = $2`,
 			channelID, tag)
 		return err
 	})
 }
 
-// DeleteChannelBinding removes a channel's tag binding.
+// DeleteChannelBinding removes a channel's configuration.
 func (s *Store) DeleteChannelBinding(ctx context.Context, channelID string) error {
 	return s.pool.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM channel_bindings WHERE channel_id = $1`, channelID)

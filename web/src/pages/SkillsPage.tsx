@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
+import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X, Settings, Save, Loader2 } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
 import { useAlert } from '@/components/AlertProvider'
@@ -18,7 +18,7 @@ interface InstalledSkill extends Skill {
 
 export function SkillsPage() {
   const { alert } = useAlert()
-  const [tab, setTab] = useState<'custom' | 'clawhub' | 'browse'>('custom')
+  const [tab, setTab] = useState<'custom' | 'clawhub' | 'plugins' | 'browse'>('custom')
   const [allSkills, setAllSkills] = useState<InstalledSkill[]>([])
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
   const [query, setQuery] = useState('')
@@ -40,12 +40,12 @@ export function SkillsPage() {
   const [createError, setCreateError] = useState<string | null>(null)
 
   const loadSkills = () =>
-    api.skills().then(res => setAllSkills(res.filter(s => s.tier === 1) as InstalledSkill[]))
+    api.skills().then(res => setAllSkills(res as InstalledSkill[]))
 
   useEffect(() => {
     let cancelled = false
     api.skills()
-      .then(res => { if (!cancelled) setAllSkills(res.filter(s => s.tier === 1) as InstalledSkill[]) })
+      .then(res => { if (!cancelled) setAllSkills(res as InstalledSkill[]) })
       .catch((err: unknown) => { if (!cancelled) alert(err instanceof Error ? err.message : 'Failed to load skills', 'error') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -128,8 +128,9 @@ export function SkillsPage() {
     }
   }
 
-  const custom = allSkills.filter(s => s.source === 'custom')
-  const clawhub = allSkills.filter(s => s.source === 'clawhub')
+  const custom = allSkills.filter(s => s.tier === 1 && s.source === 'custom')
+  const clawhub = allSkills.filter(s => s.tier === 1 && s.source === 'clawhub')
+  const plugins = allSkills.filter(s => s.tier === 3)
   const installedNames = new Set(allSkills.map(s => s.name))
 
   return (
@@ -137,7 +138,7 @@ export function SkillsPage() {
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex gap-1 text-sm">
-            {(['custom', 'clawhub', 'browse'] as const).map(t => (
+            {(['custom', 'clawhub', 'plugins', 'browse'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -145,6 +146,7 @@ export function SkillsPage() {
               >
                 {t === 'custom' && <>Custom {custom.length > 0 && <span className="ml-1 text-xs text-normal-black">({custom.length})</span>}</>}
                 {t === 'clawhub' && <>ClawHub {clawhub.length > 0 && <span className="ml-1 text-xs text-normal-black">({clawhub.length})</span>}</>}
+                {t === 'plugins' && <>Plugins {plugins.length > 0 && <span className="ml-1 text-xs text-normal-black">({plugins.length})</span>}</>}
                 {t === 'browse' && 'Browse'}
               </button>
             ))}
@@ -210,6 +212,10 @@ export function SkillsPage() {
 
         {tab === 'clawhub' && (
           <SkillList skills={clawhub} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No ClawHub skills installed. Browse and install some." />
+        )}
+
+        {tab === 'plugins' && (
+          <PluginList skills={plugins} loading={loading} removing={removing} onRemove={uninstall} />
         )}
 
         {tab === 'browse' && (
@@ -359,6 +365,179 @@ function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove,
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function PluginList({ skills, loading, removing, onRemove }: {
+  skills: InstalledSkill[]
+  loading: boolean
+  removing: Record<string, boolean>
+  onRemove: (name: string) => void
+}) {
+  const [configOpen, setConfigOpen] = useState<Record<string, boolean>>({})
+
+  if (!loading && skills.length === 0) {
+    return <p className="text-sm text-normal-black">No plugin skills installed. Install one from ClawHub or add a plugin directory.</p>
+  }
+
+  return (
+    <div className="space-y-2">
+      {skills.map(skill => {
+        const hasSchema = skill.config_schema && Object.keys(skill.config_schema).length > 0
+        const isConfigOpen = configOpen[skill.name]
+        const isRemoving = removing[skill.name]
+        return (
+          <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
+            <div className="flex items-center gap-4 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
+                  {skill.version && (
+                    <span className="text-xs text-normal-black font-mono shrink-0">{skill.version}</span>
+                  )}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-sidebar-white text-normal-black shrink-0">plugin</span>
+                </div>
+                {skill.description && (
+                  <p className="text-xs text-normal-black truncate mt-0.5">{skill.description}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {hasSchema && (
+                  <button
+                    onClick={() => setConfigOpen(prev => ({ ...prev, [skill.name]: !isConfigOpen }))}
+                    className={`h-7 w-7 rounded-full flex items-center justify-center transition-colors ${isConfigOpen ? 'bg-brand-primary text-white' : 'text-normal-black hover:text-hover-black hover:bg-sidebar-white'}`}
+                  >
+                    <Settings size={13} />
+                  </button>
+                )}
+                {skill.removable && (
+                  <button
+                    onClick={() => onRemove(skill.name)}
+                    disabled={isRemoving}
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
+                  >
+                    {isRemoving
+                      ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                      : <Trash2 size={13} />
+                    }
+                  </button>
+                )}
+              </div>
+            </div>
+            {isConfigOpen && hasSchema && (
+              <PluginConfigForm skillName={skill.name} schema={skill.config_schema!} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function PluginConfigForm({ skillName, schema }: { skillName: string; schema: Record<string, unknown> }) {
+  const { alert } = useAlert()
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  // Extract field definitions from JSON Schema "properties"
+  const properties = (schema.properties ?? {}) as Record<string, { type?: string; description?: string; default?: unknown }>
+  const required = new Set((schema.required ?? []) as string[])
+  const fields = Object.entries(properties)
+
+  useEffect(() => {
+    api.skillConfigGet(skillName)
+      .then(cfg => {
+        const v: Record<string, string> = {}
+        for (const [key] of fields) {
+          v[key] = cfg[key] != null ? String(cfg[key]) : ''
+        }
+        setValues(v)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [skillName]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      // Convert values back to appropriate types
+      const config: Record<string, unknown> = {}
+      for (const [key, def] of fields) {
+        const val = values[key]
+        if (val === '' && !required.has(key)) continue
+        if (def.type === 'number' || def.type === 'integer') {
+          config[key] = Number(val)
+        } else if (def.type === 'boolean') {
+          config[key] = val === 'true'
+        } else {
+          config[key] = val
+        }
+      }
+      await api.skillConfigSet(skillName, config)
+      alert('Config saved. Restart to apply.', 'success')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save config', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="border-t border-border-white px-4 py-4 bg-sidebar-white flex items-center gap-2 text-xs text-normal-black">
+        <Loader2 size={12} className="animate-spin" /> Loading config…
+      </div>
+    )
+  }
+
+  if (fields.length === 0) {
+    return (
+      <div className="border-t border-border-white px-4 py-3 bg-sidebar-white text-xs text-normal-black">
+        This plugin declares a config schema but has no configurable fields.
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-t border-border-white px-4 py-4 bg-sidebar-white space-y-3">
+      {fields.map(([key, def]) => (
+        <div key={key}>
+          <label className="block text-xs font-medium text-hover-black mb-1">
+            {key}{required.has(key) && <span className="text-red ml-0.5">*</span>}
+          </label>
+          {def.description && (
+            <p className="text-[11px] text-normal-black mb-1">{def.description}</p>
+          )}
+          {def.type === 'boolean' ? (
+            <select
+              value={values[key] || 'false'}
+              onChange={e => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+              className="w-full px-3 py-1.5 text-sm rounded-lg border border-border-white bg-white text-hover-black outline-none"
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          ) : (
+            <input
+              type={def.type === 'number' || def.type === 'integer' ? 'number' : 'text'}
+              value={values[key] || ''}
+              onChange={e => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+              placeholder={def.default != null ? String(def.default) : key}
+              className="w-full px-3 py-1.5 text-sm rounded-lg border border-border-white bg-white text-hover-black outline-none font-mono"
+            />
+          )}
+        </div>
+      ))}
+      <button
+        onClick={() => void save()}
+        disabled={saving}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity"
+      >
+        {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+        {saving ? 'Saving…' : 'Save config'}
+      </button>
     </div>
   )
 }
