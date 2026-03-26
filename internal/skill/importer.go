@@ -17,20 +17,13 @@ const (
 	TierPlugin   = 3 // Script-based execution (TS/JS/Python code module skills)
 )
 
-// ToolMapping records a single OpenClaw→GoStaff tool name translation.
-type ToolMapping struct {
-	From string
-	To   string
-}
-
 // ImportResult describes the outcome of importing a single skill.
 type ImportResult struct {
-	Success     bool
-	SkillName   string
-	Tier        int
-	Errors      []string
-	Warnings    []string
-	MappedTools  []ToolMapping
+	Success      bool
+	SkillName    string
+	Tier         int
+	Errors       []string
+	Warnings     []string
 	InstallHints []string
 	DestPath     string
 }
@@ -120,10 +113,7 @@ func ImportSkill(srcDir, destRoot string) (*ImportResult, error) {
 	checkRequiredEnv(parsed, result)
 	checkInstallHints(parsed, result)
 
-	// 6. Scan instructions for OpenClaw tool names and build mapping
-	scanToolReferences(parsed.Instructions, result)
-
-	// 7. Copy skill files to destination
+	// 6. Copy skill files to destination
 	if err := copySkillDir(srcDir, destDir); err != nil {
 		return nil, fmt.Errorf("failed to copy skill: %w", err)
 	}
@@ -249,50 +239,6 @@ func formatInstallHint(spec InstallSpec) string {
 	default:
 		return fmt.Sprintf("install %s (%s)", spec.Package, spec.Kind)
 	}
-}
-
-// scanToolReferences looks for OpenClaw tool names in the instruction text
-// and records any that have GoStaff equivalents.
-func scanToolReferences(instructions string, result *ImportResult) {
-	for openClawName, gostaffName := range openClawToGoStaff {
-		if containsToolReference(instructions, openClawName) {
-			result.MappedTools = append(result.MappedTools, ToolMapping{
-				From: openClawName,
-				To:   gostaffName,
-			})
-		}
-	}
-}
-
-// containsToolReference checks if a tool name appears in text as a distinct
-// word (not as a substring of another word).
-func containsToolReference(text, toolName string) bool {
-	lower := strings.ToLower(text)
-	name := strings.ToLower(toolName)
-
-	idx := 0
-	for {
-		pos := strings.Index(lower[idx:], name)
-		if pos < 0 {
-			return false
-		}
-		absPos := idx + pos
-		endPos := absPos + len(name)
-
-		// Check word boundaries
-		startOK := absPos == 0 || !isWordChar(lower[absPos-1])
-		endOK := endPos >= len(lower) || !isWordChar(lower[endPos])
-
-		if startOK && endOK {
-			return true
-		}
-		idx = absPos + 1
-	}
-}
-
-func isWordChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9') || b == '_'
 }
 
 // inferPluginMeta extracts name and description from package.json if present,

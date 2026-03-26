@@ -48,8 +48,7 @@ type SkillMetadata struct {
 	Clawdis  *SkillMetadataInner `yaml:"clawdis"`
 }
 
-// Resolved returns the first non-nil metadata inner block,
-// checking openclaw -> clawdbot -> clawdis in precedence order.
+// Resolved returns the first non-nil metadata block.
 func (m SkillMetadata) Resolved() *SkillMetadataInner {
 	if m.OpenClaw != nil {
 		return m.OpenClaw

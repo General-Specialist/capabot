@@ -22,9 +22,6 @@ func printImportResult(verb string, result *skill.ImportResult) error {
 	for _, w := range result.Warnings {
 		fmt.Printf("  WARN: %s\n", w)
 	}
-	for _, m := range result.MappedTools {
-		fmt.Printf("  TOOL: %s -> %s\n", m.From, m.To)
-	}
 	for _, h := range result.InstallHints {
 		fmt.Printf("  INSTALL: %s\n", h)
 	}

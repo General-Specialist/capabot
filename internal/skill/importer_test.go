@@ -233,44 +233,6 @@ Use git and the other thing.
 	}
 }
 
-func TestImportSkill_ToolNameMapping(t *testing.T) {
-	srcDir := createTempSkill(t, map[string]string{
-		"SKILL.md": `---
-name: mapped-tools
-description: Has OpenClaw tool references
-version: 1.0.0
----
-# Instructions
-
-Use the exec tool to run commands.
-Then use web_fetch to get a page.
-Also use memory_search to recall context.
-`,
-	})
-
-	destDir := t.TempDir()
-	result, err := skill.ImportSkill(srcDir, destDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Check that mapped tools are reported
-	if len(result.MappedTools) == 0 {
-		t.Error("expected mapped tools to be populated")
-	}
-
-	// Verify specific mappings were detected
-	foundExec := false
-	for _, m := range result.MappedTools {
-		if m.From == "exec" && m.To == "shell_exec" {
-			foundExec = true
-		}
-	}
-	if !foundExec {
-		t.Errorf("expected exec->shell_exec mapping, got: %v", result.MappedTools)
-	}
-}
-
 func TestImportSkill_AlreadyExists(t *testing.T) {
 	srcDir := createTempSkill(t, map[string]string{
 		"SKILL.md": `---
