@@ -9,11 +9,12 @@ import (
 	"github.com/polymath/gostaff/internal/updater"
 )
 
+// version is set by goreleaser via ldflags.
+var version = "dev"
+
 const defaultConfigPath = "config.yaml"
 
 func main() {
-	go updater.CheckAndUpdate()
-
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -105,6 +106,23 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "update":
+		fmt.Fprintf(os.Stderr, "current version: %s\n", version)
+		fmt.Fprintln(os.Stderr, "checking for updates...")
+		newVersion, err := updater.Update(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if newVersion == "" {
+			fmt.Fprintln(os.Stderr, "already up to date.")
+		} else {
+			fmt.Fprintf(os.Stderr, "updated to %s\n", newVersion)
+		}
+
+	case "version", "--version", "-v":
+		fmt.Println(version)
+
 	case "--help", "-h", "help":
 		printUsage()
 
@@ -129,6 +147,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  skill search <query>              Search the ClawHub skill registry")
 	fmt.Fprintln(os.Stderr, "  config set <key> <value>          Set a config value")
 	fmt.Fprintln(os.Stderr, "  migrate [--config <path>]         Run database migrations")
+	fmt.Fprintln(os.Stderr, "  update                            Update to the latest release")
+	fmt.Fprintln(os.Stderr, "  version                           Print the current version")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "default config path: ~/.gostaff/config.yaml")
 }

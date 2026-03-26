@@ -80,9 +80,9 @@ capabot/
 ## `cmd/gostaff/` — CLI Entry Point
 
 ### `main.go`
-Top-level command dispatch using `os.Args` + `flag.FlagSet` per subcommand. On startup, fires `updater.CheckAndUpdate()` in a background goroutine.
+Top-level command dispatch using `os.Args` + `flag.FlagSet` per subcommand. Declares `var version = "dev"` (goreleaser injects the real value via ldflags `-X main.version={{.Version}}`).
 
-**Commands:** `serve`, `chat`, `dev`, `skill {lint,import,init,install,search}`, `config set`, `migrate`
+**Commands:** `serve`, `chat`, `dev`, `skill {lint,import,init,install,search}`, `config set`, `migrate`, `update`, `version`
 
 ### `serve.go` (~375 lines — boot sequence only)
 Boots every subsystem in order and blocks until shutdown. Calls into `init.go` and `transport_handler.go`; contains no business logic itself.
@@ -541,7 +541,7 @@ Wraps zerolog. `New(level, pretty)` creates a logger. `NewWithWriter(level, pret
 ## `internal/updater/` — Auto-Update
 
 ### `updater.go`
-`CheckAndUpdate()` — checks GitHub releases for a newer version. If found, downloads the binary, replaces the current one, and prints a message. Runs in a background goroutine at startup.
+`Update(currentVersion string) (newVersion string, err error)` — hits the GitHub Releases API, compares the latest tag to `currentVersion`, downloads the correct OS/arch tar.gz, extracts the binary, and atomically replaces the running executable. Called by `gostaff update`. Also exports `LatestTag()` for version checks.
 
 ---
 

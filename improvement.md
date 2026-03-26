@@ -20,15 +20,13 @@ Focus: reducing code, removing debt, simplifying. Keeping it maintainable by a t
 
 ---
 
-## 3. Frontend: silent error swallowing
+## ~~3. Frontend: silent error swallowing~~ ✓ Done
 
-**Problem:** Several pages (AutomationsPage, SkillsPage, MemoryPage) catch fetch errors and silently drop them. The user sees no feedback when an API call fails.
-
-**Fix:** Add a simple toast/notification pattern. Even `console.error` + a state-driven error banner would be better than silent failure.
+Added `AlertProvider` (toast + confirm dialogs) wrapping the app. SkillsPage and AutomationsPage now surface load/action errors as toasts. Settings has a "Silence error notifications" toggle for users who prefer quiet failures.
 
 ---
 
-## 4. Frontend: no test files
+## 3. Frontend: no test files
 
 **Problem:** The entire `web/src/` directory has zero test files. The frontend is untested.
 
@@ -41,5 +39,4 @@ Focus: reducing code, removing debt, simplifying. Keeping it maintainable by a t
 Next up:
 1. **#1** Move token pricing out of agent.go
 2. **#2** Verify install scripts are still needed
-3. **#3** Frontend: add error feedback (toast/banner)
-4. **#4** Frontend: add tests for `lib/api.ts`
+3. **#3** Frontend: add tests for `lib/api.ts`

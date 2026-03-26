@@ -4,7 +4,7 @@ project_name: gostaff
 
 before:
   hooks:
-    - sh -c "cd web && npm install && npm run build"
+    - sh -c "cd web && bun install && bun run build"
 
 builds:
   - main: ./cmd/gostaff

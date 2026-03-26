@@ -1,78 +1,155 @@
 package updater
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
+	"runtime"
 	"strings"
-	"time"
 )
 
-const checkInterval = time.Minute
+const (
+	repo   = "General-Specialist/gostaff"
+	binary = "gostaff"
+)
 
-type state struct {
-	LastCheck time.Time `json:"last_check"`
+type ghRelease struct {
+	TagName string `json:"tag_name"`
 }
 
-// CheckAndUpdate fetches from origin and pulls if new commits are available.
-// Rate-limited to once per minute. air detects changes and rebuilds automatically.
-// Only runs when GOSTAFF_AUTOUPDATE is set (opt-in; not appropriate for Docker/Railway deployments).
-func CheckAndUpdate() {
-	if os.Getenv("GOSTAFF_AUTOUPDATE") == "" {
-		return
-	}
-
-	if time.Since(lastCheck()) < checkInterval {
-		return
-	}
-	saveLastCheck()
-
-	if err := run("git", "fetch", "origin"); err != nil {
-		return
-	}
-
-	out, err := exec.Command("git", "rev-list", "HEAD..origin/HEAD", "--count").Output()
-	if err != nil || strings.TrimSpace(string(out)) == "0" {
-		return
-	}
-
-	fmt.Fprintln(os.Stderr, "gostaff: new commits available, pulling...")
-	if err := run("git", "pull", "--ff-only"); err != nil {
-		fmt.Fprintf(os.Stderr, "gostaff: git pull failed: %v\n", err)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "gostaff: updated — restarting...")
-}
-
-func statePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gostaff", "update.json")
-}
-
-func lastCheck() time.Time {
-	data, err := os.ReadFile(statePath())
+// Update checks GitHub Releases for a newer version and replaces the current binary.
+// Returns the new version string, or empty if already up to date.
+func Update(currentVersion string) (string, error) {
+	latest, err := latestTag()
 	if err != nil {
-		return time.Time{}
+		return "", fmt.Errorf("checking for updates: %w", err)
 	}
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return time.Time{}
+
+	if latest == currentVersion || latest == "v"+currentVersion {
+		return "", nil
 	}
-	return s.LastCheck
+
+	assetURL := assetURL(latest)
+
+	tmpPath, err := downloadAndExtract(assetURL)
+	if err != nil {
+		return "", fmt.Errorf("downloading update: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	selfPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("finding current binary: %w", err)
+	}
+
+	if err := replaceBinary(selfPath, tmpPath); err != nil {
+		return "", fmt.Errorf("replacing binary: %w", err)
+	}
+
+	return latest, nil
 }
 
-func saveLastCheck() {
-	p := statePath()
-	os.MkdirAll(filepath.Dir(p), 0o755)
-	data, _ := json.Marshal(state{LastCheck: time.Now()})
-	os.WriteFile(p, data, 0o600)
+// LatestTag returns the latest release tag from GitHub.
+func LatestTag() (string, error) {
+	return latestTag()
 }
 
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+func latestTag() (string, error) {
+	resp, err := http.Get("https://api.github.com/repos/" + repo + "/releases/latest")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github API returned %d", resp.StatusCode)
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return "", err
+	}
+	return rel.TagName, nil
+}
+
+func assetURL(tag string) string {
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+	return fmt.Sprintf(
+		"https://github.com/%s/releases/download/%s/%s_%s_%s.tar.gz",
+		repo, tag, binary, goos, goarch,
+	)
+}
+
+func downloadAndExtract(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if strings.HasSuffix(hdr.Name, binary) && hdr.Typeflag == tar.TypeReg {
+			tmp, err := os.CreateTemp("", "gostaff-update-*")
+			if err != nil {
+				return "", err
+			}
+			if _, err := io.Copy(tmp, tr); err != nil {
+				tmp.Close()
+				os.Remove(tmp.Name())
+				return "", err
+			}
+			tmp.Close()
+			if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+				os.Remove(tmp.Name())
+				return "", err
+			}
+			return tmp.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("binary %q not found in archive", binary)
+}
+
+func replaceBinary(dst, src string) error {
+	// Rename is atomic on the same filesystem. If cross-device, fall back to copy.
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
 }
