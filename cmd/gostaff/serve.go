@@ -244,6 +244,26 @@ Skills vs plugins:
 	discordRoles := transport.NewDiscordRoleClient(cfg.Transports.Discord.Token, cfg.Transports.Discord.GuildID)
 	transport.SyncPeopleRoles(ctx, discordRoles, store, logger)
 
+	// Build channel name resolvers for all configured transports.
+	var channelResolvers []transport.ChannelNameResolver
+	if cfg.Transports.Discord.Token != "" {
+		channelResolvers = append(channelResolvers, transport.NewDiscordTransport(transport.DiscordConfig{
+			Token: cfg.Transports.Discord.Token,
+			AppID: cfg.Transports.Discord.AppID,
+		}, logger))
+	}
+	if cfg.Transports.Slack.BotToken != "" {
+		channelResolvers = append(channelResolvers, transport.NewSlackTransport(transport.SlackConfig{
+			AppToken: cfg.Transports.Slack.AppToken,
+			BotToken: cfg.Transports.Slack.BotToken,
+		}, logger))
+	}
+	if cfg.Transports.Telegram.Token != "" {
+		channelResolvers = append(channelResolvers, transport.NewTelegramTransport(transport.TelegramConfig{
+			Token: cfg.Transports.Telegram.Token,
+		}, logger))
+	}
+
 	apiServer := api.New(api.Config{
 		Store:          store,
 		SkillReg:       skillRegistry,
@@ -260,7 +280,8 @@ Skills vs plugins:
 		Scheduler:      scheduler,
 		ConfigPath:     configPath,
 		Router:         router,
-		DiscordRoles:   discordRoles,
+		DiscordRoles:     discordRoles,
+		ChannelResolvers: channelResolvers,
 	})
 	// Restore execute fallback if previously enabled.
 	apiServer.RestoreExecuteFallback(ctx)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Blocks, Settings, CalendarSync, LayoutDashboard, Plus, Users, DollarSign, Brain, Puzzle, type LucideIcon } from 'lucide-react'
+import { Blocks, Settings, CalendarSync, LayoutDashboard, Plus, Users, DollarSign, Brain, Puzzle, Hash, type LucideIcon } from 'lucide-react'
 import { api, type Conversation } from '@/lib/api'
 
 type NavItem = { Icon: LucideIcon; label: string; route: string }
@@ -12,6 +12,7 @@ const TOP_NAV: NavItem[] = [
   { Icon: CalendarSync, label: 'Automations', route: '/automations' },
   { Icon: Users, label: 'People', route: '/people' },
   { Icon: DollarSign, label: 'Costs', route: '/costs' },
+  { Icon: Hash, label: 'Channels', route: '/channels' },
   { Icon: Brain, label: 'Memory', route: '/memory' },
 ]
 

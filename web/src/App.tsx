@@ -9,6 +9,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { PeoplePage } from '@/pages/PeoplePage'
 import { CostsPage } from '@/pages/CostsPage'
 import { MemoryPage } from '@/pages/MemoryPage'
+import { ChannelsPage } from '@/pages/ChannelsPage'
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/costs" element={<CostsPage />} />
             <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/channels" element={<ChannelsPage />} />
           </Routes>
         </main>
       </div>

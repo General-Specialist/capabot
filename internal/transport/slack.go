@@ -60,6 +60,34 @@ func NewSlackTransport(cfg SlackConfig, logger zerolog.Logger) *SlackTransport {
 // Name returns the transport identifier.
 func (s *SlackTransport) Name() string { return "slack" }
 
+// ResolveChannelName returns the Slack channel name for the given channel ID.
+func (s *SlackTransport) ResolveChannelName(ctx context.Context, channelID string) (string, error) {
+	if s.cfg.BotToken == "" {
+		return "", nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://slack.com/api/conversations.info?channel="+channelID, nil)
+	if err != nil {
+		return "", nil
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.BotToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", nil
+	}
+	defer resp.Body.Close()
+	var result struct {
+		OK      bool `json:"ok"`
+		Channel struct {
+			Name string `json:"name"`
+		} `json:"channel"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || !result.OK {
+		return "", nil
+	}
+	return result.Channel.Name, nil
+}
+
 // OnMessage registers the handler called for every inbound message.
 // Must be called before Start.
 func (s *SlackTransport) OnMessage(handler func(ctx context.Context, msg InboundMessage)) {

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X, Settings, Save, Loader2 } from 'lucide-react'
 import { Markdown } from '@/components/Markdown'
-import { api, type Skill, type CatalogSkill } from '@/lib/api'
+import { api, type Skill, type CatalogSkill, type AgentTool } from '@/lib/api'
 import { useAlert } from '@/components/AlertProvider'
 
 function formatCount(n: number): string {
@@ -29,6 +29,7 @@ export function SkillsPage() {
   const [installResults, setInstallResults] = useState<Record<string, { success: boolean; message: string }>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
+  const [tools, setTools] = useState<AgentTool[]>([])
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Create form
@@ -44,8 +45,8 @@ export function SkillsPage() {
 
   useEffect(() => {
     let cancelled = false
-    api.skills()
-      .then(res => { if (!cancelled) setAllSkills(res as InstalledSkill[]) })
+    Promise.all([api.skills(), api.tools()])
+      .then(([sk, tl]) => { if (!cancelled) { setAllSkills(sk as InstalledSkill[]); setTools(tl) } })
       .catch((err: unknown) => { if (!cancelled) alert(err instanceof Error ? err.message : 'Failed to load skills', 'error') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -215,7 +216,22 @@ export function SkillsPage() {
         )}
 
         {tab === 'plugins' && (
-          <PluginList skills={plugins} loading={loading} removing={removing} onRemove={uninstall} />
+          <>
+            <PluginList skills={plugins} loading={loading} removing={removing} onRemove={uninstall} />
+            {tools.length > 0 && (
+              <div className="mt-6">
+                <p className="text-xs text-normal-black mb-3">Registered tools available to the agent:</p>
+                <div className="space-y-1">
+                  {tools.map(t => (
+                    <div key={t.name} className="flex items-start gap-3 px-4 py-2 rounded-xl hover:bg-sidebar-white transition-colors">
+                      <p className="text-sm font-medium text-hover-black font-mono shrink-0">{t.name}</p>
+                      {t.description && <p className="text-xs text-normal-black mt-0.5">{t.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {tab === 'browse' && (

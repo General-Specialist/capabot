@@ -64,6 +64,18 @@ func NewDiscordTransport(cfg DiscordConfig, logger zerolog.Logger) *DiscordTrans
 // Name returns the transport identifier.
 func (t *DiscordTransport) Name() string { return "discord" }
 
+// ResolveChannelName returns the Discord channel name for the given channel ID.
+func (t *DiscordTransport) ResolveChannelName(_ context.Context, channelID string) (string, error) {
+	if t.session == nil {
+		return "", nil
+	}
+	ch, err := t.session.Channel(channelID)
+	if err != nil {
+		return "", nil // not found on this transport
+	}
+	return ch.Name, nil
+}
+
 // OnMessage registers the inbound message handler. Must be called before Start.
 func (t *DiscordTransport) OnMessage(handler func(ctx context.Context, msg InboundMessage)) {
 	t.handler = handler

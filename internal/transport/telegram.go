@@ -54,6 +54,41 @@ func NewTelegramTransport(cfg TelegramConfig, logger zerolog.Logger) *TelegramTr
 // Name returns the transport identifier.
 func (t *TelegramTransport) Name() string { return "telegram" }
 
+// ResolveChannelName returns the Telegram chat title for the given chat ID.
+func (t *TelegramTransport) ResolveChannelName(ctx context.Context, channelID string) (string, error) {
+	if t.token == "" {
+		return "", nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		telegramAPIBase+t.token+"/getChat?chat_id="+channelID, nil)
+	if err != nil {
+		return "", nil
+	}
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return "", nil
+	}
+	defer resp.Body.Close()
+	var result struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Title     string `json:"title"`
+			FirstName string `json:"first_name"`
+			Username  string `json:"username"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || !result.OK {
+		return "", nil
+	}
+	if result.Result.Title != "" {
+		return result.Result.Title, nil
+	}
+	if result.Result.Username != "" {
+		return result.Result.Username, nil
+	}
+	return result.Result.FirstName, nil
+}
+
 // OnMessage registers the handler called for every inbound message.
 func (t *TelegramTransport) OnMessage(handler func(ctx context.Context, msg InboundMessage)) {
 	t.handler = handler

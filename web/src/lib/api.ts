@@ -186,6 +186,20 @@ export interface Person {
   updated_at: string
 }
 
+export interface AgentTool {
+  name: string
+  description: string
+}
+
+export interface ChannelConfig {
+  channel_id: string
+  tag: string
+  system_prompt: string
+  skill_names: string[]
+  model: string
+  memory_isolated: boolean
+}
+
 export interface MemoryEntry {
   id: number
   tenant_id: string
@@ -251,6 +265,7 @@ export const api = {
   agents: () => get<Agent[]>('/agents'),
   conversations: (limit = 50) => get<Conversation[]>(`/conversations?limit=${limit}`),
   conversation: (id: string) => get<{ session: Conversation; messages: Message[] }>(`/conversations/${id}`),
+  tools: () => get<AgentTool[]>('/tools'),
   skills: () => get<Skill[]>('/skills'),
   skillsCatalog: (q?: string, limit = 200, offset = 0) => {
     const params = new URLSearchParams()
@@ -365,6 +380,13 @@ export const api = {
     return fetch(BASE + `/people/${id}`, { method: 'DELETE' })
       .then(res => { if (!res.ok) throw new Error(`API error ${res.status}`) })
   },
+
+  channels: () => get<ChannelConfig[]>('/channels'),
+  channelGet: (id: string) => get<ChannelConfig>(`/channels/${encodeURIComponent(id)}`),
+  channelSet: (id: string, cfg: Omit<ChannelConfig, 'channel_id'>) =>
+    put<{ success: boolean }>(`/channels/${encodeURIComponent(id)}`, cfg),
+  channelDelete: (id: string) => del<{ success: boolean }>(`/channels/${encodeURIComponent(id)}`),
+  channelResolve: (id: string) => get<{ name: string }>(`/channels/${encodeURIComponent(id)}/resolve`),
 
   memory: () => get<MemoryEntry[]>('/memory'),
   memorySet: (key: string, value: string) => put<{ key: string }>(`/memory/${encodeURIComponent(key)}`, { value }),

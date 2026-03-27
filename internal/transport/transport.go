@@ -26,6 +26,13 @@ type OutboundMessage struct {
 	AvatarData  string // optional: base64 data URI (e.g. "data:image/png;base64,...") — used when creating webhook
 }
 
+// ChannelNameResolver can resolve a platform channel ID to a human-readable name.
+type ChannelNameResolver interface {
+	// ResolveChannelName returns the display name for the given channel ID,
+	// or ("", nil) if the channel is not found on this transport.
+	ResolveChannelName(ctx context.Context, channelID string) (string, error)
+}
+
 // Transport is the interface all platform adapters must implement.
 type Transport interface {
 	// Start begins accepting messages. Blocks until ctx is cancelled or an error occurs.

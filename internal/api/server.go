@@ -39,8 +39,9 @@ type Server struct {
 	skillsDir      string // destination for skills installed via API
 	clawHubToken   string // optional GitHub PAT for ClawHub requests
 	configPath     string // path to config.yaml for key management
-	router         *llm.Router
-	discordRoles   *transport.DiscordRoleClient
+	router           *llm.Router
+	discordRoles     *transport.DiscordRoleClient
+	channelResolvers []transport.ChannelNameResolver
 }
 
 // Config holds dependencies for the API server.
@@ -71,6 +72,8 @@ type Config struct {
 	Router *llm.Router
 	// DiscordRoles syncs person roles to Discord (nil if Discord not configured).
 	DiscordRoles *transport.DiscordRoleClient
+	// ChannelResolvers resolves channel IDs to human-readable names across transports.
+	ChannelResolvers []transport.ChannelNameResolver
 }
 
 // New creates a new API server and registers all routes.
@@ -95,8 +98,9 @@ func New(cfg Config) *Server {
 		skillsDir:      skillsDir,
 		clawHubToken:   cfg.ClawHubToken,
 		configPath:     cfg.ConfigPath,
-		router:         cfg.Router,
-		discordRoles:   cfg.DiscordRoles,
+		router:           cfg.Router,
+		discordRoles:     cfg.DiscordRoles,
+		channelResolvers: cfg.ChannelResolvers,
 	}
 
 	// REST endpoints
@@ -113,6 +117,8 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillsUninstall)
 	s.mux.HandleFunc("GET /api/skills/{name}/config", s.handleSkillConfigGet)
 	s.mux.HandleFunc("PUT /api/skills/{name}/config", s.handleSkillConfigSet)
+	s.mux.HandleFunc("GET /api/channels/{id}/resolve", s.handleChannelResolve)
+	s.mux.HandleFunc("GET /api/tools", s.handleToolsList)
 	s.mux.HandleFunc("GET /api/channels", s.handleChannelsList)
 	s.mux.HandleFunc("GET /api/channels/{id}", s.handleChannelGet)
 	s.mux.HandleFunc("PUT /api/channels/{id}", s.handleChannelSet)
@@ -255,6 +261,35 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			ConfigSchema: configSchema,
 			HasConfig:    hasConfig,
 		}
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleChannelResolve(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, resolver := range s.channelResolvers {
+		name, err := resolver.ResolveChannelName(r.Context(), id)
+		if err == nil && name != "" {
+			writeJSON(w, map[string]string{"name": name})
+			return
+		}
+	}
+	writeError(w, "channel not found", http.StatusNotFound)
+}
+
+func (s *Server) handleToolsList(w http.ResponseWriter, r *http.Request) {
+	if s.toolReg == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	type toolDTO struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	tools := s.toolReg.List()
+	out := make([]toolDTO, len(tools))
+	for i, t := range tools {
+		out[i] = toolDTO{Name: t.Name(), Description: t.Description()}
 	}
 	writeJSON(w, out)
 }
