@@ -189,6 +189,7 @@ export interface Person {
 export interface AgentTool {
   name: string
   description: string
+  plugin?: string
 }
 
 export interface ChannelConfig {

@@ -200,6 +200,7 @@ func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg
 			logger.Error().Err(err).Str("skill", name).Msg("failed to register native skill tool")
 			continue
 		}
+		toolReg.SetSource(name, name)
 
 		logger.Info().Str("skill", name).Str("dir", skillDir).Msg("native skill registered (Tier 2)")
 	}
@@ -211,19 +212,26 @@ func registerNativeSkills(ctx context.Context, skillReg *skill.Registry, toolReg
 func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, router *llm.Router, store *memory.Store, logger zerolog.Logger) *gosdk.Registration {
 	combined := &gosdk.Registration{}
 
-	// Collect all plugins: compiled-in Go plugins + OpenClaw adapters
-	plugins := sdkPlugins()
+	type pluginEntry struct {
+		plugin gosdk.Plugin
+		source string // skill name for OpenClaw plugins, "" for compiled-in
+	}
+
+	var plugins []pluginEntry
+	for _, p := range sdkPlugins() {
+		plugins = append(plugins, pluginEntry{plugin: p})
+	}
 	for _, name := range skillReg.PluginSkillNames() {
 		dir, ok := skillReg.PluginPath(name)
 		if !ok {
 			continue
 		}
-		plugins = append(plugins, gosdk.NewOpenClawPlugin(dir))
+		plugins = append(plugins, pluginEntry{plugin: gosdk.NewOpenClawPlugin(dir), source: name})
 		logger.Info().Str("skill", name).Str("dir", dir).Msg("wrapping OpenClaw plugin via SDK adapter")
 	}
 
-	for _, p := range plugins {
-		reg, err := gosdk.InitPlugin(p)
+	for _, pe := range plugins {
+		reg, err := gosdk.InitPlugin(pe.plugin)
 		if err != nil {
 			logger.Error().Err(err).Msg("failed to init SDK plugin")
 			continue
@@ -234,15 +242,18 @@ func registerSDKPlugins(skillReg *skill.Registry, toolReg *agent.Registry, route
 				logger.Error().Err(err).Str("tool", t.Name()).Msg("failed to register SDK tool")
 				continue
 			}
+			if pe.source != "" {
+				toolReg.SetSource(t.Name(), pe.source)
+			}
 			logger.Info().Str("tool", t.Name()).Msg("SDK plugin tool registered")
 		}
 
 		combined.Hooks = append(combined.Hooks, reg.Hooks...)
 		combined.Routes = append(combined.Routes, reg.Routes...)
 
-		for _, pe := range reg.Providers {
-			router.SetProvider(pe.Name, pe.Provider)
-			logger.Info().Str("provider", pe.Name).Msg("SDK plugin provider registered")
+		for _, prov := range reg.Providers {
+			router.SetProvider(prov.Name, prov.Provider)
+			logger.Info().Str("provider", prov.Name).Msg("SDK plugin provider registered")
 		}
 
 		// Persist channel configs declared by the plugin.

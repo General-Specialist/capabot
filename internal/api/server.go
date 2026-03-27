@@ -285,11 +285,12 @@ func (s *Server) handleToolsList(w http.ResponseWriter, r *http.Request) {
 	type toolDTO struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Plugin      string `json:"plugin,omitempty"`
 	}
 	tools := s.toolReg.List()
 	out := make([]toolDTO, len(tools))
 	for i, t := range tools {
-		out[i] = toolDTO{Name: t.Name(), Description: t.Description()}
+		out[i] = toolDTO{Name: t.Name(), Description: t.Description(), Plugin: s.toolReg.SourceOf(t.Name())}
 	}
 	writeJSON(w, out)
 }

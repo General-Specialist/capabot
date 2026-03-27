@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Trash2, Plus, X, Download, ChevronDown } from 'lucide-react'
-import { api, type Skill } from '@/lib/api'
+import { Trash2, Plus, X, Download, ChevronDown, Save, Loader2 } from 'lucide-react'
+import { api, type Skill, type AgentTool } from '@/lib/api'
+import { useAlert } from '@/components/AlertProvider'
 
 const GO_PLACEHOLDER = `package main
 
@@ -18,8 +19,9 @@ func main() {
 }`
 
 export function PluginsPage() {
-  const [tab, setTab] = useState<'custom' | 'openclaw'>('custom') // openclaw tab for OpenClaw plugins
+  const [tab, setTab] = useState<'custom' | 'clawhub'>('custom')
   const [plugins, setPlugins] = useState<Skill[]>([])
+  const [tools, setTools] = useState<AgentTool[]>([])
   const [loading, setLoading] = useState(true)
   const [removing, setRemoving] = useState<Record<string, boolean>>({})
 
@@ -36,8 +38,13 @@ export function PluginsPage() {
 
   useEffect(() => {
     let cancelled = false
-    api.skills()
-      .then(res => { if (!cancelled) setPlugins(res.filter(s => s.tier >= 2)) })
+    Promise.all([api.skills(), api.tools()])
+      .then(([sk, tl]) => {
+        if (!cancelled) {
+          setPlugins(sk.filter(s => s.tier >= 2))
+          setTools(tl)
+        }
+      })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -107,21 +114,21 @@ export function PluginsPage() {
   }
 
   const custom = plugins.filter(p => p.tier === 2)
-  const openclaw = plugins.filter(p => p.tier === 3)
+  const clawhub = plugins.filter(p => p.tier === 3)
 
   return (
     <div className="w-full min-h-screen bg-white px-6 py-6">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex gap-1 text-sm">
-            {(['custom', 'openclaw'] as const).map(t => (
+            {(['custom', 'clawhub'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={`px-3 py-1 rounded-md transition-colors ${tab === t ? 'bg-sidebar-white text-hover-black font-medium' : 'text-normal-black hover:text-hover-black'}`}
               >
                 {t === 'custom' && <>Custom {custom.length > 0 && <span className="ml-1 text-xs text-normal-black">({custom.length})</span>}</>}
-                {t === 'openclaw' && <>OpenClaw {openclaw.length > 0 && <span className="ml-1 text-xs text-normal-black">({openclaw.length})</span>}</>}
+                {t === 'clawhub' && <>ClawHub {clawhub.length > 0 && <span className="ml-1 text-xs text-normal-black">({clawhub.length})</span>}</>}
               </button>
             ))}
           </div>
@@ -181,64 +188,84 @@ export function PluginsPage() {
         </AnimatePresence>
 
         {tab === 'custom' && !showCreate && (
-          <PluginList plugins={custom} loading={loading} removing={removing} onRemove={uninstall} empty="No plugins yet. Plugins are tool calls — have an agent create one for you, or click New to upload a Go script." />
+          <CustomPluginList plugins={custom} tools={tools} loading={loading} removing={removing} onRemove={uninstall} />
         )}
 
-        {tab === 'openclaw' && (
-          <>
-            <div className="mb-6 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-mono">
-                <span className="text-normal-black shrink-0">openclaw plugins install</span>
-                <input
-                  value={installInput}
-                  onChange={e => setInstallInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') void installFromGitHub() }}
-                  placeholder="name or owner/repo"
-                  className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none font-mono"
-                />
-                <button
-                  onClick={() => void installFromGitHub()}
-                  disabled={installLoading || !installInput.trim()}
-                  className="h-7 w-7 rounded-full flex items-center justify-center bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity shrink-0"
-                >
-                  {installLoading ? (
-                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Download size={12} />
-                  )}
-                </button>
-              </div>
-              {installResult && (
-                <p className={`text-xs font-mono ${installResult.success ? 'text-terminal-green' : 'text-red'}`}>
-                  {installResult.message}
-                </p>
-              )}
-            </div>
-            <PluginList plugins={openclaw} loading={loading} removing={removing} onRemove={uninstall} empty="No OpenClaw plugins installed yet." />
-          </>
+        {tab === 'clawhub' && (
+          <ClawHubTab
+            installInput={installInput}
+            setInstallInput={setInstallInput}
+            installLoading={installLoading}
+            installResult={installResult}
+            onInstall={() => void installFromGitHub()}
+            plugins={clawhub}
+            loading={loading}
+            removing={removing}
+            onRemove={uninstall}
+            tools={tools}
+          />
         )}
       </div>
     </div>
   )
 }
 
-function PluginList({ plugins, loading, removing, onRemove, empty }: {
+function ClawHubTab({ installInput, setInstallInput, installLoading, installResult, onInstall, plugins, loading, removing, onRemove, tools }: {
+  installInput: string
+  setInstallInput: (v: string) => void
+  installLoading: boolean
+  installResult: { success: boolean; message: string } | null
+  onInstall: () => void
   plugins: Skill[]
   loading: boolean
   removing: Record<string, boolean>
   onRemove: (name: string) => void
-  empty: string
+  tools: AgentTool[]
+}) {
+  return (
+    <>
+      <div className="mb-6 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-mono">
+          <span className="text-normal-black shrink-0">install</span>
+          <input
+            value={installInput}
+            onChange={e => setInstallInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') onInstall() }}
+            placeholder="name or owner/repo"
+            className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border-white bg-sidebar-white text-hover-black outline-none font-mono"
+          />
+          <button
+            onClick={onInstall}
+            disabled={installLoading || !installInput.trim()}
+            className="h-7 w-7 rounded-full flex items-center justify-center bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity shrink-0"
+          >
+            {installLoading ? (
+              <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Download size={12} />
+            )}
+          </button>
+        </div>
+        {installResult && (
+          <p className={`text-xs font-mono ${installResult.success ? 'text-terminal-green' : 'text-red'}`}>
+            {installResult.message}
+          </p>
+        )}
+      </div>
+      <ClawHubPluginList plugins={plugins} tools={tools} loading={loading} removing={removing} onRemove={onRemove} />
+    </>
+  )
+}
+
+function CustomPluginList({ plugins, tools, loading, removing, onRemove, empty = "No plugins yet. Plugins are tool calls — have an agent create one for you, or click New to upload a Go script." }: {
+  plugins: Skill[]
+  tools: AgentTool[]
+  loading: boolean
+  removing: Record<string, boolean>
+  onRemove: (name: string) => void
+  empty?: string
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [code, setCode] = useState<Record<string, string>>({})
-
-  const toggle = (name: string) => {
-    if (expanded === name) { setExpanded(null); return }
-    setExpanded(name)
-    if (!(name in code)) {
-      api.skillGet(name).then(res => setCode(prev => ({ ...prev, [name]: res.code }))).catch(() => {})
-    }
-  }
 
   if (!loading && plugins.length === 0) {
     return <p className="text-sm text-normal-black">{empty}</p>
@@ -247,12 +274,13 @@ function PluginList({ plugins, loading, removing, onRemove, empty }: {
   return (
     <div className="space-y-2">
       {plugins.map(plugin => {
+        const pluginTools = tools.filter(t => t.plugin === plugin.name)
         const isOpen = expanded === plugin.name
         return (
-          <div key={plugin.name} className="rounded-2xl border border-border-white">
+          <div key={plugin.name} className="rounded-2xl border border-border-white overflow-hidden">
             <button
               className="w-full flex items-center gap-4 px-4 py-3 text-left"
-              onClick={() => toggle(plugin.name)}
+              onClick={() => setExpanded(prev => prev === plugin.name ? null : plugin.name)}
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -265,35 +293,219 @@ function PluginList({ plugins, loading, removing, onRemove, empty }: {
                   <p className="text-xs text-normal-black truncate mt-0.5">{plugin.description}</p>
                 )}
               </div>
-              <ChevronDown size={13} className={`text-normal-black shrink-0 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
-            </button>
-            {isOpen && (
-              <div className="px-4 pb-4 flex flex-col gap-3">
-                {plugin.instructions && (
-                  <p className="text-xs text-normal-black whitespace-pre-wrap">{plugin.instructions}</p>
-                )}
-                {code[plugin.name] !== undefined
-                  ? <pre className="text-xs font-mono text-hover-black bg-sidebar-white rounded-xl p-3 overflow-x-auto whitespace-pre">{code[plugin.name]}</pre>
-                  : <div className="w-4 h-4 border border-border-white border-t-transparent rounded-full animate-spin" />
-                }
+              <div className="flex items-center gap-2 shrink-0">
                 {plugin.removable && (
                   <button
-                    onClick={() => onRemove(plugin.name)}
+                    onClick={e => { e.stopPropagation(); onRemove(plugin.name) }}
                     disabled={removing[plugin.name]}
-                    className="flex items-center gap-1.5 text-xs text-normal-black hover:text-red disabled:opacity-40 transition-colors w-fit"
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
                   >
                     {removing[plugin.name]
                       ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
                       : <Trash2 size={13} />
                     }
-                    Uninstall
                   </button>
+                )}
+                <ChevronDown size={13} className={`text-normal-black transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+              </div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-border-white px-4 py-3 bg-sidebar-white space-y-1">
+                {pluginTools.length > 0 ? pluginTools.map(t => (
+                  <div key={t.name} className="flex items-start gap-3 py-1">
+                    <p className="text-xs font-medium text-hover-black font-mono shrink-0">{t.name}</p>
+                    {t.description && <p className="text-xs text-normal-black">{t.description}</p>}
+                  </div>
+                )) : (
+                  <p className="text-xs text-normal-black">No registered tools.</p>
                 )}
               </div>
             )}
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function ClawHubPluginList({ plugins, tools, loading, removing, onRemove }: {
+  plugins: Skill[]
+  tools: AgentTool[]
+  loading: boolean
+  removing: Record<string, boolean>
+  onRemove: (name: string) => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  if (!loading && plugins.length === 0) {
+    return <p className="text-sm text-normal-black">No ClawHub plugins installed yet.</p>
+  }
+
+  return (
+    <div className="space-y-2">
+      {plugins.map(plugin => {
+        const pluginTools = tools.filter(t => t.plugin === plugin.name)
+        const hasSchema = plugin.config_schema && Object.keys(plugin.config_schema).length > 0
+        const isOpen = expanded === plugin.name
+        const isRemoving = removing[plugin.name]
+        return (
+          <div key={plugin.name} className="rounded-2xl border border-border-white overflow-hidden">
+            <button
+              className="w-full flex items-center gap-4 px-4 py-3 text-left"
+              onClick={() => setExpanded(prev => prev === plugin.name ? null : plugin.name)}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-hover-black truncate">{plugin.name}</p>
+                  {plugin.version && (
+                    <span className="text-xs text-normal-black font-mono shrink-0">{plugin.version}</span>
+                  )}
+                </div>
+                {plugin.description && (
+                  <p className="text-xs text-normal-black truncate mt-0.5">{plugin.description}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {plugin.removable && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onRemove(plugin.name) }}
+                    disabled={isRemoving}
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
+                  >
+                    {isRemoving
+                      ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                      : <Trash2 size={13} />
+                    }
+                  </button>
+                )}
+                <ChevronDown size={13} className={`text-normal-black transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+              </div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-border-white bg-sidebar-white">
+                <div className="px-4 py-3 space-y-1">
+                  {pluginTools.length > 0 ? pluginTools.map(t => (
+                    <div key={t.name} className="flex items-start gap-3 py-1">
+                      <p className="text-xs font-medium text-hover-black font-mono shrink-0">{t.name}</p>
+                      {t.description && <p className="text-xs text-normal-black">{t.description}</p>}
+                    </div>
+                  )) : (
+                    <p className="text-xs text-normal-black">No registered tools.</p>
+                  )}
+                </div>
+                {hasSchema && (
+                  <PluginConfigForm pluginName={plugin.name} schema={plugin.config_schema!} />
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function PluginConfigForm({ pluginName, schema }: { pluginName: string; schema: Record<string, unknown> }) {
+  const { alert } = useAlert()
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const properties = (schema.properties ?? {}) as Record<string, { type?: string; description?: string; default?: unknown }>
+  const required = new Set((schema.required ?? []) as string[])
+  const fields = Object.entries(properties)
+
+  useEffect(() => {
+    api.skillConfigGet(pluginName)
+      .then(cfg => {
+        const v: Record<string, string> = {}
+        for (const [key] of fields) {
+          v[key] = cfg[key] != null ? String(cfg[key]) : ''
+        }
+        setValues(v)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [pluginName]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const config: Record<string, unknown> = {}
+      for (const [key, def] of fields) {
+        const val = values[key]
+        if (val === '' && !required.has(key)) continue
+        if (def.type === 'number' || def.type === 'integer') {
+          config[key] = Number(val)
+        } else if (def.type === 'boolean') {
+          config[key] = val === 'true'
+        } else {
+          config[key] = val
+        }
+      }
+      await api.skillConfigSet(pluginName, config)
+      alert('Config saved. Restart to apply.', 'success')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save config', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="border-t border-border-white px-4 py-4 bg-sidebar-white flex items-center gap-2 text-xs text-normal-black">
+        <Loader2 size={12} className="animate-spin" /> Loading config…
+      </div>
+    )
+  }
+
+  if (fields.length === 0) {
+    return (
+      <div className="border-t border-border-white px-4 py-3 bg-sidebar-white text-xs text-normal-black">
+        This plugin declares a config schema but has no configurable fields.
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-t border-border-white px-4 py-4 bg-sidebar-white space-y-3">
+      {fields.map(([key, def]) => (
+        <div key={key}>
+          <label className="block text-xs font-medium text-hover-black mb-1">
+            {key}{required.has(key) && <span className="text-red ml-0.5">*</span>}
+          </label>
+          {def.description && (
+            <p className="text-[11px] text-normal-black mb-1">{def.description}</p>
+          )}
+          {def.type === 'boolean' ? (
+            <select
+              value={values[key] || 'false'}
+              onChange={e => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+              className="w-full px-3 py-1.5 text-sm rounded-lg border border-border-white bg-white text-hover-black outline-none"
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          ) : (
+            <input
+              type={def.type === 'number' || def.type === 'integer' ? 'number' : 'text'}
+              value={values[key] || ''}
+              onChange={e => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+              placeholder={def.default != null ? String(def.default) : key}
+              className="w-full px-3 py-1.5 text-sm rounded-lg border border-border-white bg-white text-hover-black outline-none font-mono"
+            />
+          )}
+        </div>
+      ))}
+      <button
+        onClick={() => void save()}
+        disabled={saving}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-brand-primary text-white hover:opacity-80 disabled:opacity-40 transition-opacity"
+      >
+        {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+        {saving ? 'Saving…' : 'Save config'}
+      </button>
     </div>
   )
 }

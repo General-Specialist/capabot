@@ -39,7 +39,8 @@ type ToolResult struct {
 type Registry struct {
 	mu       sync.RWMutex
 	tools    map[string]Tool
-	extended map[string]bool // true = extended (lazy-loaded via use_tool)
+	extended map[string]bool   // true = extended (lazy-loaded via use_tool)
+	sources  map[string]string // tool name → plugin/skill source name
 }
 
 // NewRegistry creates an empty tool registry.
@@ -47,7 +48,22 @@ func NewRegistry() *Registry {
 	return &Registry{
 		tools:    make(map[string]Tool),
 		extended: make(map[string]bool),
+		sources:  make(map[string]string),
 	}
+}
+
+// SetSource records which plugin/skill registered a tool.
+func (r *Registry) SetSource(toolName, source string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sources[toolName] = source
+}
+
+// SourceOf returns the plugin/skill that registered the named tool, or "".
+func (r *Registry) SourceOf(toolName string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.sources[toolName]
 }
 
 // Register adds a core tool to the registry.

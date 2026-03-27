@@ -13,10 +13,9 @@ cd gostaff
 # create the database (after installing postgres for your OS)
 createuser -s gostaff 2>/dev/null; createdb -O gostaff gostaff 2>/dev/null
 
-cp config.example.yaml ~/.gostaff/config.yaml
-# add at least one API key in config.yaml
-air                                   # backend on :9090
 cd web && bun install && bun run dev  # frontend on :5173
+air                                   # backend on :9090
+# then add an API key via Settings (recommended) or ~/.gostaff/config.yaml (see example)
 ```
 
 Backend: http://localhost:9090 | Frontend: http://localhost:5173
