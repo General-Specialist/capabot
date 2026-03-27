@@ -195,7 +195,6 @@ export function ChannelsPage() {
                       {names[ch.channel_id] ?? ch.channel_id}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-normal-black font-mono opacity-50 shrink-0">{ch.channel_id}</span>
                       {ch.tag && <span className="text-xs text-normal-black">{tagToDisplay(ch.tag)}</span>}
                       {ch.model && <span className="text-xs text-normal-black">model: {ch.model}</span>}
                       {ch.memory_isolated && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sidebar-white text-normal-black border border-border-white">isolated</span>}

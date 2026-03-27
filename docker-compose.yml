@@ -1,39 +1,17 @@
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: gostaff
-      POSTGRES_USER: gostaff
-      POSTGRES_PASSWORD: gostaff
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gostaff"]
-      interval: 2s
-      timeout: 3s
-      retries: 5
-
   backend:
     build: .
     ports:
       - "9090:9090"
     environment:
-      GOSTAFF_DATABASE_URL: postgres://gostaff:gostaff@postgres:5432/gostaff?sslmode=disable
       GOSTAFF_SERVER_ADDR: ":9090"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    network_mode: host
 
   frontend:
     build: ./web
     ports:
       - "5173:5173"
     environment:
-      API_URL: http://backend:9090
+      API_URL: http://localhost:9090
     depends_on:
       - backend
-
-volumes:
-  pgdata:

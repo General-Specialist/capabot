@@ -56,8 +56,8 @@ type Section = 'general' | 'api-keys' | 'transports'
 
 const NAV: { id: Section; label: string }[] = [
   { id: 'general',    label: 'General' },
-  { id: 'api-keys',   label: 'API keys' },
-  { id: 'transports', label: 'Transports' },
+  { id: 'api-keys',   label: 'Model Keys' },
+  { id: 'transports', label: 'Messaging' },
 ]
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {

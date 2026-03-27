@@ -4,27 +4,22 @@ Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99
 
 ## Quick start
 
-**Prerequisites:** [Docker](https://www.docker.com/get-started/)
+**Prerequisites:** [Go](https://go.dev/dl/), [Bun](https://bun.sh/), [PostgreSQL 17](https://www.postgresql.org/download/)
 
 ```bash
 git clone https://github.com/General-Specialist/gostaff.git
 cd gostaff
+
+# create the database (after installing postgres for your OS)
+createuser -s gostaff 2>/dev/null; createdb -O gostaff gostaff 2>/dev/null
+
 cp config.example.yaml ~/.gostaff/config.yaml
 # add at least one API key in config.yaml
-docker compose up --build
+air                                   # backend on :9090
+cd web && bun install && bun run dev  # frontend on :5173
 ```
 
 Backend: http://localhost:9090 | Frontend: http://localhost:5173
-
-## Development
-
-**Prerequisites:** [Go](https://go.dev/dl/), [Bun](https://bun.sh/), [Air](https://github.com/air-verse/air)
-
-```bash
-docker compose up postgres -d
-air                                   # backend hot-reload on :9090
-cd web && bun install && bun run dev  # frontend HMR on :5173
-```
 
 ## Key features
 
