@@ -143,7 +143,7 @@ func (a *AnthropicProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("anthropic chat: %w", httpStatusError(resp))
+		return nil, fmt.Errorf("anthropic chat: %w", classifyAnthropicError(resp))
 	}
 
 	var apiResp anthropicResponse
@@ -173,8 +173,9 @@ func (a *AnthropicProvider) Stream(ctx context.Context, req ChatRequest) (<-chan
 	}
 
 	if resp.StatusCode >= 400 {
+		pe := classifyAnthropicError(resp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("anthropic stream: %w", httpStatusError(resp))
+		return nil, fmt.Errorf("anthropic stream: %w", pe)
 	}
 
 	ch := make(chan StreamChunk, 64)

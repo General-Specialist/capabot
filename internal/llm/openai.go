@@ -17,6 +17,7 @@ type OpenAIProvider struct {
 	apiKey     string
 	model      string
 	baseURL    string
+	name       string // provider name for error reporting (default "openai")
 	httpClient *http.Client
 }
 
@@ -41,6 +42,7 @@ func NewOpenAIProvider(cfg OpenAIConfig) *OpenAIProvider {
 		apiKey:     cfg.APIKey,
 		model:      model,
 		baseURL:    baseURL,
+		name:       "openai",
 		httpClient: &http.Client{},
 	}
 }
@@ -133,7 +135,7 @@ func (o *OpenAIProvider) chatWithHeaders(ctx context.Context, req ChatRequest, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("openai chat: %w", httpStatusError(resp))
+		return nil, fmt.Errorf("openai chat: %w", classifyOpenAIError(o.name, resp))
 	}
 
 	var apiResp openAIResponse
@@ -171,8 +173,9 @@ func (o *OpenAIProvider) streamWithHeaders(ctx context.Context, req ChatRequest,
 	}
 
 	if resp.StatusCode >= 400 {
+		pe := classifyOpenAIError(o.name, resp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("openai stream: %w", httpStatusError(resp))
+		return nil, fmt.Errorf("openai stream: %w", pe)
 	}
 
 	ch := make(chan StreamChunk, 64)

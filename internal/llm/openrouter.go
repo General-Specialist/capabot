@@ -41,6 +41,7 @@ func NewOpenRouterProvider(cfg OpenRouterConfig) *OpenRouterProvider {
 		Model:   model,
 		BaseURL: openRouterBaseURL,
 	})
+	inner.name = "openrouter"
 	return &OpenRouterProvider{
 		inner:   inner,
 		appName: cfg.AppName,

@@ -59,7 +59,7 @@ func (g *GeminiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	model := g.resolveModel(req.Model)
 	result, err := g.client.Models.GenerateContent(ctx, model, contents, config)
 	if err != nil {
-		return nil, fmt.Errorf("gemini generate content: %w", err)
+		return nil, fmt.Errorf("gemini generate content: %w", classifyGeminiError(err))
 	}
 
 	resp, err := extractResponse(result)
@@ -82,7 +82,7 @@ func (g *GeminiProvider) Stream(ctx context.Context, req ChatRequest) (<-chan St
 
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.resolveModel(req.Model), contents, config) {
 			if err != nil {
-				ch <- StreamChunk{Err: err}
+				ch <- StreamChunk{Err: classifyGeminiError(err)}
 				return
 			}
 
