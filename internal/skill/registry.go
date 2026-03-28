@@ -199,6 +199,29 @@ func (r *Registry) LoadNewSkills() []string {
 	return added
 }
 
+// ReloadSkill re-parses SKILL.md for an already-registered skill and updates
+// the in-memory entry. Used after an in-place edit of the skill's file.
+func (r *Registry) ReloadSkill(name string) error {
+	r.mu.RLock()
+	skillDir, ok := r.skillPaths[name]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("skill %q not found", name)
+	}
+	data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		return fmt.Errorf("reading SKILL.md: %w", err)
+	}
+	parsed, err := ParseSkillMD(data)
+	if err != nil {
+		return fmt.Errorf("parsing SKILL.md: %w", err)
+	}
+	r.mu.Lock()
+	r.skills[name] = parsed
+	r.mu.Unlock()
+	return nil
+}
+
 // SkillPath returns the on-disk directory of the named skill, or ("", false).
 func (r *Registry) SkillPath(name string) (string, bool) {
 	r.mu.RLock()

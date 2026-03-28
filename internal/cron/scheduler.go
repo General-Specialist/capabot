@@ -58,10 +58,16 @@ func (s *Scheduler) StopRun(runID int64) bool {
 }
 
 // Subscribe returns a channel that receives agent events for a running run.
-// The channel is closed when the run finishes.
+// The channel is closed when the run finishes. If the run is already done,
+// the returned channel is closed immediately.
 func (s *Scheduler) Subscribe(runID int64) <-chan agent.AgentEvent {
 	ch := make(chan agent.AgentEvent, 64)
 	s.mu.Lock()
+	if _, active := s.running[runID]; !active {
+		close(ch)
+		s.mu.Unlock()
+		return ch
+	}
 	s.subs[runID] = append(s.subs[runID], ch)
 	s.mu.Unlock()
 	return ch
@@ -177,7 +183,7 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 	// Single executable skill + no prompt → run directly without LLM (zero tokens).
 	// Otherwise the agent gets all skill_names registered as tools.
 	if len(auto.SkillNames) == 1 && auto.Prompt == "" {
-		s.fireSkill(ctx, auto, runID, log)
+		s.fireSkill(parentCtx, ctx, auto, runID, log)
 		return
 	}
 
@@ -206,12 +212,18 @@ func (s *Scheduler) fire(parentCtx context.Context, auto memory.Automation, manu
 		return
 	}
 
-	_ = s.store.FinishAutomationRun(ctx, runID, "success", result.Response, "")
+	// Agent may return gracefully even when canceled — check context.
+	if ctx.Err() == context.Canceled {
+		_ = s.store.FinishAutomationRun(parentCtx, runID, "stopped", result.Response, "stopped by user")
+		return
+	}
+
+	_ = s.store.FinishAutomationRun(parentCtx, runID, "success", result.Response, "")
 	log.Info().Int("iterations", result.Iterations).Msg("automation complete")
 }
 
 // fireSkill runs a native or plugin skill directly, bypassing the LLM entirely.
-func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID int64, log zerolog.Logger) {
+func (s *Scheduler) fireSkill(parentCtx, ctx context.Context, auto memory.Automation, runID int64, log zerolog.Logger) {
 	skillName := auto.SkillNames[0]
 	log.Info().Str("skill", skillName).Msg("running skill directly (no LLM)")
 
@@ -315,9 +327,15 @@ func (s *Scheduler) fireSkill(ctx context.Context, auto memory.Automation, runID
 			status = "stopped"
 			msg = "stopped by user"
 		}
-		_ = s.store.FinishAutomationRun(ctx, runID, status, "", msg)
+		_ = s.store.FinishAutomationRun(parentCtx, runID, status, "", msg)
 		return
 	}
-	_ = s.store.FinishAutomationRun(ctx, runID, "success", result.Response, "")
+
+	if ctx.Err() == context.Canceled {
+		_ = s.store.FinishAutomationRun(parentCtx, runID, "stopped", result.Response, "stopped by user")
+		return
+	}
+
+	_ = s.store.FinishAutomationRun(parentCtx, runID, "success", result.Response, "")
 	log.Info().Str("skill", skillName).Int("iterations", result.Iterations).Msg("skill automation complete")
 }

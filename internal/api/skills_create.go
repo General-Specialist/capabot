@@ -169,7 +169,9 @@ func (s *Server) handleSkillGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSkillUpdate overwrites a skill's code/description and recompiles.
+// handleSkillUpdate overwrites a skill's content and reloads it.
+// For Tier 1 (markdown) skills: accepts description and instructions.
+// For Tier 2 (native Go) skills: accepts description and code.
 func (s *Server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -177,8 +179,9 @@ func (s *Server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var inp struct {
-		Description string `json:"description"`
-		Code        string `json:"code"`
+		Description  string `json:"description"`
+		Code         string `json:"code"`
+		Instructions string `json:"instructions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -186,32 +189,80 @@ func (s *Server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	skillDir, isNative := s.skillReg.NativePath(name)
-	if !isNative {
-		writeError(w, "only native (Tier 2) skills can be edited via this endpoint", http.StatusBadRequest)
-		return
-	}
+	if isNative {
+		// Tier 2: native Go skill
+		if inp.Description != "" {
+			md := buildSkillMD(name, inp.Description, nil)
+			if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(md), 0o644); err != nil {
+				writeError(w, fmt.Sprintf("writing SKILL.md: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+		if inp.Code != "" {
+			if err := os.WriteFile(filepath.Join(skillDir, "main.go"), []byte(inp.Code), 0o644); err != nil {
+				writeError(w, fmt.Sprintf("writing main.go: %v", err), http.StatusInternalServerError)
+				return
+			}
+			_ = os.Remove(filepath.Join(skillDir, "skill.bin"))
+			if _, err := skill.NewNativeExecutor(r.Context(), skillDir); err != nil {
+				writeError(w, fmt.Sprintf("compilation failed: %v", err), http.StatusUnprocessableEntity)
+				return
+			}
+		}
+		s.skillReg.LoadDir(filepath.Dir(skillDir)) //nolint:errcheck
+		s.registerNewNativeSkill(r.Context(), name)
+	} else {
+		// Tier 1: markdown skill
+		skillPath, ok := s.skillReg.SkillPath(name)
+		if !ok {
+			writeError(w, "skill not found", http.StatusNotFound)
+			return
+		}
+		if inp.Instructions == "" && inp.Description == "" {
+			writeError(w, "instructions or description is required", http.StatusBadRequest)
+			return
+		}
 
-	if inp.Description != "" {
-		md := buildSkillMD(name, inp.Description, nil)
-		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(md), 0o644); err != nil {
+		// Read current SKILL.md to preserve fields not being updated
+		currentData, _ := os.ReadFile(filepath.Join(skillPath, "SKILL.md"))
+		currentParsed := s.skillReg.Get(name)
+		currentDesc := ""
+		if currentParsed != nil {
+			currentDesc = currentParsed.Manifest.Description
+		}
+
+		desc := inp.Description
+		if desc == "" {
+			desc = currentDesc
+		}
+		instructions := inp.Instructions
+		if instructions == "" {
+			// Extract instructions from current SKILL.md (everything after the front matter)
+			content := string(currentData)
+			if _, after, ok := strings.Cut(content, "---\n"); ok {
+				if _, body, ok2 := strings.Cut(after, "---\n"); ok2 {
+					instructions = strings.TrimSpace(body)
+				}
+			}
+		}
+
+		var sb strings.Builder
+		sb.WriteString("---\n")
+		sb.WriteString("name: " + name + "\n")
+		sb.WriteString("description: " + desc + "\n")
+		sb.WriteString("version: 1.0.0\n")
+		sb.WriteString("---\n\n")
+		sb.WriteString(instructions + "\n")
+
+		if err := os.WriteFile(filepath.Join(skillPath, "SKILL.md"), []byte(sb.String()), 0o644); err != nil {
 			writeError(w, fmt.Sprintf("writing SKILL.md: %v", err), http.StatusInternalServerError)
 			return
 		}
-	}
-	if inp.Code != "" {
-		if err := os.WriteFile(filepath.Join(skillDir, "main.go"), []byte(inp.Code), 0o644); err != nil {
-			writeError(w, fmt.Sprintf("writing main.go: %v", err), http.StatusInternalServerError)
-			return
-		}
-		_ = os.Remove(filepath.Join(skillDir, "skill.bin"))
-		if _, err := skill.NewNativeExecutor(r.Context(), skillDir); err != nil {
-			writeError(w, fmt.Sprintf("compilation failed: %v", err), http.StatusUnprocessableEntity)
-			return
+		if s.skillReg != nil {
+			s.skillReg.ReloadSkill(name) //nolint:errcheck
 		}
 	}
 
-	s.skillReg.LoadDir(filepath.Dir(skillDir)) //nolint:errcheck
-	s.registerNewNativeSkill(r.Context(), name)
 	writeJSON(w, map[string]any{"success": true, "name": name})
 }
 

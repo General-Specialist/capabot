@@ -299,7 +299,7 @@ export const api = {
   skillCreateMarkdown: (data: { name: string; description?: string; instructions: string }) =>
     post<{ name: string; success: boolean; tier: number }>('/skills/create-markdown', data),
   skillGet: (name: string) => get<{ name: string; description: string; code: string; tier: number }>(`/skills/${name}`),
-  skillUpdate: (name: string, data: { description?: string; code?: string }) =>
+  skillUpdate: (name: string, data: { description?: string; code?: string; instructions?: string }) =>
     put<{ success: boolean; name: string }>(`/skills/${name}`, data),
   skillConfigGet: (name: string) => get<Record<string, unknown>>(`/skills/${encodeURIComponent(name)}/config`),
   skillConfigSet: (name: string, config: Record<string, unknown>) =>

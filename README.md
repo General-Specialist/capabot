@@ -1,6 +1,6 @@
 Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99% of use cases. Same skill ecosystem, same plugin protocol. Clean, easy-to-use web UI.
 
-**Questions?** [Join the Discord](https://discord.gg/ktAy8fZH)
+**Questions?** [Join the Discord](https://discord.gg/DY6pb9WvZ3) | **Architecture deep dive:** [context.md](context.md)
 
 ## Quick start
 
@@ -14,36 +14,27 @@ cd gostaff
 createuser -s gostaff 2>/dev/null; createdb -O gostaff gostaff 2>/dev/null
 
 cd web && bun install && bun run dev  # frontend on :5173
-air                                   # backend on :9090
-# then add an API key via Settings (recommended) or ~/.gostaff/config.yaml (see example)
+air                                   # backend on :8080
+# then add an API key via Settings (recommended) or config.yaml
 ```
 
-Backend: http://localhost:9090 | Frontend: http://localhost:5173
+## Features
 
-## Key features
+**Skills & Plugins** — 3-tier system. Tier 1: markdown instructions. Tier 2: native Go (compiles + hot-reloads from the web UI). Tier 3: OpenClaw-compatible TS/JS/Python plugins. Install from [ClawHub](https://clawhub.ai) (30K+ skills), GitHub, or create your own.
 
-**Skills** — Markdown instructions that shape the agent's behavior. Create your own from the web UI or CLI, or install from [ClawHub](https://clawhub.ai) (30K+ community skills). Any OpenClaw `SKILL.md` works out of the box. The web UI separates custom skills from ClawHub-installed ones.
+**Built-in tools** — file ops, shell exec (allowlisted), browser automation (Playwright), web search/fetch, persistent key-value memory, notebook execution, and a meta-tool (`use_tool`) for extended tools.
 
-**Plugins** — Executable extensions for real computation. Write a native Go plugin (Tier 2) from the web UI — it compiles and hot-reloads instantly. Or install OpenClaw TS/JS/Python plugins (Tier 3) from ClawHub. The agent can also create, edit, delete, and search for skills/plugins on its own via built-in tools.
+**Automations** — Schedule agent prompts with RRULE from the web UI. Live-stream traces, view run history, stop runs mid-flight.
 
-```bash
-gostaff skill search "code review"      # search ClawHub
-gostaff skill install code-reviewer     # install from ClawHub
-gostaff skill install owner/repo        # install from GitHub
-gostaff skill create my-skill           # scaffold a new skill
-```
+**Multi-provider LLM** — Anthropic, OpenAI, Gemini, OpenRouter. Switch per-message with `@model-name`. Auto-fallback on rate limits.
 
-The Go SDK (`internal/sdk`) is the plugin system. Plugins implement `sdk.Plugin` and register tools, hooks, HTTP routes, and LLM providers in-process — no subprocess overhead. OpenClaw TS/JS/Python plugins from ClawHub are automatically wrapped via an adapter and work transparently. New skills are hot-reloaded into the running server.
+**People** — Bot personas with custom names, prompts, and avatars. Route Discord/Slack channels to specific people or tags.
 
-**Built-in tools** — file read/write/edit, shell exec (allowlisted), browser automation via Playwright, web search, web fetch, persistent memory, and more.
+**Transports** — Discord, Telegram, Slack, HTTP. All route to the same ReAct agent core.
 
-**Automations** — Schedule agent prompts on a recurring schedule from the web UI. Live-stream agent traces, view run history, stop runs in-flight.
+## Configuration
 
-**Multi-provider** — Anthropic, OpenAI, Gemini, OpenRouter. Switch models per-message with `@model-name`. Falls back to next provider on rate limits or errors.
-
-**People** — Give the agent different names, prompts, and avatars. Route Discord/Slack channels to specific people or tags. Mention with `@person-name` to address one directly.
-
-**Transports** — Discord, Telegram, Slack, or plain HTTP. All route to the same agent core.
+`config.yaml` in the project root, with env var overrides (`GOSTAFF_DATABASE_URL`, `GOSTAFF_ANTHROPIC_API_KEY`, etc). See `config.example.yaml` for all options.
 
 ## License
 

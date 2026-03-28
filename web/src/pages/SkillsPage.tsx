@@ -1,7 +1,6 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Download, Check, Search, Star, ArrowDownToLine, Trash2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
-import { Markdown } from '@/components/Markdown'
 import { api, type Skill, type CatalogSkill } from '@/lib/api'
 import { useAlert } from '@/components/AlertProvider'
 
@@ -205,11 +204,11 @@ export function SkillsPage() {
         </AnimatePresence>
 
         {tab === 'custom' && !showCreate && (
-          <SkillList skills={custom} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No custom skills yet. Skills are instructions for how your agent interacts with something — have an agent create one for you, or click New to create one." />
+          <SkillList skills={custom} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} onUpdate={loadSkills} empty="No custom skills yet. Skills are instructions for how your agent interacts with something — have an agent create one for you, or click New to create one." />
         )}
 
         {tab === 'clawhub' && (
-          <SkillList skills={clawhub} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} empty="No ClawHub skills installed. Browse and install some." />
+          <SkillList skills={clawhub} loading={loading} expanded={expanded} setExpanded={setExpanded} removing={removing} onRemove={uninstall} onUpdate={loadSkills} empty="No ClawHub skills installed. Browse and install some." />
         )}
 
         {tab === 'browse' && (
@@ -294,13 +293,105 @@ export function SkillsPage() {
   )
 }
 
-function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove, empty }: {
+function SkillRow({ skill, expanded, onToggle, removing, onRemove, onSaved }: {
+  skill: InstalledSkill
+  expanded: boolean
+  onToggle: () => void
+  removing: boolean
+  onRemove: () => void
+  onSaved: () => void
+}) {
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const isDirty = draft !== undefined && draft !== skill.instructions
+
+  const save = useCallback(async (instructions: string) => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await api.skillUpdate(skill.name, { instructions })
+      setDraft(undefined)
+      onSaved()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }, [skill.name, onSaved])
+
+  // Autosave 1s after last keystroke
+  useEffect(() => {
+    if (draft === undefined || draft === skill.instructions) return
+    const t = setTimeout(() => void save(draft), 1000)
+    return () => clearTimeout(t)
+  }, [draft]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="rounded-2xl border border-border-white overflow-hidden">
+      <div className="flex items-center gap-4 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
+            {skill.version && (
+              <span className="text-xs text-normal-black font-mono shrink-0">{skill.version}</span>
+            )}
+          </div>
+          {skill.description && (
+            <p className="text-xs text-normal-black truncate mt-0.5">{skill.description}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {saving && <div className="w-3 h-3 border border-normal-black border-t-transparent rounded-full animate-spin" />}
+          <button
+            onClick={onToggle}
+            className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
+          >
+            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+          {skill.removable && (
+            <button
+              onClick={onRemove}
+              disabled={removing}
+              className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
+            >
+              {removing
+                ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                : <Trash2 size={13} />
+              }
+            </button>
+          )}
+        </div>
+      </div>
+      {expanded && (
+        <div className="border-t border-border-white px-4 py-3 bg-sidebar-white space-y-2">
+          <textarea
+            value={draft !== undefined ? draft : (skill.instructions || '')}
+            onChange={e => { setDraft(e.target.value); setSaveError(null) }}
+            rows={10}
+            placeholder="Markdown instructions…"
+            className="w-full px-3 py-2 text-sm rounded-xl border border-border-white bg-white text-hover-black outline-none resize-y leading-relaxed font-mono"
+            spellCheck={false}
+            readOnly={!skill.removable}
+          />
+          {saveError && <p className="text-xs text-red">{saveError}</p>}
+          {isDirty && !saving && (
+            <p className="text-xs text-normal-black">Saving…</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove, onUpdate, empty }: {
   skills: InstalledSkill[]
   loading: boolean
   expanded: Record<string, boolean>
   setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   removing: Record<string, boolean>
   onRemove: (name: string) => void
+  onUpdate: () => void
   empty: string
 }) {
   if (!loading && skills.length === 0) {
@@ -309,56 +400,17 @@ function SkillList({ skills, loading, expanded, setExpanded, removing, onRemove,
 
   return (
     <div className="space-y-2">
-      {skills.map(skill => {
-        const isExpanded = expanded[skill.name]
-        const isRemoving = removing[skill.name]
-        return (
-          <div key={skill.name} className="rounded-2xl border border-border-white overflow-hidden">
-            <div className="flex items-center gap-4 px-4 py-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-hover-black truncate">{skill.name}</p>
-                  {skill.version && (
-                    <span className="text-xs text-normal-black font-mono shrink-0">{skill.version}</span>
-                  )}
-                </div>
-                {skill.description && (
-                  <p className="text-xs text-normal-black truncate mt-0.5">{skill.description}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {skill.instructions?.trim() && (
-                  <button
-                    onClick={() => setExpanded(prev => ({ ...prev, [skill.name]: !isExpanded }))}
-                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-hover-black hover:bg-sidebar-white transition-colors"
-                  >
-                    {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                  </button>
-                )}
-                {skill.removable && (
-                  <button
-                    onClick={() => onRemove(skill.name)}
-                    disabled={isRemoving}
-                    className="h-7 w-7 rounded-full flex items-center justify-center text-normal-black hover:text-red hover:bg-sidebar-white transition-colors disabled:opacity-40"
-                  >
-                    {isRemoving
-                      ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-                      : <Trash2 size={13} />
-                    }
-                  </button>
-                )}
-              </div>
-            </div>
-            {isExpanded && skill.instructions?.trim() && (
-              <div className="border-t border-border-white px-4 py-3 bg-sidebar-white max-h-64 overflow-y-auto">
-                <div className="text-sm leading-relaxed text-hover-black prose prose-sm max-w-none [&_*]:text-inherit [&_p]:my-1 [&_pre]:bg-icon-white [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_p:last-child]:mb-0">
-                  <Markdown>{skill.instructions}</Markdown>
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {skills.map(skill => (
+        <SkillRow
+          key={skill.name}
+          skill={skill}
+          expanded={!!expanded[skill.name]}
+          onToggle={() => setExpanded(prev => ({ ...prev, [skill.name]: !prev[skill.name] }))}
+          removing={!!removing[skill.name]}
+          onRemove={() => onRemove(skill.name)}
+          onSaved={onUpdate}
+        />
+      ))}
     </div>
   )
 }

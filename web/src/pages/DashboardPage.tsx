@@ -50,11 +50,14 @@ function AgentTrace({ messages }: { messages: TraceMessage[] }) {
               >
                 <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${failed ? 'bg-terminal-red' : 'bg-terminal-green'}`} />
                 <span className="font-mono text-hover-black">{msg.tool_name || 'tool'}</span>
-                {msg.tool_input && <span className="text-normal-black truncate max-w-48">{msg.tool_input}</span>}
+                {msg.tool_input && <span className="text-normal-black whitespace-pre-wrap line-clamp-3 text-left">{msg.tool_input}</span>}
                 <ChevronRight size={11} className={`ml-auto text-normal-black shrink-0 transition-transform ${openTool === msg.id ? 'rotate-90' : ''}`} />
               </button>
               {openTool === msg.id && (
-                <div className="border-t border-border-white px-3 py-2">
+                <div className="border-t border-border-white px-3 py-2 space-y-2">
+                  {msg.tool_input && (
+                    <pre className="text-normal-black bg-icon-white rounded p-2 text-xs overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto">{msg.tool_input}</pre>
+                  )}
                   <pre className="text-hover-black bg-icon-white rounded p-2 text-xs overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">{msg.content}</pre>
                 </div>
               )}
