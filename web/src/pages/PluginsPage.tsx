@@ -70,7 +70,7 @@ export function PluginsPage() {
     try {
       const res = await api.skillCreate({
         name: createName.trim(),
-        description: createDesc.trim() || undefined,
+        description: createDesc.trim(),
         code: createCode,
       })
       if (res.success) {

@@ -11,15 +11,6 @@ const NAMES_KEY = 'channel-names'
 function loadNames(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(NAMES_KEY) || '{}') } catch { return {} }
 }
-function saveName(id: string, name: string) {
-  const names = loadNames()
-  localStorage.setItem(NAMES_KEY, JSON.stringify({ ...names, [id]: name }))
-}
-function deleteName(id: string) {
-  const names = loadNames()
-  delete names[id]
-  localStorage.setItem(NAMES_KEY, JSON.stringify(names))
-}
 
 export function ChannelsPage() {
   const { alert } = useAlert()
@@ -102,7 +93,9 @@ export function ChannelsPage() {
     }
     setCreating(true)
     try {
-      await api.channelSet(id, { ...EMPTY, channel_id: id })
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { channel_id: _, ...defaults } = EMPTY
+      await api.channelSet(id, defaults)
       setNewId('')
       setShowCreate(false)
       await load()

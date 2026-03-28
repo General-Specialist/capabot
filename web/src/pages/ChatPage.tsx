@@ -178,7 +178,7 @@ export function ChatPage() {
     setMessages(prev => {
       const updated = [...prev]
       // Find the existing assistant message for this persona.
-      const idx = updated.findLastIndex(m => m.role === 'assistant' && m.persona === persona)
+      const idx = updated.findLastIndex((m: Message) => m.role === 'assistant' && m.persona === persona)
       if (idx >= 0) {
         updated[idx] = { ...updated[idx], ...patch }
       } else {

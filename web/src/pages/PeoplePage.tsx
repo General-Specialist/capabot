@@ -7,7 +7,7 @@ import TagPicker from '@/components/TagPicker'
 function SystemPromptModal({ onClose }: { onClose: () => void }) {
   const [value, setValue] = useState('')
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     api.systemPromptGet().then(d => setValue(d.system_prompt)).catch(() => {})
@@ -415,7 +415,7 @@ function PersonCard({ person: p, allTags, deleting, onSave, onDelete }: {
   const [uploading, setUploading] = useState(false)
   const [cropOpen, setCropOpen] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const handleCropSave = async (cropped: File) => {
     setCropOpen(false)
