@@ -6,11 +6,6 @@ import { useAlert } from '@/components/AlertProvider'
 import TagPicker from '@/components/TagPicker'
 
 const EMPTY: ChannelConfig = { channel_id: '', tag: '', system_prompt: '', skill_names: [], model: '', memory_isolated: false }
-const NAMES_KEY = 'channel-names'
-
-function loadNames(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(NAMES_KEY) || '{}') } catch { return {} }
-}
 
 export function ChannelsPage() {
   const { alert } = useAlert()
