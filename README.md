@@ -10,12 +10,12 @@ Go rewrite of OpenClaw — 100x lighter (~17MB vs 1GB+ RAM), more capable for 99
 git clone https://github.com/General-Specialist/gostaff.git
 cd gostaff
 
-# create the database (after installing postgres for your OS)
+# create the database
 createuser -s gostaff 2>/dev/null; createdb -O gostaff gostaff 2>/dev/null
 
+go run ./cmd/gostaff serve     # backend on :8080
 cd web && bun install && bun run dev  # frontend on :5173
-air                                   # backend on :8080
-# then add an API key via Settings (recommended) or config.yaml
+# add an API key via Settings
 ```
 
 ## Features
